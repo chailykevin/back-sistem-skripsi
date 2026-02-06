@@ -276,3 +276,134 @@ exports.listForKaprodi = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.reviewByKaprodi = async (req, res, next) => {
+  try {
+    if (req.user.userType !== "LECTURER") {
+      return res.status(403).json({
+        ok: false,
+        message: "Only lecturers can review outlines",
+      });
+    }
+
+    const outlineId = Number(req.params.id);
+    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid outline id" });
+    }
+
+    const { status, decisionNote, kaprodiFileOutline } = req.body;
+
+    const allowed = ["SUBMITTED", "NEED_REVISION", "REJECTED", "ACCEPTED"];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ ok: false, message: "Invalid status" });
+    }
+
+    const note = decisionNote ? String(decisionNote).trim() : "";
+    const noteRequired = status === "NEED_REVISION" || status === "REJECTED";
+    if (noteRequired && note.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "decisionNote is required for NEED_REVISION or REJECTED",
+      });
+    }
+
+    const kaprodiFile =
+      kaprodiFileOutline !== undefined && kaprodiFileOutline !== null
+        ? String(kaprodiFileOutline)
+        : null;
+
+    // ambil nidn Kaprodi dari user login
+    const [urows] = await db.query(
+      `SELECT id, nidn
+       FROM users
+       WHERE id = ? AND is_active = 1
+       LIMIT 1`,
+      [req.user.id]
+    );
+
+    const lecturerUser = urows[0] || null;
+    if (!lecturerUser || !lecturerUser.nidn) {
+      return res.status(403).json({
+        ok: false,
+        message: "Lecturer not linked to NIDN",
+      });
+    }
+
+    // cek prodi yang dia pimpin
+    const [prodiRows] = await db.query(
+      `SELECT id
+       FROM program_studi
+       WHERE kaprodi_nidn = ?
+       LIMIT 1`,
+      [lecturerUser.nidn]
+    );
+
+    if (prodiRows.length === 0) {
+      return res.status(403).json({
+        ok: false,
+        message: "You are not assigned as Kaprodi",
+      });
+    }
+
+    const programStudiId = prodiRows[0].id;
+
+    // pastikan outline milik mahasiswa di prodi tsb
+    const [orows] = await db.query(
+      `SELECT o.id
+       FROM outline o
+       INNER JOIN mahasiswa m ON m.npm = o.npm
+       WHERE o.id = ? AND m.program_studi_id = ?
+       LIMIT 1`,
+      [outlineId, programStudiId]
+    );
+
+    if (orows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        message: "Outline not found",
+      });
+    }
+
+    // Update review Kaprodi (status + decision fields) + optional file
+    if (kaprodiFile) {
+      await db.query(
+        `UPDATE outline
+         SET
+           status = ?,
+           decision_note = ?,
+           decided_at = CURRENT_TIMESTAMP,
+           decided_by_user_id = ?,
+           kaprodi_file_outline = ?,
+           kaprodi_file_uploaded_at = CURRENT_TIMESTAMP,
+           kaprodi_file_uploaded_by_user_id = ?
+         WHERE id = ?`,
+        [
+          status,
+          note.length ? note : null,
+          lecturerUser.id,
+          kaprodiFile,
+          lecturerUser.id,
+          outlineId,
+        ]
+      );
+    } else {
+      await db.query(
+        `UPDATE outline
+         SET
+           status = ?,
+           decision_note = ?,
+           decided_at = CURRENT_TIMESTAMP,
+           decided_by_user_id = ?
+         WHERE id = ?`,
+        [status, note.length ? note : null, lecturerUser.id, outlineId]
+      );
+    }
+
+    return res.json({
+      ok: true,
+      message: "Outline reviewed",
+    });
+  } catch (err) {
+    next(err);
+  }
+};
