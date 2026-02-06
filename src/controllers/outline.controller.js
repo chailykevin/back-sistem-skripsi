@@ -412,3 +412,103 @@ exports.reviewByKaprodi = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.resubmit = async (req, res, next) => {
+  try {
+    if (req.user.userType !== "STUDENT") {
+      return res.status(403).json({
+        ok: false,
+        message: "Only students can resubmit outlines",
+      });
+    }
+
+    const outlineId = Number(req.params.id);
+    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid outline id" });
+    }
+
+    const { judul, latarBelakang, fileOutline } = req.body;
+
+    const judulVal = judul !== undefined ? String(judul).trim() : null;
+    const latarVal = latarBelakang !== undefined ? String(latarBelakang).trim() : null;
+    const fileVal = fileOutline !== undefined ? String(fileOutline) : null;
+
+    if (
+      (judulVal === null || judulVal.length === 0) &&
+      (latarVal === null || latarVal.length === 0) &&
+      (fileVal === null || fileVal.length === 0)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "At least one of judul, latarBelakang, or fileOutline must be provided",
+      });
+    }
+
+    // ambil npm dari user login
+    const [urows] = await db.query(
+      `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+      [req.user.id]
+    );
+    const npm = urows[0]?.npm ?? null;
+
+    if (!npm) {
+      return res.status(400).json({
+        ok: false,
+        message: "Mahasiswa tidak valid",
+      });
+    }
+
+    // pastikan outline milik mahasiswa ini
+    const [orows] = await db.query(
+      `SELECT id
+       FROM outline
+       WHERE id = ? AND npm = ?
+       LIMIT 1`,
+      [outlineId, npm]
+    );
+
+    if (orows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        message: "Outline not found",
+      });
+    }
+
+    // build update dinamis
+    const sets = [];
+    const params = [];
+
+    if (judulVal !== null && judulVal.length > 0) {
+      sets.push("judul = ?");
+      params.push(judulVal);
+    }
+    if (latarVal !== null && latarVal.length > 0) {
+      sets.push("latar_belakang = ?");
+      params.push(latarVal);
+    }
+    if (fileVal !== null && fileVal.length > 0) {
+      sets.push("file_outline = ?");
+      params.push(fileVal);
+    }
+
+    // resubmit => status kembali SUBMITTED
+    sets.push("status = 'SUBMITTED'");
+
+    // clear keputusan Kaprodi (recommended)
+    sets.push("decision_note = NULL");
+    sets.push("decided_at = NULL");
+    sets.push("decided_by_user_id = NULL");
+
+    const sql = `UPDATE outline SET ${sets.join(", ")} WHERE id = ?`;
+    params.push(outlineId);
+
+    await db.query(sql, params);
+
+    return res.json({
+      ok: true,
+      message: "Outline resubmitted",
+    });
+  } catch (err) {
+    next(err);
+  }
+};

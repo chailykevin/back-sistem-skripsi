@@ -6,6 +6,7 @@ router.post("/", auth, outlineController.create);
 router.get("/me", auth, outlineController.listMine);
 router.get("/", auth, outlineController.listForKaprodi);
 router.patch("/:id/review", auth, outlineController.reviewByKaprodi);
+router.patch("/:id", auth, outlineController.resubmit);
 router.get("/:id", auth, outlineController.getById);
 
 module.exports = router;
