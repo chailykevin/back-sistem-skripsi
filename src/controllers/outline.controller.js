@@ -102,13 +102,10 @@ exports.getById = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({
-        ok: false,
-        message: "Invalid outline id",
-      });
+      return res.status(400).json({ ok: false, message: "Invalid outline id" });
     }
 
-    // Ambil user context (npm jika mahasiswa)
+    // Mahasiswa: harus hanya miliknya
     let studentNpm = null;
     if (req.user.userType === "STUDENT") {
       const [urows] = await db.query(
@@ -116,49 +113,65 @@ exports.getById = async (req, res, next) => {
         [req.user.id]
       );
       studentNpm = urows[0]?.npm ?? null;
-
       if (!studentNpm) {
-        return res.status(400).json({
-          ok: false,
-          message: "Mahasiswa tidak valid",
-        });
+        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
       }
     }
 
-    // Query outline
-    // - Mahasiswa: wajib cocok npm
-    // - Dosen: bebas (sementara)
     let rows;
     if (req.user.userType === "STUDENT") {
       const [r] = await db.query(
-        `SELECT 
-           id,
-           judul,
-           latar_belakang,
-           file_outline,
-           npm,
-           status,
-           created_at,
-           updated_at
-         FROM outline
-         WHERE id = ? AND npm = ?
+        `SELECT
+           o.id,
+           o.judul,
+           o.latar_belakang,
+           o.file_outline,
+           o.npm,
+           o.status,
+           o.decision_note,
+           o.decided_at,
+           o.decided_by_user_id,
+           o.kaprodi_file_outline,
+           o.kaprodi_file_uploaded_at,
+           o.kaprodi_file_uploaded_by_user_id,
+           o.created_at,
+           o.updated_at,
+           m.nama AS mahasiswa_nama,
+           m.program_studi_id,
+           ps.nama AS program_studi_nama
+         FROM outline o
+         INNER JOIN mahasiswa m ON m.npm = o.npm
+         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+         WHERE o.id = ? AND o.npm = ?
          LIMIT 1`,
         [id, studentNpm]
       );
       rows = r;
     } else {
+      // Dosen/Kaprodi: boleh lihat semua (sementara)
       const [r] = await db.query(
-        `SELECT 
-           id,
-           judul,
-           latar_belakang,
-           file_outline,
-           npm,
-           status,
-           created_at,
-           updated_at
-         FROM outline
-         WHERE id = ?
+        `SELECT
+           o.id,
+           o.judul,
+           o.latar_belakang,
+           o.file_outline,
+           o.npm,
+           o.status,
+           o.decision_note,
+           o.decided_at,
+           o.decided_by_user_id,
+           o.kaprodi_file_outline,
+           o.kaprodi_file_uploaded_at,
+           o.kaprodi_file_uploaded_by_user_id,
+           o.created_at,
+           o.updated_at,
+           m.nama AS mahasiswa_nama,
+           m.program_studi_id,
+           ps.nama AS program_studi_nama
+         FROM outline o
+         INNER JOIN mahasiswa m ON m.npm = o.npm
+         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+         WHERE o.id = ?
          LIMIT 1`,
         [id]
       );
@@ -166,18 +179,10 @@ exports.getById = async (req, res, next) => {
     }
 
     if (!rows || rows.length === 0) {
-      return res.status(404).json({
-        ok: false,
-        message: "Outline not found",
-      });
+      return res.status(404).json({ ok: false, message: "Outline not found" });
     }
 
-    const outline = rows[0];
-
-    return res.json({
-      ok: true,
-      data: outline,
-    });
+    return res.json({ ok: true, data: rows[0] });
   } catch (err) {
     next(err);
   }
