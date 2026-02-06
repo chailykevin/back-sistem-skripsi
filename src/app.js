@@ -19,6 +19,9 @@ app.use("/db", dbRoutes);
 const authRoutes = require("./routes/auth.routes");
 app.use("/auth", authRoutes);
 
+const outlineRoutes = require("./routes/outline.routes");
+app.use("/outlines", outlineRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
