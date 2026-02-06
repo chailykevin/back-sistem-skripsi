@@ -4,5 +4,6 @@ const outlineController = require("../controllers/outline.controller");
 
 router.post("/", auth, outlineController.create);
 router.get("/me", auth, outlineController.listMine);
+router.get("/:id", auth, outlineController.getById);
 
 module.exports = router;

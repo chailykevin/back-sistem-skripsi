@@ -97,3 +97,88 @@ exports.listMine = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getById = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid outline id",
+      });
+    }
+
+    // Ambil user context (npm jika mahasiswa)
+    let studentNpm = null;
+    if (req.user.userType === "STUDENT") {
+      const [urows] = await db.query(
+        `SELECT npm FROM users WHERE id = ? LIMIT 1`,
+        [req.user.id]
+      );
+      studentNpm = urows[0]?.npm ?? null;
+
+      if (!studentNpm) {
+        return res.status(400).json({
+          ok: false,
+          message: "Mahasiswa tidak valid",
+        });
+      }
+    }
+
+    // Query outline
+    // - Mahasiswa: wajib cocok npm
+    // - Dosen: bebas (sementara)
+    let rows;
+    if (req.user.userType === "STUDENT") {
+      const [r] = await db.query(
+        `SELECT 
+           id,
+           judul,
+           latar_belakang,
+           file_outline,
+           npm,
+           status,
+           created_at,
+           updated_at
+         FROM outline
+         WHERE id = ? AND npm = ?
+         LIMIT 1`,
+        [id, studentNpm]
+      );
+      rows = r;
+    } else {
+      const [r] = await db.query(
+        `SELECT 
+           id,
+           judul,
+           latar_belakang,
+           file_outline,
+           npm,
+           status,
+           created_at,
+           updated_at
+         FROM outline
+         WHERE id = ?
+         LIMIT 1`,
+        [id]
+      );
+      rows = r;
+    }
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        message: "Outline not found",
+      });
+    }
+
+    const outline = rows[0];
+
+    return res.json({
+      ok: true,
+      data: outline,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
