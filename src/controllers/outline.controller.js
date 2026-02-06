@@ -182,3 +182,97 @@ exports.getById = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.listForKaprodi = async (req, res, next) => {
+  try {
+    // hanya dosen (LECTURER) yang bisa jadi kaprodi
+    if (req.user.userType !== "LECTURER") {
+      return res.status(403).json({
+        ok: false,
+        message: "Only lecturers can access this endpoint",
+      });
+    }
+
+    // ambil nidn dari user login
+    const [urows] = await db.query(
+      `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+      [req.user.id]
+    );
+
+    const nidn = urows[0]?.nidn ?? null;
+    if (!nidn) {
+      return res.status(403).json({
+        ok: false,
+        message: "Lecturer not linked to NIDN",
+      });
+    }
+
+    // cek apakah dia kaprodi prodi tertentu
+    const [prodiRows] = await db.query(
+      `SELECT id, nama
+       FROM program_studi
+       WHERE kaprodi_nidn = ?
+       LIMIT 1`,
+      [nidn]
+    );
+
+    if (prodiRows.length === 0) {
+      return res.status(403).json({
+        ok: false,
+        message: "You are not assigned as Kaprodi",
+      });
+    }
+
+    const programStudiId = prodiRows[0].id;
+
+    // optional filter
+    const status = req.query.status ? String(req.query.status) : null;
+    const q = req.query.q ? String(req.query.q) : null;
+
+    const where = [];
+    const params = [];
+
+    where.push("m.program_studi_id = ?");
+    params.push(programStudiId);
+
+    if (status) {
+      where.push("o.status = ?");
+      params.push(status);
+    }
+
+    if (q) {
+      where.push("o.judul LIKE ?");
+      params.push(`%${q}%`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    // ambil list outline (tanpa file_outline)
+    const [rows] = await db.query(
+      `SELECT
+         o.id,
+         o.judul,
+         o.status,
+         o.created_at,
+         o.updated_at,
+         o.npm,
+         m.nama AS mahasiswa_nama,
+         m.program_studi_id
+       FROM outline o
+       INNER JOIN mahasiswa m ON m.npm = o.npm
+       ${whereSql}
+       ORDER BY o.created_at DESC`,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      data: {
+        programStudi: prodiRows[0],
+        outlines: rows,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
