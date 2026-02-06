@@ -81,6 +81,7 @@ exports.listMine = async (req, res, next) => {
          id,
          judul,
          status,
+         decision_note
          created_at,
          updated_at
        FROM outline
