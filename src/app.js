@@ -22,6 +22,9 @@ app.use("/auth", authRoutes);
 const outlineRoutes = require("./routes/outline.routes");
 app.use("/outlines", outlineRoutes);
 
+const titleSubmission = require("./routes/titleSubmission.routes");
+app.use("/title-submissions", titleSubmission);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
