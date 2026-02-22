@@ -304,3 +304,117 @@ exports.updateDraft = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getById = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid id" });
+    }
+
+    // STUDENT: hanya boleh lihat miliknya
+    if (req.user.userType === "STUDENT") {
+      const [urows] = await db.query(
+        `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [req.user.id]
+      );
+      const npm = urows[0]?.npm;
+      if (!npm) {
+        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      }
+
+      const [rows] = await db.query(
+        `
+        SELECT
+          pj.*,
+
+          o.judul AS outline_judul,
+
+          m.nama AS mahasiswa_nama,
+          ps.id AS program_studi_id,
+          ps.nama AS program_studi_nama,
+
+          d1.nama AS pembimbing1_diajukan_nama,
+          d2.nama AS pembimbing2_diajukan_nama,
+          d3.nama AS pembimbing1_ditetapkan_nama,
+          d4.nama AS pembimbing2_ditetapkan_nama
+
+        FROM pengajuan_judul pj
+        INNER JOIN outline o ON o.id = pj.outline_id
+        INNER JOIN mahasiswa m ON m.npm = pj.npm
+        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+
+        LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
+        LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
+        LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
+        LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
+
+        WHERE pj.id = ? AND pj.npm = ?
+        LIMIT 1
+        `,
+        [id, npm]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ ok: false, message: "Not found" });
+      }
+
+      return res.json({ ok: true, data: rows[0] });
+    }
+
+    // LECTURER (Kaprodi): hanya boleh pengajuan dari prodinya
+    if (req.user.userType === "LECTURER") {
+      const [urows] = await db.query(
+        `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [req.user.id]
+      );
+      const nidn = urows[0]?.nidn;
+      if (!nidn) {
+        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+      }
+
+      const [rows] = await db.query(
+        `
+        SELECT
+          pj.*,
+
+          o.judul AS outline_judul,
+
+          m.nama AS mahasiswa_nama,
+          ps.id AS program_studi_id,
+          ps.nama AS program_studi_nama,
+
+          d1.nama AS pembimbing1_diajukan_nama,
+          d2.nama AS pembimbing2_diajukan_nama,
+          d3.nama AS pembimbing1_ditetapkan_nama,
+          d4.nama AS pembimbing2_ditetapkan_nama
+
+        FROM pengajuan_judul pj
+        INNER JOIN outline o ON o.id = pj.outline_id
+        INNER JOIN mahasiswa m ON m.npm = pj.npm
+        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+
+        LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
+        LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
+        LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
+        LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
+
+        WHERE pj.id = ?
+          AND ps.kaprodi_nidn = ?
+        LIMIT 1
+        `,
+        [id, nidn]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ ok: false, message: "Not found" });
+      }
+
+      return res.json({ ok: true, data: rows[0] });
+    }
+
+    return res.status(403).json({ ok: false, message: "Forbidden" });
+  } catch (err) {
+    next(err);
+  }
+};

@@ -9,5 +9,6 @@ router.get("/", auth, kaprodi.listForKaprodi);
 router.patch("/:id/review", auth, kaprodi.review);
 router.patch("/:id", auth, c.updateDraft);
 router.patch("/:id/submit", auth, c.submit);
+router.get("/:id", auth, c.getById);
 
 module.exports = router;

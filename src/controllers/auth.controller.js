@@ -101,7 +101,7 @@ exports.me = async (req, res, next) => {
     let profile = null;
     if (user.user_type === "STUDENT") {
       const [p] = await db.query(
-        `SELECT npm, nama FROM mahasiswa WHERE npm = ? LIMIT 1`,
+        `SELECT npm, mahasiswa.nama, program_studi.nama as programStudi FROM mahasiswa LEFT JOIN program_studi ON mahasiswa.program_studi_id = program_studi.id WHERE npm = ? LIMIT 1`,
         [user.npm]
       );
       profile = p[0] || null;
