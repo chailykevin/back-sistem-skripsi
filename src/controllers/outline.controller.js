@@ -70,54 +70,6 @@ exports.create = async (req, res, next) => {
   }
 };
 
-exports.listMine = async (req, res, next) => {
-  try {
-    if (req.user.userType !== "STUDENT") {
-      return res.status(403).json({
-        ok: false,
-        message: "Only students can access their outlines",
-      });
-    }
-
-    // ambil npm dari user login
-    const [users] = await db.query(
-      `SELECT npm FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id]
-    );
-
-    if (users.length === 0 || !users[0].npm) {
-      return res.status(400).json({
-        ok: false,
-        message: "Mahasiswa tidak valid",
-      });
-    }
-
-    const npm = users[0].npm;
-
-    // ambil list outline (tanpa file_outline)
-    const [rows] = await db.query(
-      `SELECT 
-         id,
-         judul,
-         status,
-         decision_note,
-         created_at,
-         updated_at
-       FROM outline
-       WHERE npm = ?
-       ORDER BY created_at DESC`,
-      [npm]
-    );
-
-    res.json({
-      ok: true,
-      data: rows,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
 exports.getById = async (req, res, next) => {
   try {
     const id = Number(req.params.id);

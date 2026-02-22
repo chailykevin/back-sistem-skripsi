@@ -3,7 +3,6 @@ const auth = require("../middlewares/auth");
 const outlineController = require("../controllers/outline.controller");
 
 router.post("/", auth, outlineController.create);
-router.get("/me", auth, outlineController.listMine);
 router.get("/", auth, outlineController.listForKaprodi);
 router.patch("/:id/review", auth, outlineController.reviewByKaprodi);
 router.patch("/:id", auth, outlineController.resubmit);
