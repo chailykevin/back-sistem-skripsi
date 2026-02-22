@@ -160,6 +160,63 @@ exports.getById = async (req, res, next) => {
   }
 };
 
+exports.getLatestMine = async (req, res, next) => {
+  try {
+    if (req.user.userType !== "STUDENT") {
+      return res.status(403).json({
+        ok: false,
+        message: "Only students can access their latest outline",
+      });
+    }
+
+    const [urows] = await db.query(
+      `SELECT npm FROM users WHERE id = ? LIMIT 1`,
+      [req.user.id]
+    );
+    const npm = urows[0]?.npm ?? null;
+
+    if (!npm) {
+      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         o.id,
+         o.judul,
+         o.latar_belakang,
+         o.file_outline,
+         o.npm,
+         o.status,
+         o.decision_note,
+         o.decided_at,
+         o.decided_by_user_id,
+         o.kaprodi_file_outline,
+         o.kaprodi_file_uploaded_at,
+         o.kaprodi_file_uploaded_by_user_id,
+         o.created_at,
+         o.updated_at,
+         m.nama AS mahasiswa_nama,
+         m.program_studi_id,
+         ps.nama AS program_studi_nama
+       FROM outline o
+       INNER JOIN mahasiswa m ON m.npm = o.npm
+       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       WHERE o.npm = ? AND UPPER(COALESCE(o.status, '')) <> 'REJECTED'
+       ORDER BY o.updated_at DESC
+       LIMIT 1`,
+      [npm]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.json({ ok: true, data: null, message: "Outline not found" });
+    }
+
+    return res.json({ ok: true, data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+};
+
 exports.listForKaprodi = async (req, res, next) => {
   try {
     // hanya dosen (LECTURER) yang bisa jadi kaprodi
