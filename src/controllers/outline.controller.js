@@ -2,7 +2,6 @@ const db = require("../db");
 
 exports.create = async (req, res, next) => {
   try {
-    // hanya mahasiswa
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({
         ok: false,
@@ -33,6 +32,26 @@ exports.create = async (req, res, next) => {
     }
 
     const npm = users[0].npm;
+
+    // cek outline sebelumnya untuk npm ini
+    const [existingOutlines] = await db.query(
+      `SELECT id, status
+       FROM outline
+       WHERE npm = ?`,
+      [npm]
+    );
+
+    // boleh lanjut hanya jika belum pernah submit, atau semua outline lama REJECTED
+    const hasNonRejected = existingOutlines.some(
+      (outline) => String(outline.status || "").toUpperCase() !== "REJECTED"
+    );
+
+    if (hasNonRejected) {
+      return res.status(400).json({
+        ok: false,
+        message: "You have an ongoing outline",
+      });
+    }
 
     // insert outline
     await db.query(
