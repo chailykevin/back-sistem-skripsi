@@ -9,7 +9,7 @@ exports.create = async (req, res, next) => {
       });
     }
 
-    const { judul, latarBelakang, fileOutline } = req.body;
+    const { judul, latarBelakang, fileOutline, fileOutlineName } = req.body;
 
     if (!judul || !latarBelakang || !fileOutline) {
       return res.status(400).json({
@@ -56,9 +56,9 @@ exports.create = async (req, res, next) => {
     // insert outline
     await db.query(
       `INSERT INTO outline
-       (judul, latar_belakang, file_outline, npm, status)
-       VALUES (?, ?, ?, ?, 'SUBMITTED')`,
-      [judul, latarBelakang, fileOutline, npm]
+       (judul, latar_belakang, file_outline, npm, status, file_outline_name)
+       VALUES (?, ?, ?, ?, 'SUBMITTED', ?)`,
+      [judul, latarBelakang, fileOutline, npm, fileOutlineName]
     );
 
     res.status(201).json({
