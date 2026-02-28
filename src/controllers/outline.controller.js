@@ -194,6 +194,7 @@ exports.getLatestMine = async (req, res, next) => {
          o.decided_at,
          o.decided_by_user_id,
          o.kaprodi_file_outline,
+         o.kaprodi_file_outline_name,
          o.kaprodi_file_uploaded_at,
          o.kaprodi_file_uploaded_by_user_id,
          o.created_at,
