@@ -5,6 +5,7 @@ const kaprodi = require("../controllers/titleSubmissionKaprodi.controller");
 
 router.post("/", auth, c.createDraft);
 router.get("/me", auth, c.listMine);
+router.get("/latest", auth, c.getLatestMine);
 router.get("/", auth, kaprodi.listForKaprodi);
 router.patch("/:id/review", auth, kaprodi.review);
 router.patch("/:id", auth, c.updateDraft);

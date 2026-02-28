@@ -11,6 +11,7 @@ async function getStudentNpm(userId) {
   return urows[0]?.npm ?? null;
 }
 
+// Create Formulir Pengajuan Judul Skripsi
 exports.createDraft = async (req, res, next) => {
   try {
     if (req.user.userType !== "STUDENT") {
@@ -133,6 +134,59 @@ exports.listMine = async (req, res, next) => {
     );
 
     return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getLatestMine = async (req, res, next) => {
+  try {
+    if (req.user.userType !== "STUDENT") {
+      return res.status(403).json({
+        ok: false,
+        message: "Only students can access their latest title submission",
+      });
+    }
+
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         pj.*,
+         o.judul AS outline_judul,
+         m.nama AS mahasiswa_nama,
+         ps.id AS program_studi_id,
+         ps.nama AS program_studi_nama,
+         d1.nama AS pembimbing1_diajukan_nama,
+         d2.nama AS pembimbing2_diajukan_nama,
+         d3.nama AS pembimbing1_ditetapkan_nama,
+         d4.nama AS pembimbing2_ditetapkan_nama
+       FROM pengajuan_judul pj
+       INNER JOIN outline o ON o.id = pj.outline_id
+       INNER JOIN mahasiswa m ON m.npm = pj.npm
+       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
+       LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
+       LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
+       WHERE pj.npm = ?
+       ORDER BY pj.updated_at DESC, pj.id DESC
+       LIMIT 1`,
+      [npm]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.json({
+        ok: true,
+        data: null,
+        message: "Title submission not found",
+      });
+    }
+
+    return res.json({ ok: true, data: rows[0] });
   } catch (err) {
     next(err);
   }
