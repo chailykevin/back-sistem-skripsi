@@ -204,7 +204,7 @@ exports.getLatestMine = async (req, res, next) => {
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       WHERE o.npm = ? AND UPPER(COALESCE(o.status, '')) <> 'REJECTED'
+       WHERE o.npm = ?
        ORDER BY o.updated_at DESC
        LIMIT 1`,
       [npm]
@@ -328,7 +328,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid outline id" });
     }
 
-    const { status, decisionNote, kaprodiFileOutline } = req.body;
+    const { status, decisionNote, kaprodiFileOutline, kaprodiFileOutlineName } = req.body;
 
     const allowed = ["SUBMITTED", "NEED_REVISION", "REJECTED", "ACCEPTED"];
     if (!status || !allowed.includes(status)) {
@@ -411,6 +411,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
            decided_at = CURRENT_TIMESTAMP,
            decided_by_user_id = ?,
            kaprodi_file_outline = ?,
+           kaprodi_file_outline_name = ?,
            kaprodi_file_uploaded_at = CURRENT_TIMESTAMP,
            kaprodi_file_uploaded_by_user_id = ?
          WHERE id = ?`,
@@ -419,6 +420,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
           note.length ? note : null,
           lecturerUser.id,
           kaprodiFile,
+          kaprodiFileOutlineName,
           lecturerUser.id,
           outlineId,
         ]
