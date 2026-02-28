@@ -462,16 +462,18 @@ exports.resubmit = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid outline id" });
     }
 
-    const { judul, latarBelakang, fileOutline } = req.body;
+    const { judul, latarBelakang, fileOutline, fileOutlineName } = req.body;
 
     const judulVal = judul !== undefined ? String(judul).trim() : null;
     const latarVal = latarBelakang !== undefined ? String(latarBelakang).trim() : null;
     const fileVal = fileOutline !== undefined ? String(fileOutline) : null;
+    const fileNameVal = fileOutlineName !== undefined ? String(fileOutlineName).trim() : null;
 
     if (
       (judulVal === null || judulVal.length === 0) &&
       (latarVal === null || latarVal.length === 0) &&
-      (fileVal === null || fileVal.length === 0)
+      (fileVal === null || fileVal.length === 0) &&
+      (fileNameVal === null || fileNameVal.length === 0)
     ) {
       return res.status(400).json({
         ok: false,
@@ -525,11 +527,17 @@ exports.resubmit = async (req, res, next) => {
       sets.push("file_outline = ?");
       params.push(fileVal);
     }
+    if (fileNameVal !== null && fileNameVal.length > 0) {
+      sets.push("file_outline_name = ?");
+      params.push(fileNameVal);
+    }
 
     // resubmit => status kembali SUBMITTED
     sets.push("status = 'SUBMITTED'");
 
     // clear keputusan Kaprodi (recommended)
+    sets.push("kaprodi_file_outline = NULL");
+    sets.push("kaprodi_file_outline_name = NULL");
     sets.push("decision_note = NULL");
     sets.push("decided_at = NULL");
     sets.push("decided_by_user_id = NULL");
