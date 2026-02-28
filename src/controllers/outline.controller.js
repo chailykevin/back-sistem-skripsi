@@ -185,6 +185,7 @@ exports.getLatestMine = async (req, res, next) => {
          o.judul,
          o.latar_belakang,
          o.file_outline,
+         o.file_outline_name,
          o.npm,
          o.status,
          o.decision_note,
