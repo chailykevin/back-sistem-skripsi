@@ -12,7 +12,7 @@ async function getStudentNpm(userId) {
 }
 
 // Create Formulir Pengajuan Judul Skripsi
-exports.createDraft = async (req, res, next) => {
+exports.createTitleSubmission = async (req, res, next) => {
   try {
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({ ok: false, message: "Only students" });
@@ -69,6 +69,8 @@ exports.createDraft = async (req, res, next) => {
       syaratTranskrip,
       syaratKrs,
       syaratMetodologiNilaiMinC,
+      fileTitleSubmission,
+      fileTitleSubmissionName,
     } = req.body || {};
 
     const [result] = await db.query(
@@ -78,8 +80,9 @@ exports.createDraft = async (req, res, next) => {
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
          syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
-         status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT')`,
+         file_title_submission, file_title_submission_name,
+         status, submitted_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
@@ -92,12 +95,14 @@ exports.createDraft = async (req, res, next) => {
         syaratTranskrip ? 1 : 0,
         syaratKrs ? 1 : 0,
         syaratMetodologiNilaiMinC ? 1 : 0,
+        fileTitleSubmission ?? null,
+        fileTitleSubmissionName ?? null,
       ]
     );
 
     return res.status(201).json({
       ok: true,
-      message: "Draft created",
+      message: "Created",
       data: { id: result.insertId },
     });
   } catch (err) {
@@ -187,173 +192,6 @@ exports.getLatestMine = async (req, res, next) => {
     }
 
     return res.json({ ok: true, data: rows[0] });
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.submit = async (req, res, next) => {
-  try {
-    if (req.user.userType !== "STUDENT") {
-      return res.status(403).json({ ok: false, message: "Only students" });
-    }
-
-    const npm = await getStudentNpm(req.user.id);
-    if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
-    }
-
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid id" });
-    }
-
-    // Pastikan milik mahasiswa dan masih DRAFT
-    const [rows] = await db.query(
-      `SELECT id
-       FROM pengajuan_judul
-       WHERE id = ? AND npm = ? AND status = 'DRAFT'
-       LIMIT 1`,
-      [id, npm]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({
-        ok: false,
-        message: "Draft not found (or already submitted)",
-      });
-    }
-
-    // Minimal validation ringan sebelum submit (silakan tambah jika perlu)
-    // Contoh: wajib isi SKS + checklist 3 syarat
-    const [checkRows] = await db.query(
-      `SELECT
-         sks_diperoleh,
-         syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
-       FROM pengajuan_judul
-       WHERE id = ? LIMIT 1`,
-      [id]
-    );
-
-    const d = checkRows[0];
-    if (
-      d?.sks_diperoleh === null ||
-      d?.syarat_transkrip !== 1 ||
-      d?.syarat_krs !== 1 ||
-      d?.syarat_metodologi_nilai_min_c !== 1
-    ) {
-      return res.status(400).json({
-        ok: false,
-        message: "Administrative requirements are not complete",
-      });
-    }
-
-    await db.query(
-      `UPDATE pengajuan_judul
-       SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [id]
-    );
-
-    return res.json({ ok: true, message: "Submitted" });
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.updateDraft = async (req, res, next) => {
-  try {
-    if (req.user.userType !== "STUDENT") {
-      return res.status(403).json({ ok: false, message: "Only students" });
-    }
-
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid id" });
-    }
-
-    // Ambil npm mahasiswa dari user
-    const [urows] = await db.query(
-      `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-      [req.user.id]
-    );
-    const npm = urows[0]?.npm;
-    if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
-    }
-
-    // Pastikan draft ini milik mahasiswa & masih DRAFT
-    const [rows] = await db.query(
-      `SELECT id
-       FROM pengajuan_judul
-       WHERE id = ? AND npm = ? AND status = 'DRAFT'
-       LIMIT 1`,
-      [id, npm]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({
-        ok: false,
-        message: "Draft not found or already submitted",
-      });
-    }
-
-    // Ambil field yang boleh diupdate
-    const {
-      noHp,
-      sksDiperoleh,
-      pembimbing1DiajukanNidn,
-      pembimbing2DiajukanNidn,
-      perluSuratPengantar,
-      namaPerusahaan,
-      syaratTranskrip,
-      syaratKrs,
-      syaratMetodologiNilaiMinC,
-    } = req.body || {};
-
-    // Bangun query UPDATE secara dinamis (hanya field yang dikirim)
-    const fields = [];
-    const values = [];
-
-    const push = (sql, val) => {
-      fields.push(sql);
-      values.push(val);
-    };
-
-    if (noHp !== undefined) push("no_hp = ?", noHp);
-    if (sksDiperoleh !== undefined) push("sks_diperoleh = ?", sksDiperoleh);
-    if (pembimbing1DiajukanNidn !== undefined)
-      push("pembimbing1_diajukan_nidn = ?", pembimbing1DiajukanNidn);
-    if (pembimbing2DiajukanNidn !== undefined)
-      push("pembimbing2_diajukan_nidn = ?", pembimbing2DiajukanNidn);
-    if (perluSuratPengantar !== undefined)
-      push("perlu_surat_pengantar = ?", perluSuratPengantar ? 1 : 0);
-    if (namaPerusahaan !== undefined)
-      push("nama_perusahaan = ?", namaPerusahaan);
-    if (syaratTranskrip !== undefined)
-      push("syarat_transkrip = ?", syaratTranskrip ? 1 : 0);
-    if (syaratKrs !== undefined)
-      push("syarat_krs = ?", syaratKrs ? 1 : 0);
-    if (syaratMetodologiNilaiMinC !== undefined)
-      push("syarat_metodologi_nilai_min_c = ?", syaratMetodologiNilaiMinC ? 1 : 0);
-
-    if (fields.length === 0) {
-      return res.status(400).json({
-        ok: false,
-        message: "No fields to update",
-      });
-    }
-
-    await db.query(
-      `
-      UPDATE pengajuan_judul
-      SET ${fields.join(", ")}
-      WHERE id = ?
-      `,
-      [...values, id]
-    );
-
-    return res.json({ ok: true, message: "Draft updated" });
   } catch (err) {
     next(err);
   }
