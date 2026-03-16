@@ -25,6 +25,9 @@ app.use("/outlines", outlineRoutes);
 const titleSubmission = require("./routes/titleSubmission.routes");
 app.use("/title-submissions", titleSubmission);
 
+const dosenRoutes = require("./routes/dosen.routes");
+app.use("/dosen", dosenRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
