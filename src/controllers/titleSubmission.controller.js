@@ -80,7 +80,7 @@ exports.createTitleSubmission = async (req, res, next) => {
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
          syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
-         file_title_submission, file_title_submission_name,
+         file_pengajuan_judul, file_pengajuan_judul_name,
          status, submitted_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
