@@ -43,6 +43,19 @@ exports.createTitleSubmission = async (req, res, next) => {
       });
     }
 
+    // Ambil program studi mahasiswa
+    const [mrows] = await db.query(
+      `SELECT program_studi_id
+       FROM mahasiswa
+       WHERE npm = ?
+       LIMIT 1`,
+      [npm]
+    );
+    const programStudiId = mrows[0]?.program_studi_id ?? null;
+    if (!programStudiId) {
+      return res.status(400).json({ ok: false, message: "Program studi tidak valid" });
+    }
+
     // Cegah duplikasi pengajuan untuk outline yang sama
     const [existing] = await db.query(
       `SELECT id, status
@@ -75,17 +88,18 @@ exports.createTitleSubmission = async (req, res, next) => {
 
     const [result] = await db.query(
       `INSERT INTO pengajuan_judul (
-         outline_id, npm,
+         outline_id, npm, program_studi_id,
          no_hp, sks_diperoleh,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
          syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
          file_pengajuan_judul, file_pengajuan_judul_name,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
+        programStudiId,
         noHp ?? null,
         sksDiperoleh ?? null,
         pembimbing1DiajukanNidn ?? null,

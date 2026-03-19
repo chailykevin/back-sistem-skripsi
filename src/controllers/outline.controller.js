@@ -33,6 +33,22 @@ exports.create = async (req, res, next) => {
 
     const npm = users[0].npm;
 
+    // ambil program studi mahasiswa
+    const [mrows] = await db.query(
+      `SELECT program_studi_id
+       FROM mahasiswa
+       WHERE npm = ?
+       LIMIT 1`,
+      [npm]
+    );
+    const programStudiId = mrows[0]?.program_studi_id ?? null;
+    if (!programStudiId) {
+      return res.status(400).json({
+        ok: false,
+        message: "Program studi tidak valid",
+      });
+    }
+
     // cek outline sebelumnya untuk npm ini
     const [existingOutlines] = await db.query(
       `SELECT id, status
@@ -56,9 +72,9 @@ exports.create = async (req, res, next) => {
     // insert outline
     await db.query(
       `INSERT INTO outline
-       (judul, latar_belakang, file_outline, npm, status, file_outline_name)
-       VALUES (?, ?, ?, ?, 'SUBMITTED', ?)`,
-      [judul, latarBelakang, fileOutline, npm, fileOutlineName]
+       (judul, latar_belakang, file_outline, npm, status, file_outline_name, program_studi_id)
+       VALUES (?, ?, ?, ?, 'SUBMITTED', ?, ?)`,
+      [judul, latarBelakang, fileOutline, npm, fileOutlineName, programStudiId]
     );
 
     res.status(201).json({
@@ -411,6 +427,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
            decision_note = ?,
            decided_at = CURRENT_TIMESTAMP,
            decided_by_user_id = ?,
+           program_studi_id = ?,
            kaprodi_file_outline = ?,
            kaprodi_file_outline_name = ?,
            kaprodi_file_uploaded_at = CURRENT_TIMESTAMP,
@@ -420,6 +437,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
           status,
           note.length ? note : null,
           lecturerUser.id,
+          programStudiId,
           kaprodiFile,
           kaprodiFileOutlineName,
           lecturerUser.id,
@@ -433,9 +451,10 @@ exports.reviewByKaprodi = async (req, res, next) => {
            status = ?,
            decision_note = ?,
            decided_at = CURRENT_TIMESTAMP,
-           decided_by_user_id = ?
+           decided_by_user_id = ?,
+           program_studi_id = ?
          WHERE id = ?`,
-        [status, note.length ? note : null, lecturerUser.id, outlineId]
+        [status, note.length ? note : null, lecturerUser.id, programStudiId, outlineId]
       );
     }
 
@@ -495,6 +514,22 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
+    // ambil program studi mahasiswa
+    const [mrows] = await db.query(
+      `SELECT program_studi_id
+       FROM mahasiswa
+       WHERE npm = ?
+       LIMIT 1`,
+      [npm]
+    );
+    const programStudiId = mrows[0]?.program_studi_id ?? null;
+    if (!programStudiId) {
+      return res.status(400).json({
+        ok: false,
+        message: "Program studi tidak valid",
+      });
+    }
+
     // pastikan outline milik mahasiswa ini
     const [orows] = await db.query(
       `SELECT id
@@ -531,6 +566,10 @@ exports.resubmit = async (req, res, next) => {
       sets.push("file_outline_name = ?");
       params.push(fileNameVal);
     }
+
+    // keep program_studi_id in sync
+    sets.push("program_studi_id = ?");
+    params.push(programStudiId);
 
     // resubmit => status kembali SUBMITTED
     sets.push("status = 'SUBMITTED'");
