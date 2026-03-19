@@ -33,15 +33,7 @@ exports.create = async (req, res, next) => {
 
     const npm = users[0].npm;
 
-    // ambil program studi mahasiswa
-    const [mrows] = await db.query(
-      `SELECT program_studi_id
-       FROM mahasiswa
-       WHERE npm = ?
-       LIMIT 1`,
-      [npm]
-    );
-    const programStudiId = mrows[0]?.program_studi_id ?? null;
+    const programStudiId = req.user?.programStudiId ?? null;
     if (!programStudiId) {
       return res.status(400).json({
         ok: false,
@@ -514,15 +506,7 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
-    // ambil program studi mahasiswa
-    const [mrows] = await db.query(
-      `SELECT program_studi_id
-       FROM mahasiswa
-       WHERE npm = ?
-       LIMIT 1`,
-      [npm]
-    );
-    const programStudiId = mrows[0]?.program_studi_id ?? null;
+    const programStudiId = req.user?.programStudiId ?? null;
     if (!programStudiId) {
       return res.status(400).json({
         ok: false,
