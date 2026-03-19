@@ -23,6 +23,8 @@ exports.listForKaprodi = async (req, res, next) => {
         pj.status,
         pj.submitted_at,
         pj.created_at,
+        pj.file_pengajuan_judul,
+        pj.file_pengajuan_judul_name,
         o.judul AS outline_judul,
         m.npm,
         m.nama AS nama_mahasiswa,
@@ -54,8 +56,14 @@ exports.review = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid id" });
     }
 
-    const { status, pembimbing1DitapkanNidn, pembimbing2DitapkanNidn, catatanKaprodi } =
-      req.body || {};
+    const {
+      status,
+      pembimbing1DitapkanNidn,
+      pembimbing2DitapkanNidn,
+      catatanKaprodi,
+      filePengajuanJudul,
+      filePengajuanJudulName,
+    } = req.body || {};
 
     if (!["APPROVED", "REJECTED"].includes(status)) {
       return res.status(400).json({ ok: false, message: "Invalid status" });
@@ -101,6 +109,8 @@ exports.review = async (req, res, next) => {
         pembimbing1_ditetapkan_nidn = ?,
         pembimbing2_ditetapkan_nidn = ?,
         catatan_kaprodi = ?,
+        file_pengajuan_judul = COALESCE(?, file_pengajuan_judul),
+        file_pengajuan_judul_name = COALESCE(?, file_pengajuan_judul_name),
         disposisi_at = CURRENT_TIMESTAMP,
         decided_by_user_id = ?
       WHERE id = ?
@@ -110,6 +120,8 @@ exports.review = async (req, res, next) => {
         pembimbing1DitapkanNidn ?? null,
         pembimbing2DitapkanNidn ?? null,
         catatanKaprodi ?? null,
+        filePengajuanJudul ?? null,
+        filePengajuanJudulName ?? null,
         req.user.id,
         id,
       ]
