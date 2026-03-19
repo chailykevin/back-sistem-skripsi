@@ -28,6 +28,9 @@ app.use("/title-submissions", titleSubmission);
 const dosenRoutes = require("./routes/dosen.routes");
 app.use("/dosen", dosenRoutes);
 
+const programStudiRoutes = require("./routes/programStudi.routes");
+app.use("/program-studi", programStudiRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
