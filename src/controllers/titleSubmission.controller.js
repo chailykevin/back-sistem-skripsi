@@ -71,11 +71,14 @@ exports.createTitleSubmission = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
-      syaratTranskrip,
-      syaratKrs,
-      syaratMetodologiNilaiMinC,
       fileTitleSubmission,
       fileTitleSubmissionName,
+      fileTranskrip,
+      fileTranskripName,
+      fileKrs,
+      fileKrsName,
+      fileMetodologi,
+      fileMetodologiName,
     } = req.body || {};
 
     const [result] = await db.query(
@@ -84,10 +87,12 @@ exports.createTitleSubmission = async (req, res, next) => {
          no_hp, sks_diperoleh,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
-         syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
          file_pengajuan_judul, file_pengajuan_judul_name,
+         file_transkrip, file_transkrip_name,
+         file_krs, file_krs_name,
+         file_metodologi, file_metodologi_name,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
@@ -98,11 +103,14 @@ exports.createTitleSubmission = async (req, res, next) => {
         pembimbing2DiajukanNidn ?? null,
         perluSuratPengantar ? 1 : 0,
         namaPerusahaan ?? null,
-        syaratTranskrip ? 1 : 0,
-        syaratKrs ? 1 : 0,
-        syaratMetodologiNilaiMinC ? 1 : 0,
         fileTitleSubmission ?? null,
         fileTitleSubmissionName ?? null,
+        fileTranskrip ?? null,
+        fileTranskripName ?? null,
+        fileKrs ?? null,
+        fileKrsName ?? null,
+        fileMetodologi ?? null,
+        fileMetodologiName ?? null,
       ]
     );
 
@@ -224,13 +232,42 @@ exports.getById = async (req, res, next) => {
       const [rows] = await db.query(
         `
         SELECT
-          pj.*,
+          pj.id,
+          pj.outline_id,
+          pj.npm,
+          pj.no_hp,
+          pj.sks_diperoleh,
+          pj.pembimbing1_diajukan_nidn,
+          pj.pembimbing2_diajukan_nidn,
+          pj.perlu_surat_pengantar,
+          pj.nama_perusahaan,
+          pj.syarat_transkrip,
+          pj.syarat_krs,
+          pj.syarat_metodologi_nilai_min_c,
+          pj.status,
+          pj.submitted_at,
+          pj.pembimbing1_ditetapkan_nidn,
+          pj.pembimbing2_ditetapkan_nidn,
+          pj.catatan_kaprodi,
+          pj.disposisi_at,
+          pj.decided_by_user_id,
+          pj.created_at,
+          pj.updated_at,
+          pj.file_pengajuan_judul,
+          pj.file_pengajuan_judul_name,
+          pj.file_transkrip,
+          pj.file_transkrip_name,
+          pj.file_krs,
+          pj.file_krs_name,
+          pj.file_metodologi,
+          pj.file_metodologi_name,
 
           o.judul AS outline_judul,
 
           m.nama AS mahasiswa_nama,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
+          dkap.nama AS kaprodi_nama,
 
           d1.nama AS pembimbing1_diajukan_nama,
           d2.nama AS pembimbing2_diajukan_nama,
@@ -241,6 +278,7 @@ exports.getById = async (req, res, next) => {
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
 
         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
@@ -274,13 +312,42 @@ exports.getById = async (req, res, next) => {
       const [rows] = await db.query(
         `
         SELECT
-          pj.*,
+          pj.id,
+          pj.outline_id,
+          pj.npm,
+          pj.no_hp,
+          pj.sks_diperoleh,
+          pj.pembimbing1_diajukan_nidn,
+          pj.pembimbing2_diajukan_nidn,
+          pj.perlu_surat_pengantar,
+          pj.nama_perusahaan,
+          pj.syarat_transkrip,
+          pj.syarat_krs,
+          pj.syarat_metodologi_nilai_min_c,
+          pj.status,
+          pj.submitted_at,
+          pj.pembimbing1_ditetapkan_nidn,
+          pj.pembimbing2_ditetapkan_nidn,
+          pj.catatan_kaprodi,
+          pj.disposisi_at,
+          pj.decided_by_user_id,
+          pj.created_at,
+          pj.updated_at,
+          pj.file_pengajuan_judul,
+          pj.file_pengajuan_judul_name,
+          pj.file_transkrip,
+          pj.file_transkrip_name,
+          pj.file_krs,
+          pj.file_krs_name,
+          pj.file_metodologi,
+          pj.file_metodologi_name,
 
           o.judul AS outline_judul,
 
           m.nama AS mahasiswa_nama,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
+          dkap.nama AS kaprodi_nama,
 
           d1.nama AS pembimbing1_diajukan_nama,
           d2.nama AS pembimbing2_diajukan_nama,
@@ -291,6 +358,7 @@ exports.getById = async (req, res, next) => {
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
 
         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn

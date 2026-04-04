@@ -72,7 +72,7 @@ exports.create = async (req, res, next) => {
     const outlineId = insertResult?.insertId ?? null;
     if (outlineId) {
       await db.query(
-        `INSERT INTO outline_files
+        `INSERT INTO outline_details
          (outline_id, revision_no, file_outline_mahasiswa, file_outline_mahasiswa_name)
          VALUES (?, 1, ?, ?)`,
         [outlineId, fileOutline, fileOutlineName ?? null]
@@ -118,9 +118,7 @@ exports.getById = async (req, res, next) => {
            o.latar_belakang,
            o.npm,
            o.status,
-           o.decision_note,
-           o.decided_at,
-           o.decided_by_user_id,
+           ofl.decision_note,
            o.created_at,
            o.updated_at,
            m.nama AS mahasiswa_nama,
@@ -131,17 +129,23 @@ exports.getById = async (req, res, next) => {
            ofl.file_outline_kaprodi,
            ofl.file_outline_kaprodi_name,
            ofl.revision_no AS file_revision_no,
-           ofl.updated_at AS file_updated_at
+           ofl.updated_at AS file_updated_at,
+           prev.decision_note AS previous_decision_note
         FROM outline o
         INNER JOIN mahasiswa m ON m.npm = o.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN outline_files ofl
+        LEFT JOIN outline_details ofl
           ON ofl.outline_id = o.id
          AND ofl.revision_no = (
-           SELECT MAX(revision_no) FROM outline_files WHERE outline_id = o.id
+            SELECT MAX(revision_no) FROM outline_details WHERE outline_id = o.id
           )
-         WHERE o.id = ? AND o.npm = ?
-         LIMIT 1`,
+        LEFT JOIN outline_details prev
+          ON prev.outline_id = o.id
+         AND prev.revision_no = (
+           SELECT MAX(revision_no) - 1 FROM outline_details WHERE outline_id = o.id
+         )
+        WHERE o.id = ? AND o.npm = ?
+        LIMIT 1`,
         [id, studentNpm]
       );
       rows = r;
@@ -154,9 +158,7 @@ exports.getById = async (req, res, next) => {
            o.latar_belakang,
            o.npm,
            o.status,
-           o.decision_note,
-           o.decided_at,
-           o.decided_by_user_id,
+           ofl.decision_note,
            o.created_at,
            o.updated_at,
            m.nama AS mahasiswa_nama,
@@ -167,17 +169,23 @@ exports.getById = async (req, res, next) => {
            ofl.file_outline_kaprodi,
            ofl.file_outline_kaprodi_name,
            ofl.revision_no AS file_revision_no,
-           ofl.updated_at AS file_updated_at
+           ofl.updated_at AS file_updated_at,
+           prev.decision_note AS previous_decision_note
         FROM outline o
         INNER JOIN mahasiswa m ON m.npm = o.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN outline_files ofl
+        LEFT JOIN outline_details ofl
           ON ofl.outline_id = o.id
          AND ofl.revision_no = (
-           SELECT MAX(revision_no) FROM outline_files WHERE outline_id = o.id
+            SELECT MAX(revision_no) FROM outline_details WHERE outline_id = o.id
           )
-         WHERE o.id = ?
-         LIMIT 1`,
+        LEFT JOIN outline_details prev
+          ON prev.outline_id = o.id
+         AND prev.revision_no = (
+           SELECT MAX(revision_no) - 1 FROM outline_details WHERE outline_id = o.id
+         )
+        WHERE o.id = ?
+        LIMIT 1`,
         [id]
       );
       rows = r;
@@ -242,9 +250,7 @@ exports.getLatestMine = async (req, res, next) => {
          o.latar_belakang,
          o.npm,
          o.status,
-         o.decision_note,
-         o.decided_at,
-         o.decided_by_user_id,
+         ofl.decision_note,
          o.created_at,
          o.updated_at,
          m.nama AS mahasiswa_nama,
@@ -259,10 +265,10 @@ exports.getLatestMine = async (req, res, next) => {
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LEFT JOIN outline_files ofl
+       LEFT JOIN outline_details ofl
          ON ofl.outline_id = o.id
         AND ofl.revision_no = (
-          SELECT MAX(revision_no) FROM outline_files WHERE outline_id = o.id
+          SELECT MAX(revision_no) FROM outline_details WHERE outline_id = o.id
         )
        WHERE o.npm = ?
        ORDER BY o.updated_at DESC
@@ -275,6 +281,87 @@ exports.getLatestMine = async (req, res, next) => {
     }
 
     return res.json({ ok: true, data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getReviewHistory = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid outline id" });
+    }
+
+    // access check
+    let targetNpm = null;
+    if (req.user.userType === "STUDENT") {
+      const [urows] = await db.query(
+        `SELECT npm FROM users WHERE id = ? LIMIT 1`,
+        [req.user.id]
+      );
+      targetNpm = urows[0]?.npm ?? null;
+      if (!targetNpm) {
+        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      }
+    }
+
+    if (req.user.userType === "LECTURER") {
+      const [urows] = await db.query(
+        `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [req.user.id]
+      );
+      const nidn = urows[0]?.nidn ?? null;
+      if (!nidn) {
+        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+      }
+
+      const [prodiRows] = await db.query(
+        `SELECT id FROM program_studi WHERE kaprodi_nidn = ? LIMIT 1`,
+        [nidn]
+      );
+      if (prodiRows.length === 0) {
+        return res.status(403).json({
+          ok: false,
+          message: "You are not assigned as Kaprodi",
+        });
+      }
+
+      const [orows] = await db.query(
+        `SELECT o.npm
+         FROM outline o
+         INNER JOIN mahasiswa m ON m.npm = o.npm
+         WHERE o.id = ? AND m.program_studi_id = ?
+         LIMIT 1`,
+        [id, prodiRows[0].id]
+      );
+      if (orows.length === 0) {
+        return res.status(404).json({ ok: false, message: "Outline not found" });
+      }
+      targetNpm = orows[0].npm;
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         d.revision_no,
+         d.file_outline_mahasiswa,
+         d.file_outline_mahasiswa_name,
+         d.file_outline_kaprodi,
+         d.file_outline_kaprodi_name,
+         d.decision_note,
+         d.updated_at,
+         o.id AS outline_id,
+         o.judul,
+         o.status
+       FROM outline_details d
+       INNER JOIN outline o ON o.id = d.outline_id
+       WHERE o.id = ?
+       ORDER BY d.revision_no DESC
+       LIMIT 3`,
+      [id]
+    );
+
+    return res.json({ ok: true, data: rows });
   } catch (err) {
     next(err);
   }
@@ -344,7 +431,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-    // ambil list outline (tanpa file_outline)
+    // ambil list outline: hanya latest per mahasiswa
     const [rows] = await db.query(
       `SELECT
          o.id,
@@ -357,6 +444,11 @@ exports.listForKaprodi = async (req, res, next) => {
          m.program_studi_id
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
+       INNER JOIN (
+         SELECT npm, MAX(id) AS max_id
+         FROM outline
+         GROUP BY npm
+       ) latest ON latest.npm = o.npm AND latest.max_id = o.id
        ${whereSql}
        ORDER BY o.created_at DESC`,
       params
@@ -467,23 +559,14 @@ exports.reviewByKaprodi = async (req, res, next) => {
         `UPDATE outline
          SET
            status = ?,
-           decision_note = ?,
-           decided_at = CURRENT_TIMESTAMP,
-           decided_by_user_id = ?,
            program_studi_id = ?
          WHERE id = ?`,
-        [
-          status,
-          note.length ? note : null,
-          lecturerUser.id,
-          programStudiId,
-          outlineId,
-        ]
+        [status, programStudiId, outlineId]
       );
 
       const [revRows] = await db.query(
         `SELECT revision_no
-         FROM outline_files
+         FROM outline_details
          WHERE outline_id = ?
          ORDER BY revision_no DESC
          LIMIT 1`,
@@ -492,12 +575,19 @@ exports.reviewByKaprodi = async (req, res, next) => {
       const revisionNo = revRows[0]?.revision_no ?? null;
       if (revisionNo) {
         await db.query(
-          `UPDATE outline_files
+          `UPDATE outline_details
            SET
+             decision_note = ?,
              file_outline_kaprodi = ?,
              file_outline_kaprodi_name = ?
            WHERE outline_id = ? AND revision_no = ?`,
-          [kaprodiFile, kaprodiFileOutlineName ?? null, outlineId, revisionNo]
+          [
+            note.length ? note : null,
+            kaprodiFile,
+            kaprodiFileOutlineName ?? null,
+            outlineId,
+            revisionNo,
+          ]
         );
       }
     } else {
@@ -505,13 +595,28 @@ exports.reviewByKaprodi = async (req, res, next) => {
         `UPDATE outline
          SET
            status = ?,
-           decision_note = ?,
-           decided_at = CURRENT_TIMESTAMP,
-           decided_by_user_id = ?,
            program_studi_id = ?
          WHERE id = ?`,
-        [status, note.length ? note : null, lecturerUser.id, programStudiId, outlineId]
+        [status, programStudiId, outlineId]
       );
+
+      const [revRows] = await db.query(
+        `SELECT revision_no
+         FROM outline_details
+         WHERE outline_id = ?
+         ORDER BY revision_no DESC
+         LIMIT 1`,
+        [outlineId]
+      );
+      const revisionNo = revRows[0]?.revision_no ?? null;
+      if (revisionNo) {
+        await db.query(
+          `UPDATE outline_details
+           SET decision_note = ?
+           WHERE outline_id = ? AND revision_no = ?`,
+          [note.length ? note : null, outlineId, revisionNo]
+        );
+      }
     }
 
     return res.json({
@@ -615,9 +720,6 @@ exports.resubmit = async (req, res, next) => {
     // resubmit => status kembali SUBMITTED
     sets.push("status = 'SUBMITTED'");
 
-    sets.push("decision_note = NULL");
-    sets.push("decided_at = NULL");
-    sets.push("decided_by_user_id = NULL");
 
     const sql = `UPDATE outline SET ${sets.join(", ")} WHERE id = ?`;
     params.push(outlineId);
@@ -627,13 +729,13 @@ exports.resubmit = async (req, res, next) => {
     if (fileVal !== null && fileVal.length > 0) {
       const [revRows] = await conn.query(
         `SELECT MAX(revision_no) AS max_rev
-         FROM outline_files
+         FROM outline_details
          WHERE outline_id = ?`,
         [outlineId]
       );
       const nextRev = Number(revRows[0]?.max_rev || 0) + 1;
       await conn.query(
-        `INSERT INTO outline_files
+        `INSERT INTO outline_details
          (outline_id, revision_no, file_outline_mahasiswa, file_outline_mahasiswa_name)
          VALUES (?, ?, ?, ?)`,
         [outlineId, nextRev, fileVal, fileNameVal ?? null]
@@ -641,12 +743,12 @@ exports.resubmit = async (req, res, next) => {
 
       // keep only latest 3 revisions
       await conn.query(
-        `DELETE FROM outline_files
+        `DELETE FROM outline_details
          WHERE outline_id = ?
            AND revision_no NOT IN (
              SELECT revision_no FROM (
                SELECT revision_no
-               FROM outline_files
+               FROM outline_details
                WHERE outline_id = ?
                ORDER BY revision_no DESC
                LIMIT 3
