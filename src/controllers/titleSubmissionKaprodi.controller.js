@@ -63,10 +63,23 @@ exports.review = async (req, res, next) => {
       catatanKaprodi,
       filePengajuanJudul,
       filePengajuanJudulName,
+      syaratTranskrip,
+      syaratKrs,
+      syaratMetodologi,
     } = req.body || {};
 
-    if (!["APPROVED", "REJECTED"].includes(status)) {
+    if (!["APPROVED", "NEED_REVISION", "REJECTED"].includes(status)) {
       return res.status(400).json({ ok: false, message: "Invalid status" });
+    }
+
+    if (
+      status === "NEED_REVISION" &&
+      (!catatanKaprodi || String(catatanKaprodi).trim().length === 0)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "catatanKaprodi is required for NEED_REVISION",
+      });
     }
 
     // Ambil nidn Kaprodi
@@ -109,6 +122,9 @@ exports.review = async (req, res, next) => {
         pembimbing1_ditetapkan_nidn = ?,
         pembimbing2_ditetapkan_nidn = ?,
         catatan_kaprodi = ?,
+        syarat_transkrip = ?,
+        syarat_krs = ?,
+        syarat_metodologi_nilai_min_c = ?,
         file_pengajuan_judul = COALESCE(?, file_pengajuan_judul),
         file_pengajuan_judul_name = COALESCE(?, file_pengajuan_judul_name),
         disposisi_at = CURRENT_TIMESTAMP,
@@ -120,6 +136,9 @@ exports.review = async (req, res, next) => {
         pembimbing1DitapkanNidn ?? null,
         pembimbing2DitapkanNidn ?? null,
         catatanKaprodi ?? null,
+        syaratTranskrip !== undefined ? (syaratTranskrip ? 1 : 0) : null,
+        syaratKrs !== undefined ? (syaratKrs ? 1 : 0) : null,
+        syaratMetodologi !== undefined ? (syaratMetodologi ? 1 : 0) : null,
         filePengajuanJudul ?? null,
         filePengajuanJudulName ?? null,
         req.user.id,

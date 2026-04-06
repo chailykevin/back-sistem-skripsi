@@ -384,3 +384,267 @@ exports.getById = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.resubmit = async (req, res, next) => {
+  let conn;
+  let txStarted = false;
+  try {
+    if (!req.user || req.user.userType !== "STUDENT") {
+      return res.status(403).json({
+        ok: false,
+        message: "Only students can resubmit title submissions",
+      });
+    }
+
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid title submission id" });
+    }
+
+    const {
+      noHp,
+      sksDiperoleh,
+      pembimbing1DiajukanNidn,
+      pembimbing2DiajukanNidn,
+      perluSuratPengantar,
+      namaPerusahaan,
+      fileTitleSubmission,
+      fileTitleSubmissionName,
+      fileTranskrip,
+      fileTranskripName,
+      fileKrs,
+      fileKrsName,
+      fileMetodologi,
+      fileMetodologiName,
+    } = req.body || {};
+
+    const noHpVal = noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
+    const sksRaw =
+      sksDiperoleh !== undefined && sksDiperoleh !== null ? String(sksDiperoleh).trim() : null;
+    let sksVal = null;
+    if (sksRaw !== null && sksRaw.length > 0) {
+      const parsedSks = Number(sksRaw);
+      if (!Number.isFinite(parsedSks)) {
+        return res.status(400).json({
+          ok: false,
+          message: "sksDiperoleh must be a valid number",
+        });
+      }
+      sksVal = parsedSks;
+    }
+    const pembimbing1Val =
+      pembimbing1DiajukanNidn !== undefined && pembimbing1DiajukanNidn !== null
+        ? String(pembimbing1DiajukanNidn).trim()
+        : null;
+    const pembimbing2Val =
+      pembimbing2DiajukanNidn !== undefined && pembimbing2DiajukanNidn !== null
+        ? String(pembimbing2DiajukanNidn).trim()
+        : null;
+    const perluSuratProvided = perluSuratPengantar !== undefined;
+    const namaPerusahaanVal =
+      namaPerusahaan !== undefined && namaPerusahaan !== null
+        ? String(namaPerusahaan).trim()
+        : null;
+    const fileTitleSubmissionVal =
+      fileTitleSubmission !== undefined && fileTitleSubmission !== null
+        ? String(fileTitleSubmission)
+        : null;
+    const fileTitleSubmissionNameVal =
+      fileTitleSubmissionName !== undefined && fileTitleSubmissionName !== null
+        ? String(fileTitleSubmissionName).trim()
+        : null;
+    const fileTranskripVal =
+      fileTranskrip !== undefined && fileTranskrip !== null ? String(fileTranskrip) : null;
+    const fileTranskripNameVal =
+      fileTranskripName !== undefined && fileTranskripName !== null
+        ? String(fileTranskripName).trim()
+        : null;
+    const fileKrsVal = fileKrs !== undefined && fileKrs !== null ? String(fileKrs) : null;
+    const fileKrsNameVal =
+      fileKrsName !== undefined && fileKrsName !== null ? String(fileKrsName).trim() : null;
+    const fileMetodologiVal =
+      fileMetodologi !== undefined && fileMetodologi !== null ? String(fileMetodologi) : null;
+    const fileMetodologiNameVal =
+      fileMetodologiName !== undefined && fileMetodologiName !== null
+        ? String(fileMetodologiName).trim()
+        : null;
+
+    const hasMeaningfulUpdate =
+      (noHpVal !== null && noHpVal.length > 0) ||
+      sksVal !== null ||
+      (pembimbing1Val !== null && pembimbing1Val.length > 0) ||
+      (pembimbing2Val !== null && pembimbing2Val.length > 0) ||
+      perluSuratProvided ||
+      (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
+      (fileTitleSubmissionVal !== null && fileTitleSubmissionVal.length > 0) ||
+      (fileTranskripVal !== null && fileTranskripVal.length > 0) ||
+      (fileKrsVal !== null && fileKrsVal.length > 0) ||
+      (fileMetodologiVal !== null && fileMetodologiVal.length > 0);
+
+    if (!hasMeaningfulUpdate) {
+      return res.status(400).json({
+        ok: false,
+        message: "At least one meaningful field must be provided",
+      });
+    }
+
+    if (
+      pembimbing1Val &&
+      pembimbing2Val &&
+      pembimbing1Val.length > 0 &&
+      pembimbing1Val === pembimbing2Val
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Pembimbing 1 and Pembimbing 2 cannot be the same",
+      });
+    }
+
+    if (
+      perluSuratProvided &&
+      Boolean(perluSuratPengantar) &&
+      (!namaPerusahaanVal || namaPerusahaanVal.length === 0)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "namaPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [rows] = await conn.query(
+      `SELECT id, status
+       FROM pengajuan_judul
+       WHERE id = ? AND npm = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [id, npm]
+    );
+
+    if (rows.length === 0) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(404).json({
+        ok: false,
+        message: "Title submission not found",
+      });
+    }
+
+    const currentStatus = String(rows[0].status || "").toUpperCase();
+    if (!["REJECTED", "NEED_REVISION"].includes(currentStatus)) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Title submission status is not eligible for resubmit",
+      });
+    }
+
+    const sets = [];
+    const params = [];
+
+    if (noHpVal !== null && noHpVal.length > 0) {
+      sets.push("no_hp = ?");
+      params.push(noHpVal);
+    }
+    if (sksVal !== null) {
+      sets.push("sks_diperoleh = ?");
+      params.push(sksVal);
+    }
+    if (pembimbing1Val !== null && pembimbing1Val.length > 0) {
+      sets.push("pembimbing1_diajukan_nidn = ?");
+      params.push(pembimbing1Val);
+    }
+    if (pembimbing2Val !== null && pembimbing2Val.length > 0) {
+      sets.push("pembimbing2_diajukan_nidn = ?");
+      params.push(pembimbing2Val);
+    }
+    if (perluSuratProvided) {
+      sets.push("perlu_surat_pengantar = ?");
+      params.push(Boolean(perluSuratPengantar) ? 1 : 0);
+      if (!Boolean(perluSuratPengantar)) {
+        sets.push("nama_perusahaan = NULL");
+      }
+    }
+    if (
+      namaPerusahaanVal !== null &&
+      namaPerusahaanVal.length > 0 &&
+      (!perluSuratProvided || Boolean(perluSuratPengantar))
+    ) {
+      sets.push("nama_perusahaan = ?");
+      params.push(namaPerusahaanVal);
+    }
+    if (fileTitleSubmissionVal !== null && fileTitleSubmissionVal.length > 0) {
+      sets.push("file_pengajuan_judul = ?");
+      params.push(fileTitleSubmissionVal);
+      if (fileTitleSubmissionNameVal !== null && fileTitleSubmissionNameVal.length > 0) {
+        sets.push("file_pengajuan_judul_name = ?");
+        params.push(fileTitleSubmissionNameVal);
+      }
+    }
+    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
+      sets.push("file_transkrip = ?");
+      params.push(fileTranskripVal);
+      if (fileTranskripNameVal !== null && fileTranskripNameVal.length > 0) {
+        sets.push("file_transkrip_name = ?");
+        params.push(fileTranskripNameVal);
+      }
+    }
+    if (fileKrsVal !== null && fileKrsVal.length > 0) {
+      sets.push("file_krs = ?");
+      params.push(fileKrsVal);
+      if (fileKrsNameVal !== null && fileKrsNameVal.length > 0) {
+        sets.push("file_krs_name = ?");
+        params.push(fileKrsNameVal);
+      }
+    }
+    if (fileMetodologiVal !== null && fileMetodologiVal.length > 0) {
+      sets.push("file_metodologi = ?");
+      params.push(fileMetodologiVal);
+      if (fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0) {
+        sets.push("file_metodologi_name = ?");
+        params.push(fileMetodologiNameVal);
+      }
+    }
+
+    sets.push("status = 'SUBMITTED'");
+    sets.push("submitted_at = CURRENT_TIMESTAMP");
+    sets.push("disposisi_at = NULL");
+    sets.push("catatan_kaprodi = NULL");
+    sets.push("decided_by_user_id = NULL");
+    sets.push("pembimbing1_ditetapkan_nidn = NULL");
+    sets.push("pembimbing2_ditetapkan_nidn = NULL");
+    sets.push("updated_at = CURRENT_TIMESTAMP");
+
+    const sql = `UPDATE pengajuan_judul SET ${sets.join(", ")} WHERE id = ?`;
+    params.push(id);
+    await conn.query(sql, params);
+
+    await conn.commit();
+    txStarted = false;
+
+    return res.json({
+      ok: true,
+      message: "Title submission resubmitted",
+    });
+  } catch (err) {
+    try {
+      if (conn && txStarted) {
+        await conn.rollback();
+      }
+    } catch (_) {}
+    next(err);
+  } finally {
+    if (conn) {
+      conn.release();
+    }
+  }
+};
