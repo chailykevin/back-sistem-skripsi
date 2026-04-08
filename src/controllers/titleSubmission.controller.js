@@ -130,7 +130,7 @@ exports.createTitleSubmission = async (req, res, next) => {
   let conn;
   let txStarted = false;
   try {
-    if (req.user.userType !== "STUDENT") {
+    if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({ ok: false, message: "Only students" });
     }
 
@@ -300,7 +300,7 @@ exports.createTitleSubmission = async (req, res, next) => {
 
 exports.listMine = async (req, res, next) => {
   try {
-    if (req.user.userType !== "STUDENT") {
+    if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({ ok: false, message: "Only students" });
     }
 
@@ -334,7 +334,7 @@ exports.listMine = async (req, res, next) => {
 
 exports.getLatestMine = async (req, res, next) => {
   try {
-    if (req.user.userType !== "STUDENT") {
+    if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
         message: "Only students can access their latest title submission",
@@ -394,7 +394,7 @@ exports.getById = async (req, res, next) => {
     }
 
     // STUDENT: hanya boleh lihat miliknya
-    if (req.user.userType === "STUDENT") {
+    if (req.user.hasRole("STUDENT")) {
       const [urows] = await db.query(
         `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
         [req.user.id]
@@ -464,7 +464,7 @@ exports.getById = async (req, res, next) => {
     }
 
     // LECTURER (Kaprodi): hanya boleh pengajuan dari prodinya
-    if (req.user.userType === "LECTURER") {
+    if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [urows] = await db.query(
         `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
         [req.user.id]
@@ -544,7 +544,7 @@ exports.resubmit = async (req, res, next) => {
   let conn;
   let txStarted = false;
   try {
-    if (!req.user || req.user.userType !== "STUDENT") {
+    if (!req.user || !req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
         message: "Only students can resubmit title submissions",

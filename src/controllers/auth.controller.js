@@ -2,6 +2,25 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const db = require("../db"); // mysql2 pool
 
+function deriveLegacyUserType(roles = []) {
+  if (roles.includes("STUDENT")) return "STUDENT";
+  if (roles.includes("LECTURER") || roles.includes("KAPRODI")) return "LECTURER";
+  return roles[0] ?? null;
+}
+
+async function getUserRoles(userId) {
+  const [roleRows] = await db.query(
+    `SELECT DISTINCT r.code
+     FROM user_roles ur
+     INNER JOIN roles r ON r.id = ur.role_id
+     WHERE ur.user_id = ?
+       AND ur.is_active = 1
+       AND r.is_active = 1`,
+    [userId]
+  );
+  return roleRows.map((row) => row.code);
+}
+
 exports.login = async (req, res, next) => {
   try {
     const { username, password } = req.body;
@@ -35,10 +54,13 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // Ambil profil sesuai tipe user
+    const roles = await getUserRoles(user.id);
+    const legacyUserType = deriveLegacyUserType(roles);
+
+    // Ambil profil sesuai role (bukan users.user_type)
     let profile = null;
 
-    if (user.user_type === "STUDENT") {
+    if (roles.includes("STUDENT")) {
       const [rows] = await db.query(
         `SELECT npm, nama FROM mahasiswa WHERE npm = ? LIMIT 1`,
         [user.npm]
@@ -46,7 +68,7 @@ exports.login = async (req, res, next) => {
       profile = rows[0] || null;
     }
 
-    if (user.user_type === "LECTURER") {
+    if (!profile && (roles.includes("LECTURER") || roles.includes("KAPRODI"))) {
       const [rows] = await db.query(
         `SELECT nidn, nama FROM dosen WHERE nidn = ? LIMIT 1`,
         [user.nidn]
@@ -57,7 +79,8 @@ exports.login = async (req, res, next) => {
     const token = jwt.sign(
     {
       sub: String(user.id),
-      userType: user.user_type,
+      roles,
+      userType: legacyUserType,
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN ?? "7d" }
@@ -70,7 +93,8 @@ exports.login = async (req, res, next) => {
         user: {
           id: user.id,
           username: user.username,
-          userType: user.user_type,
+          userType: legacyUserType,
+          roles,
           profile,
         }
       },
@@ -85,7 +109,7 @@ exports.me = async (req, res, next) => {
     const userId = Number(req.user.id);
 
     const [rows] = await db.query(
-      `SELECT id, username, user_type, npm, nidn, is_active
+      `SELECT id, username, npm, nidn, is_active
        FROM users
        WHERE id = ? AND is_active = 1
        LIMIT 1`,
@@ -97,9 +121,11 @@ exports.me = async (req, res, next) => {
     }
 
     const user = rows[0];
+    const roles = await getUserRoles(user.id);
+    const legacyUserType = deriveLegacyUserType(roles);
 
     let profile = null;
-    if (user.user_type === "STUDENT") {
+    if (roles.includes("STUDENT")) {
       const [p] = await db.query(
         `SELECT npm, mahasiswa.nama, program_studi.nama as programStudi FROM mahasiswa LEFT JOIN program_studi ON mahasiswa.program_studi_id = program_studi.id WHERE npm = ? LIMIT 1`,
         [user.npm]
@@ -107,7 +133,7 @@ exports.me = async (req, res, next) => {
       profile = p[0] || null;
     }
 
-    if (user.user_type === "LECTURER") {
+    if (!profile && (roles.includes("LECTURER") || roles.includes("KAPRODI"))) {
       const [p] = await db.query(
         `SELECT nidn, nama FROM dosen WHERE nidn = ? LIMIT 1`,
         [user.nidn]
@@ -120,7 +146,8 @@ exports.me = async (req, res, next) => {
       data: {
         id: user.id,
         username: user.username,
-        userType: user.user_type,
+        userType: legacyUserType,
+        roles,
         profile,
       },
     });

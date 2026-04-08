@@ -53,7 +53,7 @@ async function upsertFileByType(conn, pengajuanJudulId, fileType, fileContent, f
 
 exports.listForKaprodi = async (req, res, next) => {
   try {
-    if (req.user.userType !== "LECTURER") {
+    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
       return res.status(403).json({ ok: false, message: "Only Kaprodi" });
     }
 
@@ -121,7 +121,7 @@ exports.review = async (req, res, next) => {
   let conn;
   let txStarted = false;
   try {
-    if (req.user.userType !== "LECTURER") {
+    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
       return res.status(403).json({ ok: false, message: "Only Kaprodi" });
     }
 

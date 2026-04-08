@@ -2,7 +2,7 @@ const db = require("../db");
 
 exports.create = async (req, res, next) => {
   try {
-    if (req.user.userType !== "STUDENT") {
+    if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
         message: "Only students can upload outline",
@@ -98,7 +98,7 @@ exports.getById = async (req, res, next) => {
 
     // Mahasiswa: harus hanya miliknya
     let studentNpm = null;
-    if (req.user.userType === "STUDENT") {
+    if (req.user.hasRole("STUDENT")) {
       const [urows] = await db.query(
         `SELECT npm FROM users WHERE id = ? LIMIT 1`,
         [req.user.id]
@@ -110,7 +110,7 @@ exports.getById = async (req, res, next) => {
     }
 
     let rows;
-    if (req.user.userType === "STUDENT") {
+    if (req.user.hasRole("STUDENT")) {
       const [r] = await db.query(
         `SELECT
            o.id,
@@ -195,7 +195,7 @@ exports.getById = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Outline not found" });
     }
 
-    if (req.user.userType === "LECTURER") {
+    if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [otherRows] = await db.query(
         `SELECT
            id,
@@ -226,7 +226,7 @@ exports.getById = async (req, res, next) => {
 
 exports.getLatestMine = async (req, res, next) => {
   try {
-    if (req.user.userType !== "STUDENT") {
+    if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
         message: "Only students can access their latest outline",
@@ -295,7 +295,7 @@ exports.getReviewHistory = async (req, res, next) => {
 
     // access check
     let targetNpm = null;
-    if (req.user.userType === "STUDENT") {
+    if (req.user.hasRole("STUDENT")) {
       const [urows] = await db.query(
         `SELECT npm FROM users WHERE id = ? LIMIT 1`,
         [req.user.id]
@@ -306,7 +306,7 @@ exports.getReviewHistory = async (req, res, next) => {
       }
     }
 
-    if (req.user.userType === "LECTURER") {
+    if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [urows] = await db.query(
         `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
         [req.user.id]
@@ -370,7 +370,7 @@ exports.getReviewHistory = async (req, res, next) => {
 exports.listForKaprodi = async (req, res, next) => {
   try {
     // hanya dosen (LECTURER) yang bisa jadi kaprodi
-    if (req.user.userType !== "LECTURER") {
+    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
       return res.status(403).json({
         ok: false,
         message: "Only lecturers can access this endpoint",
@@ -468,7 +468,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
 exports.reviewByKaprodi = async (req, res, next) => {
   try {
-    if (req.user.userType !== "LECTURER") {
+    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
       return res.status(403).json({
         ok: false,
         message: "Only lecturers can review outlines",
@@ -632,7 +632,7 @@ exports.resubmit = async (req, res, next) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    if (req.user.userType !== "STUDENT") {
+    if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
         message: "Only students can resubmit outlines",
