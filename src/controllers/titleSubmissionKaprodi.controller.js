@@ -1,5 +1,56 @@
 const db = require("../db");
 
+const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
+
+async function upsertSyarat(conn, pengajuanJudulId, syarat) {
+  const [existing] = await conn.query(
+    `SELECT pengajuan_judul_id
+     FROM pengajuan_judul_syarat
+     WHERE pengajuan_judul_id = ?
+     LIMIT 1`,
+    [pengajuanJudulId]
+  );
+
+  if (existing.length > 0) {
+    await conn.query(
+      `UPDATE pengajuan_judul_syarat
+       SET
+         syarat_transkrip = ?,
+         syarat_krs = ?,
+         syarat_metodologi_nilai_min_c = ?,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE pengajuan_judul_id = ?`,
+      [syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c, pengajuanJudulId]
+    );
+    return;
+  }
+
+  await conn.query(
+    `INSERT INTO pengajuan_judul_syarat (
+       pengajuan_judul_id,
+       syarat_transkrip,
+       syarat_krs,
+       syarat_metodologi_nilai_min_c
+     ) VALUES (?, ?, ?, ?)`,
+    [pengajuanJudulId, syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c]
+  );
+}
+
+async function upsertFileByType(conn, pengajuanJudulId, fileType, fileContent, fileName) {
+  await conn.query(
+    `DELETE FROM pengajuan_judul_file
+     WHERE pengajuan_judul_id = ? AND file_type = ?`,
+    [pengajuanJudulId, fileType]
+  );
+
+  await conn.query(
+    `INSERT INTO pengajuan_judul_file (
+       pengajuan_judul_id, file_type, file_content, file_name
+     ) VALUES (?, ?, ?, ?)`,
+    [pengajuanJudulId, fileType, fileContent, fileName]
+  );
+}
+
 exports.listForKaprodi = async (req, res, next) => {
   try {
     if (req.user.userType !== "LECTURER") {
@@ -23,8 +74,6 @@ exports.listForKaprodi = async (req, res, next) => {
         pj.status,
         pj.submitted_at,
         pj.created_at,
-        pj.file_pengajuan_judul,
-        pj.file_pengajuan_judul_name,
         o.judul AS outline_judul,
         m.npm,
         m.nama AS nama_mahasiswa,
@@ -39,6 +88,29 @@ exports.listForKaprodi = async (req, res, next) => {
       [nidn]
     );
 
+    if (rows.length > 0) {
+      const ids = rows.map((row) => row.id);
+      const [fileRows] = await db.query(
+        `SELECT pengajuan_judul_id, file_content, file_name
+         FROM pengajuan_judul_file
+         WHERE file_type = 'PENGAJUAN_JUDUL'
+           AND pengajuan_judul_id IN (?)`,
+        [ids]
+      );
+      const fileMap = new Map();
+      for (const fr of fileRows) {
+        fileMap.set(fr.pengajuan_judul_id, {
+          file_pengajuan_judul: fr.file_content ?? null,
+          file_pengajuan_judul_name: fr.file_name ?? null,
+        });
+      }
+      for (const row of rows) {
+        const fileData = fileMap.get(row.id) || {};
+        row.file_pengajuan_judul = fileData.file_pengajuan_judul ?? null;
+        row.file_pengajuan_judul_name = fileData.file_pengajuan_judul_name ?? null;
+      }
+    }
+
     return res.json({ ok: true, data: rows });
   } catch (err) {
     next(err);
@@ -46,6 +118,8 @@ exports.listForKaprodi = async (req, res, next) => {
 };
 
 exports.review = async (req, res, next) => {
+  let conn;
+  let txStarted = false;
   try {
     if (req.user.userType !== "LECTURER") {
       return res.status(403).json({ ok: false, message: "Only Kaprodi" });
@@ -114,7 +188,11 @@ exports.review = async (req, res, next) => {
       });
     }
 
-    await db.query(
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    await conn.query(
       `
       UPDATE pengajuan_judul
       SET
@@ -122,11 +200,6 @@ exports.review = async (req, res, next) => {
         pembimbing1_ditetapkan_nidn = ?,
         pembimbing2_ditetapkan_nidn = ?,
         catatan_kaprodi = ?,
-        syarat_transkrip = ?,
-        syarat_krs = ?,
-        syarat_metodologi_nilai_min_c = ?,
-        file_pengajuan_judul = COALESCE(?, file_pengajuan_judul),
-        file_pengajuan_judul_name = COALESCE(?, file_pengajuan_judul_name),
         disposisi_at = CURRENT_TIMESTAMP,
         decided_by_user_id = ?
       WHERE id = ?
@@ -136,18 +209,59 @@ exports.review = async (req, res, next) => {
         pembimbing1DitapkanNidn ?? null,
         pembimbing2DitapkanNidn ?? null,
         catatanKaprodi ?? null,
-        syaratTranskrip !== undefined ? (syaratTranskrip ? 1 : 0) : null,
-        syaratKrs !== undefined ? (syaratKrs ? 1 : 0) : null,
-        syaratMetodologi !== undefined ? (syaratMetodologi ? 1 : 0) : null,
-        filePengajuanJudul ?? null,
-        filePengajuanJudulName ?? null,
         req.user.id,
         id,
       ]
     );
 
+    if (syaratTranskrip !== undefined || syaratKrs !== undefined || syaratMetodologi !== undefined) {
+      const [currentSyaratRows] = await conn.query(
+        `SELECT
+           syarat_transkrip,
+           syarat_krs,
+           syarat_metodologi_nilai_min_c
+         FROM pengajuan_judul_syarat
+         WHERE pengajuan_judul_id = ?
+         LIMIT 1`,
+        [id]
+      );
+      const currentSyarat = currentSyaratRows[0] || {};
+      await upsertSyarat(conn, id, {
+        syarat_transkrip: toBit(syaratTranskrip, currentSyarat.syarat_transkrip ?? 0),
+        syarat_krs: toBit(syaratKrs, currentSyarat.syarat_krs ?? 0),
+        syarat_metodologi_nilai_min_c: toBit(
+          syaratMetodologi,
+          currentSyarat.syarat_metodologi_nilai_min_c ?? 0
+        ),
+      });
+    }
+
+    if (filePengajuanJudul !== undefined && filePengajuanJudul !== null) {
+      await upsertFileByType(
+        conn,
+        id,
+        "PENGAJUAN_JUDUL",
+        String(filePengajuanJudul),
+        filePengajuanJudulName !== undefined && filePengajuanJudulName !== null
+          ? String(filePengajuanJudulName).trim()
+          : null
+      );
+    }
+
+    await conn.commit();
+    txStarted = false;
+
     return res.json({ ok: true, message: "Review saved" });
   } catch (err) {
+    try {
+      if (conn && txStarted) {
+        await conn.rollback();
+      }
+    } catch (_) {}
     next(err);
+  } finally {
+    if (conn) {
+      conn.release();
+    }
   }
 };

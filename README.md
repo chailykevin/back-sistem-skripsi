@@ -137,7 +137,7 @@ Token payload:
 - `GET /dosen`
 - `POST /program-studi/kaprodi`
 
-## 8. Domain Entities (Inferred)
+## 8. Domain Entities (Current)
 
 Core tables used by code:
 - `users`
@@ -147,6 +147,8 @@ Core tables used by code:
 - `outline`
 - `outline_details`
 - `pengajuan_judul`
+- `pengajuan_judul_syarat`
+- `pengajuan_judul_file`
 
 Important relationships:
 - `users.npm -> mahasiswa.npm` for students
@@ -154,9 +156,18 @@ Important relationships:
 - `mahasiswa.program_studi_id -> program_studi.id`
 - `program_studi.kaprodi_nidn -> dosen.nidn`
 - `outline.npm -> mahasiswa.npm`
+- `outline.program_studi_id -> program_studi.id`
 - `outline_details.outline_id -> outline.id`
 - `pengajuan_judul.outline_id -> outline.id`
 - `pengajuan_judul.npm -> mahasiswa.npm`
+- `pengajuan_judul.program_studi_id -> program_studi.id`
+- `pengajuan_judul_syarat.pengajuan_judul_id -> pengajuan_judul.id`
+- `pengajuan_judul_file.pengajuan_judul_id -> pengajuan_judul.id`
+
+Title submission split model:
+- `pengajuan_judul` stores header/workflow + core form fields.
+- `pengajuan_judul_syarat` stores checklist fields (`syarat_*`) in 1:1 relation.
+- `pengajuan_judul_file` stores attachments by `file_type` in 1:N relation.
 
 ## 9. Business Rules
 
@@ -179,13 +190,13 @@ Important relationships:
 
 ## 10. Status Values
 
-Observed outline statuses:
+Enforced outline statuses (DB ENUM):
 - `SUBMITTED`
 - `NEED_REVISION`
 - `REJECTED`
 - `ACCEPTED`
 
-Observed title submission statuses:
+Enforced title submission statuses (DB ENUM):
 - `SUBMITTED`
 - `APPROVED`
 - `NEED_REVISION`
@@ -202,8 +213,28 @@ Observed title submission statuses:
   - `409` conflict (duplicate/not eligible state)
 - SQL is written inline in controllers (no repository/service layer yet).
 - File uploads are currently handled as payload fields (e.g., base64/string), not multipart middleware.
+- For title submission responses, controller maps new `pengajuan_judul_file` rows back to legacy response keys:
+  - `file_pengajuan_judul`, `file_pengajuan_judul_name`
+  - `file_transkrip`, `file_transkrip_name`
+  - `file_krs`, `file_krs_name`
+  - `file_metodologi`, `file_metodologi_name`
 
-## 12. Expansion Guide (for next development)
+## 12. Change Log Snapshot
+
+Completed refactors:
+1. Strict status constraints added via DB ENUM:
+   - `outline.status`
+   - `pengajuan_judul.status`
+2. Added `program_studi_id` FK integrity:
+   - `outline.program_studi_id -> program_studi.id`
+   - `pengajuan_judul.program_studi_id -> program_studi.id`
+3. Split title submission storage:
+   - checklist moved to `pengajuan_judul_syarat`
+   - files moved to `pengajuan_judul_file`
+   - old checklist/file columns in `pengajuan_judul` removed
+4. Backend controllers updated for new read/write paths and currently working with frontend.
+
+## 13. Expansion Guide (when resuming improvements)
 
 When adding features, keep this order:
 1. Define business rule + state transitions first.
@@ -212,14 +243,15 @@ When adding features, keep this order:
 4. Reuse `auth` and `attachProgramStudi` where needed.
 5. Keep response contract consistent (`ok`, `message`, `data`).
 
-Recommended refactor priorities:
-1. Introduce validation layer (Joi/Zod) for request schemas.
-2. Move SQL from controllers into service/repository modules.
-3. Centralize status constants/enums to avoid string drift.
-4. Add migration/versioning tool for DB schema.
+Suggested next improvements (optional, not yet started):
+1. Add migration/versioning tool for DB schema.
+2. Introduce validation layer (Joi/Zod) for request schemas.
+3. Move SQL from controllers into service/repository modules.
+4. Centralize status constants/enums to avoid string drift.
 5. Add integration tests for workflow-critical endpoints.
+6. Move file payloads out of DB `longtext` to object storage and store references in DB.
 
-## 13. Quick Onboarding Checklist for New Codex Session
+## 14. Quick Onboarding Checklist for New Codex Session
 
 1. Read this README fully.
 2. Check `src/app.js` route mounting to locate feature entry points.

@@ -11,8 +11,124 @@ async function getStudentNpm(userId) {
   return urows[0]?.npm ?? null;
 }
 
+const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
+
+function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
+  const mapped = {
+    file_pengajuan_judul: null,
+    file_pengajuan_judul_name: null,
+    file_transkrip: null,
+    file_transkrip_name: null,
+    file_krs: null,
+    file_krs_name: null,
+    file_metodologi: null,
+    file_metodologi_name: null,
+  };
+
+  const byType = {
+    PENGAJUAN_JUDUL: ["file_pengajuan_judul", "file_pengajuan_judul_name"],
+    TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
+    KRS: ["file_krs", "file_krs_name"],
+    METODOLOGI: ["file_metodologi", "file_metodologi_name"],
+  };
+
+  for (const row of fileRows) {
+    const keyPair = byType[row.file_type];
+    if (!keyPair) continue;
+    const [fileKey, fileNameKey] = keyPair;
+    mapped[fileKey] = row.file_content ?? mapped[fileKey];
+    mapped[fileNameKey] = row.file_name ?? mapped[fileNameKey];
+  }
+
+  return mapped;
+}
+
+async function upsertSyarat(conn, pengajuanJudulId, syarat) {
+  const [existing] = await conn.query(
+    `SELECT pengajuan_judul_id
+     FROM pengajuan_judul_syarat
+     WHERE pengajuan_judul_id = ?
+     LIMIT 1`,
+    [pengajuanJudulId]
+  );
+
+  if (existing.length > 0) {
+    await conn.query(
+      `UPDATE pengajuan_judul_syarat
+       SET
+         syarat_transkrip = ?,
+         syarat_krs = ?,
+         syarat_metodologi_nilai_min_c = ?,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE pengajuan_judul_id = ?`,
+      [syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c, pengajuanJudulId]
+    );
+    return;
+  }
+
+  await conn.query(
+    `INSERT INTO pengajuan_judul_syarat (
+       pengajuan_judul_id,
+       syarat_transkrip,
+       syarat_krs,
+       syarat_metodologi_nilai_min_c
+     ) VALUES (?, ?, ?, ?)`,
+    [pengajuanJudulId, syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c]
+  );
+}
+
+async function upsertFileByType(conn, pengajuanJudulId, fileType, fileContent, fileName) {
+  await conn.query(
+    `DELETE FROM pengajuan_judul_file
+     WHERE pengajuan_judul_id = ? AND file_type = ?`,
+    [pengajuanJudulId, fileType]
+  );
+
+  await conn.query(
+    `INSERT INTO pengajuan_judul_file (
+       pengajuan_judul_id, file_type, file_content, file_name
+     ) VALUES (?, ?, ?, ?)`,
+    [pengajuanJudulId, fileType, fileContent, fileName]
+  );
+}
+
+async function hydrateTitleSubmissionReadData(baseRow) {
+  if (!baseRow?.id) return baseRow;
+
+  const [syaratRows] = await db.query(
+    `SELECT
+       syarat_transkrip,
+       syarat_krs,
+       syarat_metodologi_nilai_min_c
+     FROM pengajuan_judul_syarat
+     WHERE pengajuan_judul_id = ?
+     LIMIT 1`,
+    [baseRow.id]
+  );
+
+  const [fileRows] = await db.query(
+    `SELECT file_type, file_content, file_name
+     FROM pengajuan_judul_file
+     WHERE pengajuan_judul_id = ?`,
+    [baseRow.id]
+  );
+
+  const syarat = syaratRows[0] || null;
+  const fileMapped = mapNewFileRowsToLegacyKeys(fileRows);
+
+  return {
+    ...baseRow,
+    syarat_transkrip: syarat?.syarat_transkrip ?? 0,
+    syarat_krs: syarat?.syarat_krs ?? 0,
+    syarat_metodologi_nilai_min_c: syarat?.syarat_metodologi_nilai_min_c ?? 0,
+    ...fileMapped,
+  };
+}
+
 // Create Formulir Pengajuan Judul Skripsi
 exports.createTitleSubmission = async (req, res, next) => {
+  let conn;
+  let txStarted = false;
   try {
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({ ok: false, message: "Only students" });
@@ -71,6 +187,9 @@ exports.createTitleSubmission = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
+      syaratTranskrip,
+      syaratKrs,
+      syaratMetodologi,
       fileTitleSubmission,
       fileTitleSubmissionName,
       fileTranskrip,
@@ -81,18 +200,18 @@ exports.createTitleSubmission = async (req, res, next) => {
       fileMetodologiName,
     } = req.body || {};
 
-    const [result] = await db.query(
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [result] = await conn.query(
       `INSERT INTO pengajuan_judul (
          outline_id, npm, program_studi_id,
          no_hp, sks_diperoleh,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
-         file_pengajuan_judul, file_pengajuan_judul_name,
-         file_transkrip, file_transkrip_name,
-         file_krs, file_krs_name,
-         file_metodologi, file_metodologi_name,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
@@ -103,24 +222,79 @@ exports.createTitleSubmission = async (req, res, next) => {
         pembimbing2DiajukanNidn ?? null,
         perluSuratPengantar ? 1 : 0,
         namaPerusahaan ?? null,
-        fileTitleSubmission ?? null,
-        fileTitleSubmissionName ?? null,
-        fileTranskrip ?? null,
-        fileTranskripName ?? null,
-        fileKrs ?? null,
-        fileKrsName ?? null,
-        fileMetodologi ?? null,
-        fileMetodologiName ?? null,
       ]
     );
+
+    const pengajuanJudulId = result.insertId;
+
+    await upsertSyarat(conn, pengajuanJudulId, {
+      syarat_transkrip: toBit(syaratTranskrip, 0),
+      syarat_krs: toBit(syaratKrs, 0),
+      syarat_metodologi_nilai_min_c: toBit(syaratMetodologi, 0),
+    });
+
+    if (fileTitleSubmission !== undefined && fileTitleSubmission !== null) {
+      await upsertFileByType(
+        conn,
+        pengajuanJudulId,
+        "PENGAJUAN_JUDUL",
+        String(fileTitleSubmission),
+        fileTitleSubmissionName !== undefined && fileTitleSubmissionName !== null
+          ? String(fileTitleSubmissionName).trim()
+          : null
+      );
+    }
+    if (fileTranskrip !== undefined && fileTranskrip !== null) {
+      await upsertFileByType(
+        conn,
+        pengajuanJudulId,
+        "TRANSKRIP",
+        String(fileTranskrip),
+        fileTranskripName !== undefined && fileTranskripName !== null
+          ? String(fileTranskripName).trim()
+          : null
+      );
+    }
+    if (fileKrs !== undefined && fileKrs !== null) {
+      await upsertFileByType(
+        conn,
+        pengajuanJudulId,
+        "KRS",
+        String(fileKrs),
+        fileKrsName !== undefined && fileKrsName !== null ? String(fileKrsName).trim() : null
+      );
+    }
+    if (fileMetodologi !== undefined && fileMetodologi !== null) {
+      await upsertFileByType(
+        conn,
+        pengajuanJudulId,
+        "METODOLOGI",
+        String(fileMetodologi),
+        fileMetodologiName !== undefined && fileMetodologiName !== null
+          ? String(fileMetodologiName).trim()
+          : null
+      );
+    }
+
+    await conn.commit();
+    txStarted = false;
 
     return res.status(201).json({
       ok: true,
       message: "Created",
-      data: { id: result.insertId },
+      data: { id: pengajuanJudulId },
     });
   } catch (err) {
+    try {
+      if (conn && txStarted) {
+        await conn.rollback();
+      }
+    } catch (_) {}
     next(err);
+  } finally {
+    if (conn) {
+      conn.release();
+    }
   }
 };
 
@@ -205,7 +379,8 @@ exports.getLatestMine = async (req, res, next) => {
       });
     }
 
-    return res.json({ ok: true, data: rows[0] });
+    const hydrated = await hydrateTitleSubmissionReadData(rows[0]);
+    return res.json({ ok: true, data: hydrated });
   } catch (err) {
     next(err);
   }
@@ -241,9 +416,6 @@ exports.getById = async (req, res, next) => {
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
-          pj.syarat_transkrip,
-          pj.syarat_krs,
-          pj.syarat_metodologi_nilai_min_c,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -253,14 +425,6 @@ exports.getById = async (req, res, next) => {
           pj.decided_by_user_id,
           pj.created_at,
           pj.updated_at,
-          pj.file_pengajuan_judul,
-          pj.file_pengajuan_judul_name,
-          pj.file_transkrip,
-          pj.file_transkrip_name,
-          pj.file_krs,
-          pj.file_krs_name,
-          pj.file_metodologi,
-          pj.file_metodologi_name,
 
           o.judul AS outline_judul,
 
@@ -295,7 +459,8 @@ exports.getById = async (req, res, next) => {
         return res.status(404).json({ ok: false, message: "Not found" });
       }
 
-      return res.json({ ok: true, data: rows[0] });
+      const hydrated = await hydrateTitleSubmissionReadData(rows[0]);
+      return res.json({ ok: true, data: hydrated });
     }
 
     // LECTURER (Kaprodi): hanya boleh pengajuan dari prodinya
@@ -321,9 +486,6 @@ exports.getById = async (req, res, next) => {
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
-          pj.syarat_transkrip,
-          pj.syarat_krs,
-          pj.syarat_metodologi_nilai_min_c,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -333,14 +495,6 @@ exports.getById = async (req, res, next) => {
           pj.decided_by_user_id,
           pj.created_at,
           pj.updated_at,
-          pj.file_pengajuan_judul,
-          pj.file_pengajuan_judul_name,
-          pj.file_transkrip,
-          pj.file_transkrip_name,
-          pj.file_krs,
-          pj.file_krs_name,
-          pj.file_metodologi,
-          pj.file_metodologi_name,
 
           o.judul AS outline_judul,
 
@@ -376,7 +530,8 @@ exports.getById = async (req, res, next) => {
         return res.status(404).json({ ok: false, message: "Not found" });
       }
 
-      return res.json({ ok: true, data: rows[0] });
+      const hydrated = await hydrateTitleSubmissionReadData(rows[0]);
+      return res.json({ ok: true, data: hydrated });
     }
 
     return res.status(403).json({ ok: false, message: "Forbidden" });
@@ -408,6 +563,9 @@ exports.resubmit = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
+      syaratTranskrip,
+      syaratKrs,
+      syaratMetodologi,
       fileTitleSubmission,
       fileTitleSubmissionName,
       fileTranskrip,
@@ -476,6 +634,9 @@ exports.resubmit = async (req, res, next) => {
       (pembimbing2Val !== null && pembimbing2Val.length > 0) ||
       perluSuratProvided ||
       (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
+      syaratTranskrip !== undefined ||
+      syaratKrs !== undefined ||
+      syaratMetodologi !== undefined ||
       (fileTitleSubmissionVal !== null && fileTitleSubmissionVal.length > 0) ||
       (fileTranskripVal !== null && fileTranskripVal.length > 0) ||
       (fileKrsVal !== null && fileKrsVal.length > 0) ||
@@ -582,39 +743,6 @@ exports.resubmit = async (req, res, next) => {
       sets.push("nama_perusahaan = ?");
       params.push(namaPerusahaanVal);
     }
-    if (fileTitleSubmissionVal !== null && fileTitleSubmissionVal.length > 0) {
-      sets.push("file_pengajuan_judul = ?");
-      params.push(fileTitleSubmissionVal);
-      if (fileTitleSubmissionNameVal !== null && fileTitleSubmissionNameVal.length > 0) {
-        sets.push("file_pengajuan_judul_name = ?");
-        params.push(fileTitleSubmissionNameVal);
-      }
-    }
-    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
-      sets.push("file_transkrip = ?");
-      params.push(fileTranskripVal);
-      if (fileTranskripNameVal !== null && fileTranskripNameVal.length > 0) {
-        sets.push("file_transkrip_name = ?");
-        params.push(fileTranskripNameVal);
-      }
-    }
-    if (fileKrsVal !== null && fileKrsVal.length > 0) {
-      sets.push("file_krs = ?");
-      params.push(fileKrsVal);
-      if (fileKrsNameVal !== null && fileKrsNameVal.length > 0) {
-        sets.push("file_krs_name = ?");
-        params.push(fileKrsNameVal);
-      }
-    }
-    if (fileMetodologiVal !== null && fileMetodologiVal.length > 0) {
-      sets.push("file_metodologi = ?");
-      params.push(fileMetodologiVal);
-      if (fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0) {
-        sets.push("file_metodologi_name = ?");
-        params.push(fileMetodologiNameVal);
-      }
-    }
-
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
     sets.push("disposisi_at = NULL");
@@ -627,6 +755,67 @@ exports.resubmit = async (req, res, next) => {
     const sql = `UPDATE pengajuan_judul SET ${sets.join(", ")} WHERE id = ?`;
     params.push(id);
     await conn.query(sql, params);
+
+    if (syaratTranskrip !== undefined || syaratKrs !== undefined || syaratMetodologi !== undefined) {
+      const [currentSyaratRows] = await conn.query(
+        `SELECT
+           syarat_transkrip,
+           syarat_krs,
+           syarat_metodologi_nilai_min_c
+         FROM pengajuan_judul_syarat
+         WHERE pengajuan_judul_id = ?
+         LIMIT 1`,
+        [id]
+      );
+      const currentSyarat = currentSyaratRows[0] || {};
+      await upsertSyarat(conn, id, {
+        syarat_transkrip: toBit(syaratTranskrip, currentSyarat.syarat_transkrip ?? 0),
+        syarat_krs: toBit(syaratKrs, currentSyarat.syarat_krs ?? 0),
+        syarat_metodologi_nilai_min_c: toBit(
+          syaratMetodologi,
+          currentSyarat.syarat_metodologi_nilai_min_c ?? 0
+        ),
+      });
+    }
+
+    if (fileTitleSubmissionVal !== null && fileTitleSubmissionVal.length > 0) {
+      await upsertFileByType(
+        conn,
+        id,
+        "PENGAJUAN_JUDUL",
+        fileTitleSubmissionVal,
+        fileTitleSubmissionNameVal !== null && fileTitleSubmissionNameVal.length > 0
+          ? fileTitleSubmissionNameVal
+          : null
+      );
+    }
+    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
+      await upsertFileByType(
+        conn,
+        id,
+        "TRANSKRIP",
+        fileTranskripVal,
+        fileTranskripNameVal !== null && fileTranskripNameVal.length > 0 ? fileTranskripNameVal : null
+      );
+    }
+    if (fileKrsVal !== null && fileKrsVal.length > 0) {
+      await upsertFileByType(
+        conn,
+        id,
+        "KRS",
+        fileKrsVal,
+        fileKrsNameVal !== null && fileKrsNameVal.length > 0 ? fileKrsNameVal : null
+      );
+    }
+    if (fileMetodologiVal !== null && fileMetodologiVal.length > 0) {
+      await upsertFileByType(
+        conn,
+        id,
+        "METODOLOGI",
+        fileMetodologiVal,
+        fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0 ? fileMetodologiNameVal : null
+      );
+    }
 
     await conn.commit();
     txStarted = false;
