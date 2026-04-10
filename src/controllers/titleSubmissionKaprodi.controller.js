@@ -146,6 +146,19 @@ exports.review = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid status" });
     }
 
+    console.log("Test");
+
+    if (
+      status === "APPROVED" &&
+      (!pembimbing2DitapkanNidn || String(pembimbing2DitapkanNidn).trim().length === 0)
+    ) {
+      console.log("Test2");
+      return res.status(400).json({
+        ok: false,
+        message: "pembimbing2DitapkanNidn is required for APPROVED status",
+      });
+    }
+
     if (
       status === "NEED_REVISION" &&
       (!catatanKaprodi || String(catatanKaprodi).trim().length === 0)
@@ -192,6 +205,8 @@ exports.review = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    let consultationInitialized = false;
+
     await conn.query(
       `
       UPDATE pengajuan_judul
@@ -213,6 +228,139 @@ exports.review = async (req, res, next) => {
         id,
       ]
     );
+
+    if (status === "APPROVED") {
+      console.log("Test3");
+      const [kartuRows] = await conn.query(
+        `SELECT id
+         FROM kartu_konsultasi_outline
+         WHERE pengajuan_judul_id = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [id]
+      );
+
+      if (kartuRows.length === 0) {
+        const [snapshotRows] = await conn.query(
+          `SELECT
+             pj.id AS pengajuan_judul_id,
+             pj.npm,
+             pj.program_studi_id,
+             pj.pembimbing1_ditetapkan_nidn,
+             pj.pembimbing2_ditetapkan_nidn,
+             o.judul AS judul_skripsi,
+             m.nama AS nama_mahasiswa,
+             ps.nama AS program_studi_nama,
+             d1.nama AS pembimbing1_nama,
+             d2.nama AS pembimbing2_nama
+           FROM pengajuan_judul pj
+           INNER JOIN outline o ON o.id = pj.outline_id
+           INNER JOIN mahasiswa m ON m.npm = pj.npm
+           LEFT JOIN program_studi ps ON ps.id = pj.program_studi_id
+           LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_ditetapkan_nidn
+           LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_ditetapkan_nidn
+           WHERE pj.id = ?
+           LIMIT 1`,
+          [id]
+        );
+        const snap = snapshotRows[0] || null;
+
+        if (!snap) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Failed to resolve snapshot data for consultation initialization",
+          });
+        }
+        if (!snap.program_studi_id) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Missing required snapshot data: program_studi_id",
+          });
+        }
+        if (!snap.program_studi_nama || String(snap.program_studi_nama).trim().length === 0) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Missing required snapshot data: program_studi_nama",
+          });
+        }
+        if (!snap.judul_skripsi || String(snap.judul_skripsi).trim().length === 0) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Missing required snapshot data: judul_skripsi",
+          });
+        }
+        if (!snap.nama_mahasiswa || String(snap.nama_mahasiswa).trim().length === 0) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Missing required snapshot data: nama_mahasiswa",
+          });
+        }
+        if (
+          !snap.pembimbing2_ditetapkan_nidn ||
+          String(snap.pembimbing2_ditetapkan_nidn).trim().length === 0
+        ) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
+          });
+        }
+
+        const [insKartu] = await conn.query(
+          `INSERT INTO kartu_konsultasi_outline (
+             pengajuan_judul_id,
+             nama_mahasiswa,
+             npm,
+             program_studi_id,
+             program_studi_nama,
+             judul_skripsi,
+             pembimbing1_nidn,
+             pembimbing1_nama,
+             pembimbing2_nidn,
+             pembimbing2_nama,
+             is_completed
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          [
+            snap.pengajuan_judul_id,
+            String(snap.nama_mahasiswa).trim(),
+            snap.npm,
+            snap.program_studi_id,
+            String(snap.program_studi_nama).trim(),
+            String(snap.judul_skripsi).trim(),
+            snap.pembimbing1_ditetapkan_nidn ?? null,
+            snap.pembimbing1_nama ?? null,
+            String(snap.pembimbing2_ditetapkan_nidn).trim(),
+            snap.pembimbing2_nama ?? null,
+          ]
+        );
+
+        await conn.query(
+          `INSERT INTO konsultasi_outline_stage (
+             kartu_konsultasi_outline_id,
+             pengajuan_judul_id,
+             stage,
+             pembimbing_nidn,
+             current_status,
+             current_submission_no,
+             started_at
+           ) VALUES (?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+          [insKartu.insertId, snap.pengajuan_judul_id, String(snap.pembimbing2_ditetapkan_nidn).trim()]
+        );
+
+        consultationInitialized = true;
+      }
+    }
 
     if (syaratTranskrip !== undefined || syaratKrs !== undefined || syaratMetodologi !== undefined) {
       const [currentSyaratRows] = await conn.query(
@@ -251,7 +399,10 @@ exports.review = async (req, res, next) => {
     await conn.commit();
     txStarted = false;
 
-    return res.json({ ok: true, message: "Review saved" });
+    return res.json({
+      ok: true,
+      message: consultationInitialized ? "Review saved and consultation initialized" : "Review saved",
+    });
   } catch (err) {
     try {
       if (conn && txStarted) {

@@ -31,6 +31,9 @@ app.use("/dosen", dosenRoutes);
 const programStudiRoutes = require("./routes/programStudi.routes");
 app.use("/program-studi", programStudiRoutes);
 
+const outlineConsultationRoutes = require("./routes/outlineConsultation.routes");
+app.use("/", outlineConsultationRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
