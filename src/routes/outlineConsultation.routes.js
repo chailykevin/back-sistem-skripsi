@@ -29,6 +29,11 @@ router.get(
 
 router.get("/lecturer/outline-consultations", auth, c.listAssignedToLecturer);
 router.get(
+  "/test-kartu-konsultasi-outline-docx",
+  auth,
+  c.testKartuKonsultasiOutlineDocx
+);
+router.get(
   "/lecturer/outline-consultations/:stageId",
   auth,
   c.getLecturerStageDetail

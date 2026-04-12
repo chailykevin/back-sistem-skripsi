@@ -1,4 +1,7 @@
 const db = require("../db");
+const path = require("path");
+const { readFile } = require("fs/promises");
+const { patchDocument, PatchType, TextRun } = require("docx");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -201,9 +204,15 @@ exports.getMyDetail = async (req, res, next) => {
          r.submission_no,
          r.decision_status,
          r.catatan_mahasiswa,
-         r.reviewed_at
+         r.reviewed_at,
+         rf.id AS review_file_id,
+         rf.file_name AS review_file_name,
+         rf.mime_type AS review_file_mime_type,
+         CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file
        FROM konsultasi_outline_review r
        INNER JOIN konsultasi_outline_stage st ON st.id = r.konsultasi_outline_stage_id
+       LEFT JOIN konsultasi_outline_review_file rf
+         ON rf.konsultasi_outline_review_id = r.id
        WHERE st.kartu_konsultasi_outline_id = ?
        ORDER BY r.reviewed_at DESC`,
       [kartu.id]
@@ -385,9 +394,15 @@ exports.getMyReviewHistory = async (req, res, next) => {
          r.submission_no,
          r.decision_status,
          r.catatan_mahasiswa,
-         r.reviewed_at
+         r.reviewed_at,
+         rf.id AS review_file_id,
+         rf.file_name AS review_file_name,
+         rf.mime_type AS review_file_mime_type,
+         CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file
        FROM konsultasi_outline_review r
        INNER JOIN konsultasi_outline_stage st ON st.id = r.konsultasi_outline_stage_id
+       LEFT JOIN konsultasi_outline_review_file rf
+         ON rf.konsultasi_outline_review_id = r.id
        WHERE st.kartu_konsultasi_outline_id = ?
        ORDER BY r.reviewed_at DESC`,
       [kartu.id]
@@ -956,10 +971,22 @@ exports.getLecturerStageDetail = async (req, res, next) => {
       [stageId]
     );
     const [reviewRows] = await db.query(
-      `SELECT id, submission_no, decision_status, catatan_mahasiswa, catatan_kartu, reviewed_at
-       FROM konsultasi_outline_review
-       WHERE konsultasi_outline_stage_id = ?
-       ORDER BY reviewed_at DESC`,
+      `SELECT
+         r.id,
+         r.submission_no,
+         r.decision_status,
+         r.catatan_mahasiswa,
+         r.catatan_kartu,
+         r.reviewed_at,
+         rf.id AS review_file_id,
+         rf.file_name AS review_file_name,
+         rf.mime_type AS review_file_mime_type,
+         CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file
+       FROM konsultasi_outline_review r
+       LEFT JOIN konsultasi_outline_review_file rf
+         ON rf.konsultasi_outline_review_id = r.id
+       WHERE r.konsultasi_outline_stage_id = ?
+       ORDER BY r.reviewed_at DESC`,
       [stageId]
     );
     const [logRows] = await db.query(
@@ -1018,7 +1045,14 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid stageId" });
     }
 
-    const { decisionStatus, catatanMahasiswa, catatanKartu } = req.body || {};
+    const {
+      decisionStatus,
+      catatanMahasiswa,
+      catatanKartu,
+      reviewFile,
+      reviewFileName,
+      reviewFileMimeType,
+    } = req.body || {};
     if (
       !decisionStatus ||
       !String(catatanMahasiswa || "").trim() ||
@@ -1029,7 +1063,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         message: "decisionStatus, catatanMahasiswa, and catatanKartu are required",
       });
     }
+    const hasReviewFile = reviewFile !== undefined && reviewFile !== null && String(reviewFile) !== "";
+    const safeReviewFileName = String(reviewFileName ?? "").trim();
+    if (hasReviewFile && !safeReviewFileName) {
+      return res.status(400).json({
+        ok: false,
+        message: "reviewFileName is required when reviewFile is provided",
+      });
+    }
 
+    const { isKaprodi } = getRoleFlags(req);
     const nidn = await getLecturerNidn(req.user.id);
     if (!nidn) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
@@ -1124,6 +1167,26 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         String(catatanKartu).trim(),
       ]
     );
+
+    if (hasReviewFile) {
+      await conn.query(
+        `INSERT INTO konsultasi_outline_review_file (
+           konsultasi_outline_review_id,
+           file_type,
+           file_content,
+           file_name,
+           mime_type,
+           uploaded_by_user_id
+         ) VALUES (?, 'REVIEWED_OUTLINE', ?, ?, ?, ?)`,
+        [
+          reviewIns.insertId,
+          String(reviewFile),
+          safeReviewFileName,
+          reviewFileMimeType ?? null,
+          req.user.id,
+        ]
+      );
+    }
 
     const [reviewerRows] = await conn.query(
       `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
@@ -1226,6 +1289,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         stageId,
         submissionNo: latestSubmission.submission_no,
         decisionStatus,
+        hasReviewFile,
       },
     });
   } catch (err) {
@@ -1237,5 +1301,87 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     next(err);
   } finally {
     conn.release();
+  }
+};
+
+exports.testKartuKonsultasiOutlineDocx = async (req, res, next) => {
+  try {
+    const templatePath = path.join(
+      __dirname,
+      "..",
+      "templates",
+      "template_kartu_konsultasi_outline.docx"
+    );
+
+    const templateBuffer = await readFile(templatePath);
+
+    const patches = {
+      nama_mahasiswa: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("Budi Santoso")],
+      },
+      npm: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("22123456")],
+      },
+      program_studi: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("Teknik Informatika")],
+      },
+      judul_skripsi: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("Sistem Informasi Manajemen Skripsi")],
+      },
+      pembimbing1: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("Dr. Pembimbing Satu")],
+      },
+      pembimbing2: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("Dr. Pembimbing Dua")],
+      },
+      ttd_pembimbing1: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("")],
+      },
+      ttd_pembimbing2: {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("")],
+      },
+    };
+
+    for (let i = 1; i <= 18; i += 1) {
+      patches[`tanggal_${i}`] = {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("")],
+      };
+      patches[`keterangan_${i}`] = {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("")],
+      };
+      patches[`paraf_${i}`] = {
+        type: PatchType.PARAGRAPH,
+        children: [new TextRun("")],
+      };
+    }
+
+    const outputBuffer = await patchDocument({
+      outputType: "nodebuffer",
+      data: templateBuffer,
+      patches,
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="test-kartu-konsultasi-outline.docx"'
+    );
+
+    return res.status(200).send(outputBuffer);
+  } catch (err) {
+    next(err);
   }
 };
