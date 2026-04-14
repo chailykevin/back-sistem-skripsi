@@ -29,6 +29,11 @@ router.get(
 
 router.get("/lecturer/outline-consultations", auth, c.listAssignedToLecturer);
 router.get(
+  "/lecturer/outline-consultations/monitoring",
+  auth,
+  c.listMySupervisedConsultations
+);
+router.get(
   "/test-kartu-konsultasi-outline-docx",
   auth,
   c.testKartuKonsultasiOutlineDocx
@@ -48,6 +53,11 @@ router.post(
   "/outline-consultations/:pengajuanJudulId/kartu/finalize",
   auth,
   c.finalizeKartu
+);
+router.get(
+  "/outline-consultations/:pengajuanJudulId/kartu/preview-docx",
+  auth,
+  c.previewKartuDocx
 );
 router.get(
   "/outline-consultations/:pengajuanJudulId/kartu/files",

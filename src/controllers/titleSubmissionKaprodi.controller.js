@@ -146,13 +146,10 @@ exports.review = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid status" });
     }
 
-    console.log("Test");
-
     if (
       status === "APPROVED" &&
       (!pembimbing2DitapkanNidn || String(pembimbing2DitapkanNidn).trim().length === 0)
     ) {
-      console.log("Test2");
       return res.status(400).json({
         ok: false,
         message: "pembimbing2DitapkanNidn is required for APPROVED status",
@@ -230,7 +227,6 @@ exports.review = async (req, res, next) => {
     );
 
     if (status === "APPROVED") {
-      console.log("Test3");
       const [kartuRows] = await conn.query(
         `SELECT id
          FROM kartu_konsultasi_outline
