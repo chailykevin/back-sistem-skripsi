@@ -500,9 +500,96 @@ exports.submitMyOutline = async (req, res, next) => {
   }
 };
 
-exports.getMyReviewHistory = rebuildNotice("getMyReviewHistory");
+exports.getMyReviewHistory = async (req, res, next) => {
+  try {
+    if (req.user.userType !== "STUDENT") {
+      return res.status(403).json({ ok: false, message: "Only students" });
+    }
 
-exports.getMyKartu = rebuildNotice("getMyKartu");
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+
+    const kartu = await getKartuByPengajuanAndStudent(pengajuanJudulId, npm);
+    if (!kartu) {
+      return res.status(404).json({ ok: false, message: "Consultation not found" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         r.id,
+         st.stage,
+         r.submission_no,
+         r.decision_status,
+         r.catatan_mahasiswa,
+         r.reviewed_at,
+         rf.id AS review_file_id,
+         rf.file_name AS review_file_name,
+         rf.mime_type AS review_file_mime_type,
+         CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file
+       FROM konsultasi_outline_review r
+       INNER JOIN konsultasi_outline_stage st ON st.id = r.konsultasi_outline_stage_id
+       LEFT JOIN konsultasi_outline_review_file rf
+         ON rf.konsultasi_outline_review_id = r.id
+       WHERE st.kartu_konsultasi_outline_id = ?
+       ORDER BY r.reviewed_at DESC`,
+      [kartu.id]
+    );
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getMyKartu = async (req, res, next) => {
+  try {
+    if (req.user.userType !== "STUDENT") {
+      return res.status(403).json({ ok: false, message: "Only students" });
+    }
+
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+
+    const kartu = await getKartuByPengajuanAndStudent(pengajuanJudulId, npm);
+    if (!kartu) {
+      return res.status(404).json({ ok: false, message: "Consultation not found" });
+    }
+
+    const [logs] = await db.query(
+      `SELECT *
+       FROM kartu_konsultasi_outline_log
+       WHERE kartu_konsultasi_outline_id = ?
+       ORDER BY logged_at ASC`,
+      [kartu.id]
+    );
+
+    const [files] = await db.query(
+      `SELECT id, file_type, file_name, mime_type, generated_at, is_active
+       FROM kartu_konsultasi_outline_file
+       WHERE kartu_konsultasi_outline_id = ?
+       ORDER BY generated_at DESC`,
+      [kartu.id]
+    );
+
+    return res.json({ ok: true, data: { kartu, logs, files } });
+  } catch (err) {
+    next(err);
+  }
+};
 
 exports.getMyFinalKartuFile = rebuildNotice("getMyFinalKartuFile");
 
@@ -863,6 +950,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          s.pengajuan_judul_id AS stage_pengajuan_judul_id,
          s.stage AS stage_name,
          s.pembimbing_nidn AS stage_pembimbing_nidn,
+         d.nama AS stage_dosen_name,
          s.current_status AS stage_current_status,
          s.current_submission_no AS stage_current_submission_no,
          s.started_at AS stage_started_at,
@@ -879,6 +967,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          k.is_completed AS kartu_is_completed
        FROM konsultasi_outline_stage s
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
+       LEFT JOIN dosen d ON d.nidn = s.pembimbing_nidn
        WHERE s.id = ? AND (k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?)
        LIMIT 1`,
       [stageId, nidn, nidn]
@@ -933,6 +1022,9 @@ exports.getLecturerStageDetail = async (req, res, next) => {
           pengajuanJudulId: row.stage_pengajuan_judul_id,
           stage: row.stage_name,
           pembimbingNidn: row.stage_pembimbing_nidn,
+          dosenName: row.stage_dosen_name,
+          pembimbing1Name: row.kartu_pembimbing1_nama,
+          pembimbing2Name: row.kartu_pembimbing2_nama,
           currentStatus: row.stage_current_status,
           currentSubmissionNo: row.stage_current_submission_no,
           startedAt: row.stage_started_at,
