@@ -133,6 +133,17 @@ Token payload:
 - `PATCH /title-submissions/:id/review` (kaprodi)
 - `PATCH /title-submissions/:id/resubmit` (student)
 
+### Outline Submission Period (Global)
+- `GET /outline-submission-period` (auth)
+- `PUT /outline-submission-period` (admin only)
+  - body: `{ openAt, closeAt }`
+  - boundary is inclusive (`openAt <= now <= closeAt`)
+  - controls:
+    - `POST /outlines`
+    - `PATCH /outlines/:id`
+    - `POST /title-submissions`
+    - `PATCH /title-submissions/:id/resubmit`
+
 ### Reference
 - `GET /dosen`
 - `POST /program-studi/kaprodi`
@@ -174,6 +185,7 @@ Title submission split model:
 ### Outline Rules
 - Only `STUDENT` can create/resubmit outline.
 - New outline creation blocked if student has any non-`REJECTED` outline.
+- Create/resubmit only allowed when global outline submission period is open.
 - Outline review only by Kaprodi of matching `program_studi`.
 - On resubmit:
   - Outline status set to `SUBMITTED`
@@ -184,6 +196,7 @@ Title submission split model:
 - Only `STUDENT` can create/resubmit own title submission.
 - Create requires selected outline status `ACCEPTED`.
 - Duplicate title submission for same outline is blocked.
+- Create/resubmit only allowed when global outline submission period is open.
 - Kaprodi can review only submissions in their program.
 - Student resubmit only allowed when status is `REJECTED` or `NEED_REVISION`.
 - Resubmit resets decision fields and sets status back to `SUBMITTED`.

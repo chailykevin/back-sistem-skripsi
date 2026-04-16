@@ -31,6 +31,15 @@ app.use("/dosen", dosenRoutes);
 const programStudiRoutes = require("./routes/programStudi.routes");
 app.use("/program-studi", programStudiRoutes);
 
+const usersRoutes = require("./routes/users.routes");
+app.use("/users", usersRoutes);
+
+const dummyIntegrationRoutes = require("./routes/dummyIntegration.routes");
+app.use("/dummy-integration", dummyIntegrationRoutes);
+
+const outlineSubmissionPeriodRoutes = require("./routes/outlineSubmissionPeriod.routes");
+app.use("/outline-submission-period", outlineSubmissionPeriodRoutes);
+
 const outlineConsultationRoutes = require("./routes/outlineConsultation.routes");
 app.use("/", outlineConsultationRoutes);
 
