@@ -774,6 +774,7 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          s.current_submission_no,
          s.started_at,
          s.finished_at,
+         latest_submission.latest_submitted_at,
          k.id AS kartu_id,
          k.pengajuan_judul_id,
          k.nama_mahasiswa,
@@ -782,6 +783,14 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          k.judul_skripsi,
          k.is_completed
        FROM konsultasi_outline_stage s
+       LEFT JOIN (
+         SELECT
+           konsultasi_outline_stage_id,
+           MAX(submitted_at) AS latest_submitted_at
+         FROM konsultasi_outline_submission
+         GROUP BY konsultasi_outline_stage_id
+       ) latest_submission
+         ON latest_submission.konsultasi_outline_stage_id = s.id
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
        WHERE ${where.join(" AND ")}
        ORDER BY s.updated_at DESC`,
