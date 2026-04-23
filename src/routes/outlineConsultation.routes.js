@@ -33,6 +33,12 @@ router.get(
   auth,
   c.listMySupervisedConsultations
 );
+router.get("/kaprodi/outline-consultations", auth, c.listForKaprodi);
+router.get(
+  "/kaprodi/outline-consultations/:pengajuanJudulId",
+  auth,
+  c.getDetailForKaprodi
+);
 router.get(
   "/test-kartu-konsultasi-outline-docx",
   auth,
