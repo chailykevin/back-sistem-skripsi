@@ -601,7 +601,73 @@ exports.getMyKartu = async (req, res, next) => {
   }
 };
 
-exports.getMyFinalKartuFile = rebuildNotice("getMyFinalKartuFile");
+exports.getMyFinalKartuFile = async (req, res, next) => {
+  try {
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const [kartuRows] = await db.query(
+      `SELECT *
+       FROM kartu_konsultasi_outline
+       WHERE pengajuan_judul_id = ?
+       LIMIT 1`,
+      [pengajuanJudulId]
+    );
+    const kartu = kartuRows[0] ?? null;
+    if (!kartu) {
+      return res.status(404).json({ ok: false, message: "Consultation not found" });
+    }
+
+    let isAuthorized = false;
+    if (req.user.userType === "STUDENT") {
+      const npm = await getStudentNpm(req.user.id);
+      isAuthorized = Boolean(npm) && npm === kartu.npm;
+    } else {
+      const nidn = await getLecturerNidn(req.user.id);
+      if (nidn) {
+        const isAssignedPembimbing = nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn;
+        if (isAssignedPembimbing) {
+          isAuthorized = true;
+        } else if (hasRole(req, "KAPRODI")) {
+          const kaprodiProgramStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+          isAuthorized = kaprodiProgramStudiIds.includes(Number(kartu.program_studi_id));
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const wantedType =
+      req.query?.type === "FINAL_DOCX" || req.query?.type === "FINAL_PDF"
+        ? req.query.type
+        : null;
+
+    let sql =
+      `SELECT id, file_type, file_content, file_name, mime_type, generated_at
+       FROM kartu_konsultasi_outline_file
+       WHERE kartu_konsultasi_outline_id = ? AND is_active = 1`;
+    const params = [kartu.id];
+    if (wantedType) {
+      sql += " AND file_type = ?";
+      params.push(wantedType);
+    }
+    sql += " ORDER BY generated_at DESC LIMIT 1";
+
+    const [rows] = await db.query(sql, params);
+    const file = rows[0] ?? null;
+    if (!file) {
+      return res.status(404).json({ ok: false, message: "Final artifact not found" });
+    }
+
+    return res.json({ ok: true, data: file });
+  } catch (err) {
+    next(err);
+  }
+};
 
 exports.previewKartuDocx = async (req, res, next) => {
   try {
@@ -635,8 +701,9 @@ exports.finalizeKartu = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    if (req.user.userType !== "LECTURER") {
-      return res.status(403).json({ ok: false, message: "Only lecturers can finalize" });
+    const actorNidn = await getLecturerNidn(req.user.id);
+    if (!actorNidn) {
+      return res.status(403).json({ ok: false, message: "Only PEMBIMBING_1 can finalize" });
     }
 
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
@@ -655,7 +722,7 @@ exports.finalizeKartu = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const { kartu, error, nidn } = await getAuthorizedKartuForDocument(
+    const { kartu, error } = await getAuthorizedKartuForDocument(
       conn,
       req,
       pengajuanJudulId
@@ -675,12 +742,12 @@ exports.finalizeKartu = async (req, res, next) => {
       });
     }
 
-    if (req.user.userType === "LECTURER" && nidn !== kartu.pembimbing1_nidn) {
+    if (actorNidn !== kartu.pembimbing1_nidn) {
       await conn.rollback();
       txStarted = false;
       return res.status(403).json({
         ok: false,
-        message: "Only Pembimbing 1 can finalize this kartu",
+        message: "Only PEMBIMBING_1 can finalize this kartu",
       });
     }
 
@@ -1251,6 +1318,8 @@ exports.getLecturerStageDetail = async (req, res, next) => {
     const [reviewRows] = await db.query(
       `SELECT
          r.id,
+         r.konsultasi_outline_stage_id,
+         rs.stage,
          r.submission_no,
          r.decision_status,
          r.catatan_mahasiswa,
@@ -1261,19 +1330,28 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          rf.mime_type AS review_file_mime_type,
          CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file
        FROM konsultasi_outline_review r
+       INNER JOIN konsultasi_outline_stage rs
+         ON rs.id = r.konsultasi_outline_stage_id
        LEFT JOIN konsultasi_outline_review_file rf
          ON rf.konsultasi_outline_review_id = r.id
-       WHERE r.konsultasi_outline_stage_id = ?
+       WHERE rs.kartu_konsultasi_outline_id = ?
        ORDER BY r.reviewed_at DESC`,
-      [stageId]
+      [row.kartu_id]
     );
 
     const [logRows] = await db.query(
-      `SELECT id, submission_no, status, catatan_kartu, logged_at
+      `SELECT
+         id,
+         konsultasi_outline_stage_id,
+         stage,
+         submission_no,
+         status,
+         catatan_kartu,
+         logged_at
        FROM kartu_konsultasi_outline_log
-       WHERE konsultasi_outline_stage_id = ?
+       WHERE kartu_konsultasi_outline_id = ?
        ORDER BY logged_at DESC`,
-      [stageId]
+      [row.kartu_id]
     );
 
     return res.json({
