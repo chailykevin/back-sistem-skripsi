@@ -236,6 +236,61 @@ async function getKartuLogs(queryable, kartuId) {
   return logs;
 }
 
+async function generateAndStoreFinalKartuDocx(
+  queryable,
+  { kartuId, pengajuanJudulId, generatedByUserId }
+) {
+  const [kartuRows] = await queryable.query(
+    `SELECT *
+     FROM kartu_konsultasi_outline
+     WHERE id = ?
+     LIMIT 1`,
+    [kartuId]
+  );
+  const kartu = kartuRows[0] ?? null;
+  if (!kartu) {
+    const err = new Error("Kartu not found");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const logs = await getKartuLogs(queryable, kartu.id);
+  const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(kartu, logs);
+  const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const fileName = `kartu-konsultasi-outline-${pengajuanJudulId}-${Date.now()}.docx`;
+
+  await queryable.query(
+    `UPDATE kartu_konsultasi_outline_file
+     SET is_active = 0
+     WHERE kartu_konsultasi_outline_id = ?
+       AND file_type = 'FINAL_DOCX'
+       AND is_active = 1`,
+    [kartu.id]
+  );
+
+  const [ins] = await queryable.query(
+    `INSERT INTO kartu_konsultasi_outline_file (
+       kartu_konsultasi_outline_id,
+       file_type,
+       file_content,
+       file_name,
+       mime_type,
+       generated_by_user_id,
+       generated_at,
+       is_active
+     ) VALUES (?, 'FINAL_DOCX', ?, ?, ?, ?, CURRENT_TIMESTAMP, 1)`,
+    [kartu.id, outputBuffer.toString("base64"), fileName, mimeType, generatedByUserId]
+  );
+
+  return {
+    id: ins.insertId,
+    kartuId: kartu.id,
+    fileType: "FINAL_DOCX",
+    fileName,
+    mimeType,
+  };
+}
+
 async function getAuthorizedKartuForDocument(queryable, req, pengajuanJudulId) {
   const [rows] = await queryable.query(
     `SELECT *
@@ -803,33 +858,11 @@ exports.finalizeKartu = async (req, res, next) => {
       });
     }
 
-    const logs = await getKartuLogs(conn, kartu.id);
-    const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(kartu, logs);
-    const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    const fileName = `kartu-konsultasi-outline-${pengajuanJudulId}-${Date.now()}.docx`;
-
-    await conn.query(
-      `UPDATE kartu_konsultasi_outline_file
-       SET is_active = 0
-       WHERE kartu_konsultasi_outline_id = ?
-         AND file_type = 'FINAL_DOCX'
-         AND is_active = 1`,
-      [kartu.id]
-    );
-
-    const [ins] = await conn.query(
-      `INSERT INTO kartu_konsultasi_outline_file (
-         kartu_konsultasi_outline_id,
-         file_type,
-         file_content,
-         file_name,
-         mime_type,
-         generated_by_user_id,
-         generated_at,
-         is_active
-       ) VALUES (?, 'FINAL_DOCX', ?, ?, ?, ?, CURRENT_TIMESTAMP, 1)`,
-      [kartu.id, outputBuffer.toString("base64"), fileName, mimeType, req.user.id]
-    );
+    const finalizedFile = await generateAndStoreFinalKartuDocx(conn, {
+      kartuId: kartu.id,
+      pengajuanJudulId,
+      generatedByUserId: req.user.id,
+    });
 
     await conn.commit();
     txStarted = false;
@@ -837,13 +870,7 @@ exports.finalizeKartu = async (req, res, next) => {
     return res.json({
       ok: true,
       message: "Final kartu konsultasi outline generated",
-      data: {
-        id: ins.insertId,
-        kartuId: kartu.id,
-        fileType: "FINAL_DOCX",
-        fileName,
-        mimeType,
-      },
+      data: finalizedFile,
     });
   } catch (err) {
     try {
@@ -1520,7 +1547,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       });
     }
 
-    const allowedP2 = ["NEED_REVISION", "CONTINUE", "ACCEPTED"];
+    const allowedP2 = ["NEED_REVISION", "CONTINUE"];
     const allowedP1 = ["NEED_REVISION", "ACCEPTED"];
     const allowed = stage.stage === "PEMBIMBING_2" ? allowedP2 : allowedP1;
     if (!allowed.includes(decisionStatus)) {
@@ -1705,6 +1732,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       }
     }
 
+    let autoFinalizedFile = null;
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
       await conn.query(
         `UPDATE kartu_konsultasi_outline
@@ -1716,6 +1744,12 @@ exports.reviewStageByLecturer = async (req, res, next) => {
          WHERE id = ?`,
         [signatureImageValue, stage.kartu_id]
       );
+
+      autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
+        kartuId: stage.kartu_id,
+        pengajuanJudulId: stage.pengajuan_judul_id,
+        generatedByUserId: req.user.id,
+      });
     }
 
     await conn.commit();
@@ -1723,12 +1757,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message: "Review saved",
+      message:
+        stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED"
+          ? "Review saved and final DOCX generated"
+          : "Review saved",
       data: {
         stageId,
         submissionNo: latestSubmission.submission_no,
         decisionStatus,
         hasReviewFile,
+        finalFile: autoFinalizedFile,
       },
     });
   } catch (err) {
