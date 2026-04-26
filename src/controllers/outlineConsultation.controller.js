@@ -1,7 +1,7 @@
 const db = require("../db");
 const path = require("path");
 const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun } = require("docx");
+const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -99,6 +99,58 @@ function textPatch(value) {
   };
 }
 
+function decodeSignatureToBuffer(signatureValue) {
+  if (signatureValue === undefined || signatureValue === null) return null;
+
+  const raw = String(signatureValue).trim();
+  if (!raw) return null;
+
+  const dataUrlMatch = raw.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/i);
+  if (dataUrlMatch?.[1]) {
+    try {
+      return Buffer.from(dataUrlMatch[1], "base64");
+    } catch (_) {
+      return null;
+    }
+  }
+
+  const normalized = raw.replace(/\s+/g, "");
+  const looksLikeBase64 = /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
+  if (looksLikeBase64) {
+    try {
+      return Buffer.from(normalized, "base64");
+    } catch (_) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function signatureImagePatch(signatureValue) {
+  const signatureBuffer = decodeSignatureToBuffer(signatureValue);
+  if (!signatureBuffer || signatureBuffer.length === 0) {
+    return textPatch("");
+  }
+
+  try {
+    return {
+      type: PatchType.PARAGRAPH,
+      children: [
+        new ImageRun({
+          data: signatureBuffer,
+          transformation: {
+            width: 120,
+            height: 50,
+          },
+        }),
+      ],
+    };
+  } catch (_) {
+    return textPatch("");
+  }
+}
+
 function formatKartuDate(value) {
   if (!value) {
     return "";
@@ -150,8 +202,8 @@ async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
     judul_skripsi: textPatch(kartu.judul_skripsi),
     pembimbing1: textPatch(kartu.pembimbing1_nama),
     pembimbing2: textPatch(kartu.pembimbing2_nama),
-    ttd_pembimbing1: textPatch(""),
-    ttd_pembimbing2: textPatch(""),
+    ttd_pembimbing1: signatureImagePatch(kartu.pembimbing1_signature),
+    ttd_pembimbing2: signatureImagePatch(kartu.pembimbing2_signature),
   };
 
   for (let i = 1; i <= 18; i += 1) {
@@ -1411,6 +1463,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       decisionStatus,
       catatanMahasiswa,
       catatanKartu,
+      signatureImage,
       reviewFile,
       reviewFileName,
       reviewFileMimeType,
@@ -1467,7 +1520,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       });
     }
 
-    const allowedP2 = ["NEED_REVISION", "CONTINUE"];
+    const allowedP2 = ["NEED_REVISION", "CONTINUE", "ACCEPTED"];
     const allowedP1 = ["NEED_REVISION", "ACCEPTED"];
     const allowed = stage.stage === "PEMBIMBING_2" ? allowedP2 : allowedP1;
     if (!allowed.includes(decisionStatus)) {
@@ -1476,6 +1529,20 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: `Decision ${decisionStatus} is not allowed for ${stage.stage}`,
+      });
+    }
+
+    const signatureImageValue =
+      signatureImage !== undefined && signatureImage !== null ? String(signatureImage) : null;
+    const shouldRequireSignature =
+      (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
+      (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
+    if (shouldRequireSignature && (!signatureImageValue || signatureImageValue.trim().length === 0)) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "signatureImage is required for this decision",
       });
     }
 
@@ -1592,6 +1659,15 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     );
 
     if (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") {
+      await conn.query(
+        `UPDATE kartu_konsultasi_outline
+         SET
+           pembimbing2_signature = ?,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [signatureImageValue, stage.kartu_id]
+      );
+
       const [p1Rows] = await conn.query(
         `SELECT id
          FROM konsultasi_outline_stage
@@ -1632,9 +1708,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
       await conn.query(
         `UPDATE kartu_konsultasi_outline
-         SET is_completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         SET
+           pembimbing1_signature = ?,
+           is_completed = 1,
+           completed_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [stage.kartu_id]
+        [signatureImageValue, stage.kartu_id]
       );
     }
 
