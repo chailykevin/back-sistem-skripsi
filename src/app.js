@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 const healthRoutes = require("./routes/health.routes");
@@ -39,6 +39,12 @@ app.use("/dummy-integration", dummyIntegrationRoutes);
 
 const outlineSubmissionPeriodRoutes = require("./routes/outlineSubmissionPeriod.routes");
 app.use("/outline-submission-period", outlineSubmissionPeriodRoutes);
+
+const halamanPersetujuanRoutes = require("./routes/halamanPersetujuan.routes");
+app.use("/", halamanPersetujuanRoutes);
+
+const skPenelitianRoutes = require("./routes/skPenelitian.routes");
+app.use("/", skPenelitianRoutes);
 
 const outlineConsultationRoutes = require("./routes/outlineConsultation.routes");
 app.use("/", outlineConsultationRoutes);

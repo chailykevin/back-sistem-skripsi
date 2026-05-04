@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"e:\\\\College\\\\Thesis\\\\back-sistem-skripsi\\\\src\" -Recurse -Force | ForEach-Object { $_.FullName.Replace\\(\"e:\\\\College\\\\Thesis\\\\back-sistem-skripsi\\\\\", \"\"\\) } | Sort-Object)"
+    ]
+  }
+}
