@@ -148,7 +148,7 @@ exports.getSkPenelitian = async (req, res, next) => {
     }
 
     const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, created_at, is_verified
+      `SELECT id, file_type, file_name, mime_type, source, status, created_at
        FROM pengajuan_sk_penelitian_files
        WHERE pengajuan_sk_penelitian_id = ?
        ORDER BY file_type ASC`,
@@ -463,7 +463,8 @@ exports.verifySkPenelitian = async (req, res, next) => {
 
     // Ensure all 5 required files are verified before completing
     const [fileVerifyRows] = await conn.query(
-      `SELECT COUNT(*) AS total, SUM(is_verified) AS verified_count
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN status = 'VERIFIED' THEN 1 ELSE 0 END) AS verified_count
        FROM pengajuan_sk_penelitian_files
        WHERE pengajuan_sk_penelitian_id = ?
          AND file_type IN ('KRS','REKAP_NILAI','KARTU_KONSULTASI_OUTLINE','FILE_OUTLINE','HALAMAN_PERSETUJUAN')`,
@@ -606,12 +607,16 @@ exports.listSkForSekretariat = async (req, res, next) => {
   }
 };
 
+const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
+
 exports.verifySkFile = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
   try {
     if (!req.user.hasRole("SEKRETARIAT")) {
       return res
         .status(403)
-        .json({ ok: false, message: "Only sekretariat can verify SK files" });
+        .json({ ok: false, message: "Only sekretariat can update SK file status" });
     }
 
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
@@ -629,6 +634,14 @@ exports.verifySkFile = async (req, res, next) => {
       });
     }
 
+    const { status: fileStatus } = req.body ?? {};
+    if (!VALID_FILE_STATUSES.includes(fileStatus)) {
+      return res.status(400).json({
+        ok: false,
+        message: `status tidak valid. Harus salah satu dari: ${VALID_FILE_STATUSES.join(", ")}`,
+      });
+    }
+
     const [skRows] = await db.query(
       `SELECT id, status FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
       [pengajuanJudulId],
@@ -639,33 +652,65 @@ exports.verifySkFile = async (req, res, next) => {
         .status(404)
         .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
     }
-    if (sk.status !== "SUBMITTED") {
-      return res
-        .status(409)
-        .json({
-          ok: false,
-          message:
-            "File hanya bisa diverifikasi saat SK Penelitian berstatus SUBMITTED",
-        });
+    if (sk.status !== "SUBMITTED" && sk.status !== "NEED_REVISION") {
+      return res.status(409).json({
+        ok: false,
+        message: "File hanya bisa diperbarui saat SK Penelitian berstatus SUBMITTED atau NEED_REVISION",
+      });
     }
 
-    const [result] = await db.query(
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [result] = await conn.query(
       `UPDATE pengajuan_sk_penelitian_files
-       SET is_verified = 1
+       SET status = ?
        WHERE pengajuan_sk_penelitian_id = ? AND file_type = ?`,
-      [sk.id, fileType],
+      [fileStatus, sk.id, fileType],
     );
     if (result.affectedRows === 0) {
+      await conn.rollback();
+      txStarted = false;
       return res
         .status(404)
         .json({ ok: false, message: `File ${fileType} tidak ditemukan` });
     }
 
+    // Auto-update parent status
+    if (fileStatus === "NEED_REUPLOAD") {
+      await conn.query(
+        `UPDATE pengajuan_sk_penelitian SET status = 'NEED_REVISION', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [sk.id],
+      );
+    } else if (fileStatus === "SUBMITTED") {
+      // Only reset parent to SUBMITTED if no other files still need reupload
+      const [remainRows] = await conn.query(
+        `SELECT COUNT(*) AS cnt
+         FROM pengajuan_sk_penelitian_files
+         WHERE pengajuan_sk_penelitian_id = ? AND file_type != ? AND status = 'NEED_REUPLOAD'`,
+        [sk.id, fileType],
+      );
+      if (Number(remainRows[0].cnt) === 0) {
+        await conn.query(
+          `UPDATE pengajuan_sk_penelitian SET status = 'SUBMITTED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [sk.id],
+        );
+      }
+    }
+
+    await conn.commit();
+    txStarted = false;
+
     return res.json({
       ok: true,
-      message: `File ${fileType} berhasil diverifikasi`,
+      message: `Status file ${fileType} berhasil diperbarui`,
     });
   } catch (err) {
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
+  } finally {
+    conn.release();
   }
 };
