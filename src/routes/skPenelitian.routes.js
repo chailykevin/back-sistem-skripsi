@@ -8,5 +8,6 @@ router.get("/sk-penelitian/:pengajuanJudulId", auth, c.getSkPenelitian);
 router.post("/sk-penelitian/:pengajuanJudulId/submit", auth, c.submitSkPenelitian);
 router.patch("/sk-penelitian/:pengajuanJudulId/verify", auth, c.verifySkPenelitian);
 router.get("/sk-penelitian/:pengajuanJudulId/files/:fileType", auth, c.getSkFile);
+router.patch("/sk-penelitian/:pengajuanJudulId/files/:fileType/verify", auth, c.verifySkFile);
 
 module.exports = router;

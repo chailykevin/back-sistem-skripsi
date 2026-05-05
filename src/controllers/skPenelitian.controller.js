@@ -3,7 +3,7 @@ const db = require("../db");
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
     `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId]
+    [userId],
   );
   return rows[0]?.npm ?? null;
 }
@@ -17,64 +17,96 @@ const VALID_FILE_TYPES = [
   "SK_PENELITIAN",
 ];
 
-const VALID_SK_STATUSES = ["DRAFT", "SUBMITTED", "VERIFIED", "REJECTED", "COMPLETED"];
+const VALID_SK_STATUSES = [
+  "DRAFT",
+  "SUBMITTED",
+  "VERIFIED",
+  "REJECTED",
+  "COMPLETED",
+];
 
-async function upsertSkFile(conn, skPenelitianId, fileType, fileName, mimeType, fileContent, source) {
+async function upsertSkFile(
+  conn,
+  skPenelitianId,
+  fileType,
+  fileName,
+  mimeType,
+  fileContent,
+  source,
+) {
   await conn.query(
     `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = ?`,
-    [skPenelitianId, fileType]
+    [skPenelitianId, fileType],
   );
   await conn.query(
     `INSERT INTO pengajuan_sk_penelitian_files
        (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [skPenelitianId, fileType, fileName, mimeType ?? null, fileContent, source]
+    [skPenelitianId, fileType, fileName, mimeType ?? null, fileContent, source],
   );
 }
 
 exports.initSkPenelitian = async (req, res, next) => {
   try {
     if (req.user.userType !== "STUDENT") {
-      return res.status(403).json({ ok: false, message: "Only students can initialize SK Penelitian" });
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Only students can initialize SK Penelitian",
+        });
     }
 
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
     if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     const [pjRows] = await db.query(
       `SELECT id FROM pengajuan_judul WHERE id = ? LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     if (pjRows.length === 0) {
-      return res.status(404).json({ ok: false, message: "Pengajuan judul tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Pengajuan judul tidak ditemukan" });
     }
 
     const [halamanRows] = await db.query(
       `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_judul_id = ? AND status = 'COMPLETED' LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     if (halamanRows.length === 0) {
-      return res.status(400).json({ ok: false, message: "Halaman persetujuan judul belum selesai" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "Halaman persetujuan judul belum selesai",
+        });
     }
 
     const [existingRows] = await db.query(
       `SELECT id FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     if (existingRows.length > 0) {
-      return res.status(409).json({ ok: false, message: "SK Penelitian sudah dibuat" });
+      return res
+        .status(409)
+        .json({ ok: false, message: "SK Penelitian sudah dibuat" });
     }
 
     const [ins] = await db.query(
       `INSERT INTO pengajuan_sk_penelitian (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
 
     return res.status(201).json({
@@ -91,24 +123,36 @@ exports.getSkPenelitian = async (req, res, next) => {
   try {
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
     if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
     const [skRows] = await db.query(
-      `SELECT * FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId]
+      `SELECT
+         sk.*,
+         k.nama_mahasiswa,
+         k.judul_skripsi,
+         k.program_studi_nama
+       FROM pengajuan_sk_penelitian sk
+       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_judul_id = sk.pengajuan_judul_id
+       WHERE sk.pengajuan_judul_id = ?
+       LIMIT 1`,
+      [pengajuanJudulId],
     );
     const sk = skRows[0] ?? null;
     if (!sk) {
-      return res.status(404).json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
     }
 
     const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, created_at
+      `SELECT id, file_type, file_name, mime_type, source, created_at, is_verified
        FROM pengajuan_sk_penelitian_files
        WHERE pengajuan_sk_penelitian_id = ?
        ORDER BY file_type ASC`,
-      [sk.id]
+      [sk.id],
     );
 
     return res.json({ ok: true, data: { sk, files } });
@@ -122,20 +166,29 @@ exports.submitSkPenelitian = async (req, res, next) => {
   let txStarted = false;
   try {
     if (req.user.userType !== "STUDENT") {
-      return res.status(403).json({ ok: false, message: "Only students can submit SK Penelitian" });
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only students can submit SK Penelitian" });
     }
 
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
     if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
-    const { rekapNilaiContent, rekapNilaiName, rekapNilaiMimeType } = req.body ?? {};
+    const { rekapNilaiContent, rekapNilaiName, rekapNilaiMimeType } =
+      req.body ?? {};
     if (!rekapNilaiContent || !String(rekapNilaiContent).trim()) {
-      return res.status(400).json({ ok: false, message: "rekapNilaiContent is required" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "rekapNilaiContent is required" });
     }
     if (!rekapNilaiName || !String(rekapNilaiName).trim()) {
-      return res.status(400).json({ ok: false, message: "rekapNilaiName is required" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "rekapNilaiName is required" });
     }
 
     await conn.beginTransaction();
@@ -143,41 +196,58 @@ exports.submitSkPenelitian = async (req, res, next) => {
 
     const [skRows] = await conn.query(
       `SELECT * FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     const sk = skRows[0] ?? null;
     if (!sk) {
       await conn.rollback();
       txStarted = false;
-      return res.status(404).json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
     }
     if (sk.status !== "DRAFT") {
       await conn.rollback();
       txStarted = false;
-      return res.status(409).json({ ok: false, message: "SK Penelitian hanya bisa disubmit saat status DRAFT" });
+      return res
+        .status(409)
+        .json({
+          ok: false,
+          message: "SK Penelitian hanya bisa disubmit saat status DRAFT",
+        });
     }
 
     // System-pull KRS
     const [krsRows] = await conn.query(
       `SELECT file_content, file_name FROM pengajuan_judul_file WHERE pengajuan_judul_id = ? AND file_type = 'KRS' LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     if (krsRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(400).json({ ok: false, message: "File KRS tidak ditemukan pada pengajuan judul" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "File KRS tidak ditemukan pada pengajuan judul",
+        });
     }
     const krsRow = krsRows[0];
 
     // Resolve kartu_id
     const [kartuRows] = await conn.query(
       `SELECT id FROM kartu_konsultasi_outline WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     if (kartuRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(400).json({ ok: false, message: "Kartu konsultasi outline tidak ditemukan" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "Kartu konsultasi outline tidak ditemukan",
+        });
     }
     const kartuId = kartuRows[0].id;
 
@@ -188,12 +258,17 @@ exports.submitSkPenelitian = async (req, res, next) => {
        WHERE kartu_konsultasi_outline_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1
        ORDER BY generated_at DESC
        LIMIT 1`,
-      [kartuId]
+      [kartuId],
     );
     if (kartuFileRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(400).json({ ok: false, message: "File kartu konsultasi outline belum digenerate" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "File kartu konsultasi outline belum digenerate",
+        });
     }
     const kartuFile = kartuFileRows[0];
 
@@ -205,12 +280,14 @@ exports.submitSkPenelitian = async (req, res, next) => {
        WHERE st.kartu_konsultasi_outline_id = ?
        ORDER BY s.submitted_at DESC
        LIMIT 1`,
-      [kartuId]
+      [kartuId],
     );
     if (outlineRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(400).json({ ok: false, message: "File outline skripsi tidak ditemukan" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "File outline skripsi tidak ditemukan" });
     }
     const outlineRow = outlineRows[0];
 
@@ -222,62 +299,72 @@ exports.submitSkPenelitian = async (req, res, next) => {
        WHERE h.pengajuan_judul_id = ?
        ORDER BY f.generated_at DESC
        LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     if (halamanFileRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(400).json({ ok: false, message: "File halaman persetujuan tidak ditemukan" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "File halaman persetujuan tidak ditemukan",
+        });
     }
     const halamanFile = halamanFileRows[0];
 
     // Upsert all 5 files
     await upsertSkFile(
-      conn, sk.id,
+      conn,
+      sk.id,
       "REKAP_NILAI",
       String(rekapNilaiName).trim(),
       rekapNilaiMimeType ?? "application/octet-stream",
       String(rekapNilaiContent),
-      "UPLOADED"
+      "UPLOADED",
     );
     await upsertSkFile(
-      conn, sk.id,
+      conn,
+      sk.id,
       "KRS",
       krsRow.file_name,
       "application/octet-stream",
       krsRow.file_content,
-      "SYSTEM"
+      "SYSTEM",
     );
     await upsertSkFile(
-      conn, sk.id,
+      conn,
+      sk.id,
       "KARTU_KONSULTASI_OUTLINE",
       kartuFile.file_name,
       kartuFile.mime_type ?? "application/octet-stream",
       kartuFile.file_content,
-      "SYSTEM"
+      "SYSTEM",
     );
     await upsertSkFile(
-      conn, sk.id,
+      conn,
+      sk.id,
       "FILE_OUTLINE",
       outlineRow.file_outline_name,
       "application/octet-stream",
       outlineRow.file_outline,
-      "SYSTEM"
+      "SYSTEM",
     );
     await upsertSkFile(
-      conn, sk.id,
+      conn,
+      sk.id,
       "HALAMAN_PERSETUJUAN",
       halamanFile.file_name,
       halamanFile.mime_type ?? "application/octet-stream",
       halamanFile.file_content,
-      "SYSTEM"
+      "SYSTEM",
     );
 
     await conn.query(
       `UPDATE pengajuan_sk_penelitian
        SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [sk.id]
+      [sk.id],
     );
 
     await conn.commit();
@@ -299,20 +386,37 @@ exports.verifySkPenelitian = async (req, res, next) => {
   let txStarted = false;
   try {
     if (!req.user.hasRole("SEKRETARIAT")) {
-      return res.status(403).json({ ok: false, message: "Only sekretariat can verify SK Penelitian" });
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Only sekretariat can verify SK Penelitian",
+        });
     }
 
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
     if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
     const { action, catatanSekretariat } = req.body ?? {};
     if (action !== "VERIFY" && action !== "REJECT") {
-      return res.status(400).json({ ok: false, message: "action harus 'VERIFY' atau 'REJECT'" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "action harus 'VERIFY' atau 'REJECT'" });
     }
-    if (action === "REJECT" && (!catatanSekretariat || !String(catatanSekretariat).trim())) {
-      return res.status(400).json({ ok: false, message: "catatanSekretariat wajib diisi saat menolak" });
+    if (
+      action === "REJECT" &&
+      (!catatanSekretariat || !String(catatanSekretariat).trim())
+    ) {
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "catatanSekretariat wajib diisi saat menolak",
+        });
     }
 
     await conn.beginTransaction();
@@ -320,18 +424,25 @@ exports.verifySkPenelitian = async (req, res, next) => {
 
     const [skRows] = await conn.query(
       `SELECT * FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     const sk = skRows[0] ?? null;
     if (!sk) {
       await conn.rollback();
       txStarted = false;
-      return res.status(404).json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
     }
     if (sk.status !== "SUBMITTED") {
       await conn.rollback();
       txStarted = false;
-      return res.status(409).json({ ok: false, message: "SK Penelitian harus berstatus SUBMITTED untuk diverifikasi" });
+      return res
+        .status(409)
+        .json({
+          ok: false,
+          message: "SK Penelitian harus berstatus SUBMITTED untuk diverifikasi",
+        });
     }
 
     if (action === "REJECT") {
@@ -343,11 +454,30 @@ exports.verifySkPenelitian = async (req, res, next) => {
              verified_at = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [String(catatanSekretariat).trim(), req.user.id, sk.id]
+        [String(catatanSekretariat).trim(), req.user.id, sk.id],
       );
       await conn.commit();
       txStarted = false;
       return res.json({ ok: true, message: "SK Penelitian ditolak" });
+    }
+
+    // Ensure all 5 required files are verified before completing
+    const [fileVerifyRows] = await conn.query(
+      `SELECT COUNT(*) AS total, SUM(is_verified) AS verified_count
+       FROM pengajuan_sk_penelitian_files
+       WHERE pengajuan_sk_penelitian_id = ?
+         AND file_type IN ('KRS','REKAP_NILAI','KARTU_KONSULTASI_OUTLINE','FILE_OUTLINE','HALAMAN_PERSETUJUAN')`,
+      [sk.id],
+    );
+    const { total, verified_count } = fileVerifyRows[0];
+    if (Number(total) < 5 || Number(verified_count) < 5) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message:
+          "Semua 5 file harus diverifikasi sebelum SK Penelitian dapat diselesaikan",
+      });
     }
 
     // VERIFY — set COMPLETED (SK DOCX generation deferred until template is ready)
@@ -360,13 +490,20 @@ exports.verifySkPenelitian = async (req, res, next) => {
            completed_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [catatanSekretariat ? String(catatanSekretariat).trim() : null, req.user.id, sk.id]
+      [
+        catatanSekretariat ? String(catatanSekretariat).trim() : null,
+        req.user.id,
+        sk.id,
+      ],
     );
 
     await conn.commit();
     txStarted = false;
 
-    return res.json({ ok: true, message: "SK Penelitian diverifikasi dan diselesaikan" });
+    return res.json({
+      ok: true,
+      message: "SK Penelitian diverifikasi dan diselesaikan",
+    });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
@@ -381,7 +518,9 @@ exports.getSkFile = async (req, res, next) => {
   try {
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
     if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
     const fileType = req.params.fileType;
@@ -394,11 +533,13 @@ exports.getSkFile = async (req, res, next) => {
 
     const [skRows] = await db.query(
       `SELECT id FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId]
+      [pengajuanJudulId],
     );
     const sk = skRows[0] ?? null;
     if (!sk) {
-      return res.status(404).json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
     }
 
     const [fileRows] = await db.query(
@@ -407,11 +548,13 @@ exports.getSkFile = async (req, res, next) => {
        WHERE pengajuan_sk_penelitian_id = ? AND file_type = ?
        ORDER BY created_at DESC
        LIMIT 1`,
-      [sk.id, fileType]
+      [sk.id, fileType],
     );
     const file = fileRows[0] ?? null;
     if (!file) {
-      return res.status(404).json({ ok: false, message: `File ${fileType} tidak ditemukan` });
+      return res
+        .status(404)
+        .json({ ok: false, message: `File ${fileType} tidak ditemukan` });
     }
 
     return res.json({ ok: true, data: file });
@@ -423,11 +566,19 @@ exports.getSkFile = async (req, res, next) => {
 exports.listSkForSekretariat = async (req, res, next) => {
   try {
     if (!req.user.hasRole("SEKRETARIAT")) {
-      return res.status(403).json({ ok: false, message: "Only sekretariat can access this endpoint" });
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Only sekretariat can access this endpoint",
+        });
     }
 
     const statusParam = req.query?.status;
-    const status = statusParam && VALID_SK_STATUSES.includes(statusParam) ? statusParam : "SUBMITTED";
+    const status =
+      statusParam && VALID_SK_STATUSES.includes(statusParam)
+        ? statusParam
+        : "SUBMITTED";
 
     const [rows] = await db.query(
       `SELECT
@@ -438,14 +589,82 @@ exports.listSkForSekretariat = async (req, res, next) => {
          sk.submitted_at,
          sk.verified_at,
          sk.completed_at,
-         sk.created_at
+         sk.created_at,
+         k.nama_mahasiswa,
+         k.judul_skripsi,
+         k.program_studi_nama
        FROM pengajuan_sk_penelitian sk
+       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_judul_id = sk.pengajuan_judul_id
        WHERE sk.status = ?
        ORDER BY sk.submitted_at DESC`,
-      [status]
+      [status],
     );
 
     return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.verifySkFile = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("SEKRETARIAT")) {
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only sekretariat can verify SK files" });
+    }
+
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const fileType = req.params.fileType;
+    if (!VALID_FILE_TYPES.includes(fileType)) {
+      return res.status(400).json({
+        ok: false,
+        message: `fileType tidak valid. Harus salah satu dari: ${VALID_FILE_TYPES.join(", ")}`,
+      });
+    }
+
+    const [skRows] = await db.query(
+      `SELECT id, status FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    const sk = skRows[0] ?? null;
+    if (!sk) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+    }
+    if (sk.status !== "SUBMITTED") {
+      return res
+        .status(409)
+        .json({
+          ok: false,
+          message:
+            "File hanya bisa diverifikasi saat SK Penelitian berstatus SUBMITTED",
+        });
+    }
+
+    const [result] = await db.query(
+      `UPDATE pengajuan_sk_penelitian_files
+       SET is_verified = 1
+       WHERE pengajuan_sk_penelitian_id = ? AND file_type = ?`,
+      [sk.id, fileType],
+    );
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ ok: false, message: `File ${fileType} tidak ditemukan` });
+    }
+
+    return res.json({
+      ok: true,
+      message: `File ${fileType} berhasil diverifikasi`,
+    });
   } catch (err) {
     next(err);
   }
