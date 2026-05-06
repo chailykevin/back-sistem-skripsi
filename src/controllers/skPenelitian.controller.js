@@ -548,6 +548,130 @@ exports.reviewSkPenelitian = async (req, res, next) => {
   }
 };
 
+exports.resubmitSkPenelitian = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
+  try {
+    if (req.user.userType !== "STUDENT") {
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only students can resubmit SK Penelitian" });
+    }
+
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const { files } = req.body ?? {};
+    if (!Array.isArray(files) || files.length === 0) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "files harus berisi minimal 1 entri" });
+    }
+    for (const f of files) {
+      if (!f?.fileType || !String(f.fileType).trim()) {
+        return res.status(400).json({ ok: false, message: "Setiap file harus memiliki fileType" });
+      }
+      if (!VALID_FILE_TYPES.includes(f.fileType)) {
+        return res.status(400).json({
+          ok: false,
+          message: `fileType tidak valid: ${f.fileType}. Harus salah satu dari: ${VALID_FILE_TYPES.join(", ")}`,
+        });
+      }
+      if (!f?.content || !String(f.content).trim()) {
+        return res.status(400).json({ ok: false, message: `content wajib diisi untuk ${f.fileType}` });
+      }
+      if (!f?.name || !String(f.name).trim()) {
+        return res.status(400).json({ ok: false, message: `name wajib diisi untuk ${f.fileType}` });
+      }
+    }
+    const fileTypes = files.map((f) => f.fileType);
+    if (new Set(fileTypes).size !== fileTypes.length) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "fileType tidak boleh duplikat" });
+    }
+
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [skRows] = await conn.query(
+      `SELECT * FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
+      [pengajuanJudulId],
+    );
+    const sk = skRows[0] ?? null;
+    if (!sk) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+    }
+    if (sk.status !== "NEED_REVISION") {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "SK Penelitian harus berstatus NEED_REVISION untuk resubmit",
+      });
+    }
+
+    for (const f of files) {
+      const [fileRows] = await conn.query(
+        `SELECT status FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = ? LIMIT 1`,
+        [sk.id, f.fileType],
+      );
+      if (fileRows.length === 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res
+          .status(404)
+          .json({ ok: false, message: `File ${f.fileType} tidak ditemukan` });
+      }
+      if (fileRows[0].status !== "NEED_REUPLOAD") {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: `File ${f.fileType} tidak berstatus NEED_REUPLOAD`,
+        });
+      }
+    }
+
+    for (const f of files) {
+      await upsertSkFile(
+        conn,
+        sk.id,
+        f.fileType,
+        String(f.name).trim(),
+        f.mimeType ?? "application/octet-stream",
+        String(f.content),
+        "UPLOADED",
+      );
+    }
+
+    await conn.query(
+      `UPDATE pengajuan_sk_penelitian SET status = 'SUBMITTED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [sk.id],
+    );
+
+    await conn.commit();
+    txStarted = false;
+
+    return res.json({ ok: true, message: "File berhasil diresubmit" });
+  } catch (err) {
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
+    next(err);
+  } finally {
+    conn.release();
+  }
+};
+
 exports.getSkFile = async (req, res, next) => {
   try {
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
