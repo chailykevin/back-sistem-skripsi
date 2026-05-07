@@ -49,6 +49,9 @@ app.use("/", skPenelitianRoutes);
 const outlineConsultationRoutes = require("./routes/outlineConsultation.routes");
 app.use("/", outlineConsultationRoutes);
 
+const skripsiConsultationRoutes = require("./routes/skripsiConsultation.routes");
+app.use("/", skripsiConsultationRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
