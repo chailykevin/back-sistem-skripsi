@@ -61,12 +61,14 @@ exports.create = async (req, res, next) => {
       });
     }
 
+    const submissionPeriodId = req.openPeriod?.id ?? null;
+
     // insert outline
     const [insertResult] = await db.query(
       `INSERT INTO outline
-       (judul, latar_belakang, npm, status, program_studi_id)
-       VALUES (?, ?, ?, 'SUBMITTED', ?)`,
-      [judul, latarBelakang, npm, programStudiId]
+       (judul, latar_belakang, npm, status, program_studi_id, submission_period_id)
+       VALUES (?, ?, ?, 'SUBMITTED', ?, ?)`,
+      [judul, latarBelakang, npm, programStudiId, submissionPeriodId]
     );
 
     const outlineId = insertResult?.insertId ?? null;

@@ -1,27 +1,15 @@
-const { getOutlineSubmissionPeriodStatus } = require("../services/outlineSubmissionPeriod.service");
+const { getOpenPeriod } = require("../services/outlineSubmissionPeriod.service");
 
 module.exports = async (req, res, next) => {
   try {
-    const status = await getOutlineSubmissionPeriodStatus();
-
-    if (!status.configured) {
+    const period = await getOpenPeriod();
+    if (!period) {
       return res.status(409).json({
         ok: false,
-        message: "Outline submission period is not configured",
+        message: "Outline submission period is closed or not configured",
       });
     }
-
-    if (!status.isOpenNow) {
-      return res.status(409).json({
-        ok: false,
-        message: "Outline submission period is closed",
-        data: {
-          openAt: status.openAt,
-          closeAt: status.closeAt,
-        },
-      });
-    }
-
+    req.openPeriod = period;
     return next();
   } catch (err) {
     if (err?.code === "ER_NO_SUCH_TABLE") {

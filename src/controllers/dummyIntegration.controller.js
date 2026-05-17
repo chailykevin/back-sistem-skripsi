@@ -45,6 +45,7 @@ const PREDEFINED_DOSEN = [
     nama: "Susana, S.Kom., M.TI.",
     username: "susan",
     isKaprodi: true,
+    isSekretariat: false,
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
@@ -53,28 +54,33 @@ const PREDEFINED_DOSEN = [
     nama: "Hendro, S.Kom., M.M., M.TI.",
     username: "hendro",
     isKaprodi: false,
+    isSekretariat: false,
     password: DUMMY_PASSWORD_PLAIN,
   },
-  { 
-    nidn: "00003", 
-    nama: "Thommy Willay, S.Kom., M.Kom.", 
-    username: "thomlay", 
+  {
+    nidn: "00003",
+    nama: "Thommy Willay, S.Kom., M.Kom.",
+    username: "thomlay",
     isKaprodi: true,
-    programStudiNama: "Sistem Informasi", 
+    isSekretariat: false,
+    programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
   },
-  { 
-    nidn: "00004", 
-    nama: "Antonius, S.Kom., M.Kom.", 
-    username: "antonius", 
+  {
+    nidn: "00004",
+    nama: "Antonius, S.Kom., M.Kom.",
+    username: "antonius",
     isKaprodi: false,
-    password: DUMMY_PASSWORD_PLAIN, 
+    isSekretariat: true,
+    password: DUMMY_PASSWORD_PLAIN,
   },
-  { nidn: "00005", 
-    nama: "Riyadi J. Iskandar, S.Kom., M.M., M.Kom.", 
-    username: "riyadi", 
+  {
+    nidn: "00005",
+    nama: "Riyadi J. Iskandar, S.Kom., M.M., M.Kom.",
+    username: "riyadi",
     isKaprodi: false,
-    password: DUMMY_PASSWORD_PLAIN, 
+    isSekretariat: false,
+    password: DUMMY_PASSWORD_PLAIN,
   },
 ];
 
@@ -83,7 +89,7 @@ async function getActiveRolesMap(conn) {
     `SELECT id, code
      FROM roles
      WHERE is_active = 1
-       AND code IN ('STUDENT', 'LECTURER', 'KAPRODI', 'PEMBIMBING')`
+       AND code IN ('STUDENT', 'LECTURER', 'KAPRODI', 'PEMBIMBING', 'SEKRETARIAT')`,
   );
 
   const map = new Map();
@@ -97,7 +103,7 @@ async function getProgramStudiRows(conn) {
   const [rows] = await conn.query(
     `SELECT id, nama
      FROM program_studi
-     ORDER BY id ASC`
+     ORDER BY id ASC`,
   );
   return rows;
 }
@@ -109,7 +115,7 @@ async function upsertMahasiswa(conn, mahasiswa) {
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
        program_studi_id = VALUES(program_studi_id)`,
-    [mahasiswa.npm, mahasiswa.nama, mahasiswa.programStudiId]
+    [mahasiswa.npm, mahasiswa.nama, mahasiswa.programStudiId],
   );
 }
 
@@ -119,7 +125,7 @@ async function upsertDosen(conn, dosen) {
      VALUES (?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama)`,
-    [dosen.nidn, dosen.nama]
+    [dosen.nidn, dosen.nama],
   );
 }
 
@@ -133,7 +139,12 @@ async function upsertUserAccount(conn, payload) {
        npm = VALUES(npm),
        nidn = VALUES(nidn),
        is_active = 1`,
-    [payload.username, payload.passwordHash, payload.npm ?? null, payload.nidn ?? null]
+    [
+      payload.username,
+      payload.passwordHash,
+      payload.npm ?? null,
+      payload.nidn ?? null,
+    ],
   );
 }
 
@@ -143,12 +154,15 @@ async function getUserIdByIdentity(conn, { npm = null, nidn = null }) {
      FROM users
      WHERE npm <=> ? AND nidn <=> ?
      LIMIT 1`,
-    [npm, nidn]
+    [npm, nidn],
   );
   return rows[0]?.id ?? null;
 }
 
-async function upsertUserRole(conn, { userId, roleId, programStudiId = null, assignedByUserId = null }) {
+async function upsertUserRole(
+  conn,
+  { userId, roleId, programStudiId = null, assignedByUserId = null },
+) {
   const [rows] = await conn.query(
     `SELECT id
      FROM user_roles
@@ -157,7 +171,7 @@ async function upsertUserRole(conn, { userId, roleId, programStudiId = null, ass
        AND program_studi_id <=> ?
      ORDER BY id DESC
      LIMIT 1`,
-    [userId, roleId, programStudiId]
+    [userId, roleId, programStudiId],
   );
 
   if (rows.length > 0) {
@@ -169,7 +183,7 @@ async function upsertUserRole(conn, { userId, roleId, programStudiId = null, ass
          assigned_at = CURRENT_TIMESTAMP,
          assigned_by_user_id = ?
        WHERE id = ?`,
-      [assignedByUserId, rows[0].id]
+      [assignedByUserId, rows[0].id],
     );
     return;
   }
@@ -182,13 +196,16 @@ async function upsertUserRole(conn, { userId, roleId, programStudiId = null, ass
        is_active,
        assigned_by_user_id
      ) VALUES (?, ?, ?, 1, ?)`,
-    [userId, roleId, programStudiId, assignedByUserId]
+    [userId, roleId, programStudiId, assignedByUserId],
   );
 }
 
 function getPredefinedMahasiswa(programRows) {
   const prodiByName = new Map(
-    programRows.map((p) => [String(p.nama).toLowerCase(), { id: Number(p.id), nama: p.nama }])
+    programRows.map((p) => [
+      String(p.nama).toLowerCase(),
+      { id: Number(p.id), nama: p.nama },
+    ]),
   );
 
   return PREDEFINED_MAHASISWA.map((item, index) => ({
@@ -197,14 +214,18 @@ function getPredefinedMahasiswa(programRows) {
     username: item.username,
     programStudiNama: item.programStudiNama,
     password: item.password,
-    programStudiId: prodiByName.get(String(item.programStudiNama).toLowerCase())?.id ?? null,
+    programStudiId:
+      prodiByName.get(String(item.programStudiNama).toLowerCase())?.id ?? null,
     index: index + 1,
   }));
 }
 
 function getPredefinedDosen(programRows) {
   const prodiByName = new Map(
-    programRows.map((p) => [String(p.nama).toLowerCase(), { id: Number(p.id), nama: p.nama }])
+    programRows.map((p) => [
+      String(p.nama).toLowerCase(),
+      { id: Number(p.id), nama: p.nama },
+    ]),
   );
 
   return PREDEFINED_DOSEN.map((item, index) => ({
@@ -212,10 +233,14 @@ function getPredefinedDosen(programRows) {
     nama: item.nama,
     username: item.username,
     isKaprodi: item.isKaprodi,
+    isSekretariat: item.isSekretariat ?? false,
     password: item.password,
-    programStudiNama: item.isKaprodi ? String(item.programStudiNama ?? "").trim() : null,
+    programStudiNama: item.isKaprodi
+      ? String(item.programStudiNama ?? "").trim()
+      : null,
     kaprodiProgramStudiId: item.isKaprodi
-      ? prodiByName.get(String(item.programStudiNama ?? "").toLowerCase())?.id ?? null
+      ? (prodiByName.get(String(item.programStudiNama ?? "").toLowerCase())
+          ?.id ?? null)
       : null,
     index: index + 1,
   }));
@@ -233,7 +258,9 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
     if (programRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(409).json({ ok: false, message: "No program_studi found" });
+      return res
+        .status(409)
+        .json({ ok: false, message: "No program_studi found" });
     }
 
     const rolesMap = await getActiveRolesMap(conn);
@@ -241,7 +268,9 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
     if (!studentRoleId) {
       await conn.rollback();
       txStarted = false;
-      return res.status(409).json({ ok: false, message: "Role STUDENT is missing" });
+      return res
+        .status(409)
+        .json({ ok: false, message: "Role STUDENT is missing" });
     }
 
     const input = getPredefinedMahasiswa(programRows);
@@ -286,7 +315,10 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
         nidn: null,
       });
 
-      const userId = await getUserIdByIdentity(conn, { npm: mhs.npm, nidn: null });
+      const userId = await getUserIdByIdentity(conn, {
+        npm: mhs.npm,
+        nidn: null,
+      });
       if (!userId) {
         throw new Error(`Failed to resolve user account for npm ${mhs.npm}`);
       }
@@ -298,7 +330,9 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
         assignedByUserId,
       });
 
-      const programName = programRows.find((p) => Number(p.id) === mhs.programStudiId)?.nama ?? null;
+      const programName =
+        programRows.find((p) => Number(p.id) === mhs.programStudiId)?.nama ??
+        null;
       result.push({
         userId,
         username: mhs.username,
@@ -344,19 +378,28 @@ exports.seedDosenDummy = async (req, res, next) => {
     if (programRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res.status(409).json({ ok: false, message: "No program_studi found" });
+      return res
+        .status(409)
+        .json({ ok: false, message: "No program_studi found" });
     }
 
     const rolesMap = await getActiveRolesMap(conn);
     const lecturerRoleId = rolesMap.get("LECTURER");
     const kaprodiRoleId = rolesMap.get("KAPRODI");
     const pembimbingRoleId = rolesMap.get("PEMBIMBING");
-    if (!lecturerRoleId || !kaprodiRoleId || !pembimbingRoleId) {
+    const sekretariatRoleId = rolesMap.get("SEKRETARIAT");
+    if (
+      !lecturerRoleId ||
+      !kaprodiRoleId ||
+      !pembimbingRoleId ||
+      !sekretariatRoleId
+    ) {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: "Required roles are missing (LECTURER, KAPRODI, PEMBIMBING)",
+        message:
+          "Required roles are missing (LECTURER, KAPRODI, PEMBIMBING, SEKRETARIAT)",
       });
     }
 
@@ -417,7 +460,10 @@ exports.seedDosenDummy = async (req, res, next) => {
         nidn: dsn.nidn,
       });
 
-      const userId = await getUserIdByIdentity(conn, { npm: null, nidn: dsn.nidn });
+      const userId = await getUserIdByIdentity(conn, {
+        npm: null,
+        nidn: dsn.nidn,
+      });
       if (!userId) {
         throw new Error(`Failed to resolve user account for nidn ${dsn.nidn}`);
       }
@@ -448,11 +494,22 @@ exports.seedDosenDummy = async (req, res, next) => {
           `UPDATE program_studi
            SET kaprodi_nidn = ?
            WHERE id = ?`,
-          [dsn.nidn, dsn.kaprodiProgramStudiId]
+          [dsn.nidn, dsn.kaprodiProgramStudiId],
         );
         roles.push("KAPRODI");
         kaprodiProgramStudi =
-          programRows.find((p) => Number(p.id) === dsn.kaprodiProgramStudiId) ?? null;
+          programRows.find((p) => Number(p.id) === dsn.kaprodiProgramStudiId) ??
+          null;
+      }
+
+      if (dsn.isSekretariat) {
+        await upsertUserRole(conn, {
+          userId,
+          roleId: sekretariatRoleId,
+          programStudiId: null,
+          assignedByUserId,
+        });
+        roles.push("SEKRETARIAT");
       }
 
       result.push({
@@ -462,6 +519,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         nama: dsn.nama,
         password: dsn.password,
         isKaprodi: dsn.isKaprodi,
+        isSekretariat: dsn.isSekretariat,
         roles,
         kaprodiProgramStudiId: kaprodiProgramStudi?.id ?? null,
         kaprodiProgramStudiNama: kaprodiProgramStudi?.nama ?? null,

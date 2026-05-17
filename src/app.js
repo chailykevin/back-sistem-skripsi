@@ -38,7 +38,7 @@ const dummyIntegrationRoutes = require("./routes/dummyIntegration.routes");
 app.use("/dummy-integration", dummyIntegrationRoutes);
 
 const outlineSubmissionPeriodRoutes = require("./routes/outlineSubmissionPeriod.routes");
-app.use("/outline-submission-period", outlineSubmissionPeriodRoutes);
+app.use("/outline-submission-periods", outlineSubmissionPeriodRoutes);
 
 const halamanPersetujuanRoutes = require("./routes/halamanPersetujuan.routes");
 app.use("/", halamanPersetujuanRoutes);

@@ -1,37 +1,21 @@
 const db = require("../db");
 
-async function getOutlineSubmissionPeriodStatus(queryable = db) {
-  const [rows] = await queryable.query(
-    `SELECT
-       open_at,
-       close_at,
-       CASE
-         WHEN CURRENT_TIMESTAMP >= open_at AND CURRENT_TIMESTAMP <= close_at THEN 1
-         ELSE 0
-       END AS is_open_now
+async function getOpenPeriod() {
+  const [rows] = await db.query(
+    `SELECT id, tahun_akademik, periode_akademik, open_at, close_at
      FROM outline_submission_period
-     WHERE id = 1
+     WHERE CURRENT_TIMESTAMP >= open_at AND CURRENT_TIMESTAMP <= close_at
      LIMIT 1`
   );
-
-  const row = rows[0] ?? null;
-  if (!row) {
-    return {
-      configured: false,
-      isOpenNow: false,
-      openAt: null,
-      closeAt: null,
-    };
-  }
-
+  if (!rows.length) return null;
+  const r = rows[0];
   return {
-    configured: true,
-    isOpenNow: Boolean(row.is_open_now),
-    openAt: row.open_at,
-    closeAt: row.close_at,
+    id: r.id,
+    tahunAkademik: r.tahun_akademik,
+    periodeAkademik: r.periode_akademik,
+    openAt: r.open_at,
+    closeAt: r.close_at,
   };
 }
 
-module.exports = {
-  getOutlineSubmissionPeriodStatus,
-};
+module.exports = { getOpenPeriod };

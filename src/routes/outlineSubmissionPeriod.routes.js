@@ -1,8 +1,11 @@
 const router = require("express").Router();
 const auth = require("../middlewares/auth");
-const controller = require("../controllers/outlineSubmissionPeriod.controller");
+const c = require("../controllers/outlineSubmissionPeriod.controller");
 
-router.get("/", auth, controller.get);
-router.put("/", auth, controller.upsert);
+router.get("/", auth, c.list);
+router.post("/", auth, c.create);
+router.get("/:id", auth, c.getById);
+router.patch("/:id", auth, c.update);
+router.delete("/:id", auth, c.remove);
 
 module.exports = router;
