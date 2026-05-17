@@ -358,8 +358,7 @@ exports.getReviewHistory = async (req, res, next) => {
        FROM outline_details d
        INNER JOIN outline o ON o.id = d.outline_id
        WHERE o.id = ?
-       ORDER BY d.revision_no DESC
-       LIMIT 3`,
+       ORDER BY d.revision_no DESC`,
       [id]
     );
 
@@ -743,21 +742,7 @@ exports.resubmit = async (req, res, next) => {
         [outlineId, nextRev, fileVal, fileNameVal ?? null]
       );
 
-      // keep only latest 3 revisions
-      await conn.query(
-        `DELETE FROM outline_details
-         WHERE outline_id = ?
-           AND revision_no NOT IN (
-             SELECT revision_no FROM (
-               SELECT revision_no
-               FROM outline_details
-               WHERE outline_id = ?
-               ORDER BY revision_no DESC
-               LIMIT 3
-             ) AS t
-           )`,
-        [outlineId, outlineId]
-      );
+
     }
 
     await conn.commit();
