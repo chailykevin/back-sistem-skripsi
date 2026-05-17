@@ -58,32 +58,24 @@ exports.listDosen = async (req, res, next) => {
   try {
     const [rows] = await db.query(
       `SELECT
-         u.id,
-         u.username,
-         u.is_active,
-         u.nidn,
+         d.nidn,
          d.nama AS dosen_nama,
+         MAX(CASE WHEN u.nidn IS NOT NULL THEN u.is_active ELSE 0 END) AS is_active,
          GROUP_CONCAT(DISTINCT r.code ORDER BY r.code SEPARATOR ',') AS role_codes
-       FROM users u
-       INNER JOIN dosen d ON d.nidn = u.nidn
+       FROM dosen d
+       LEFT JOIN users u ON u.nidn = d.nidn
        LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.is_active = 1
-       LEFT JOIN roles r ON r.id = ur.role_id AND r.is_active = 1
-       WHERE u.is_active = 1
+       LEFT JOIN roles r ON r.id = ur.role_id AND r.is_active = 1 AND u.is_active = 1
        GROUP BY
-         u.id,
-         u.username,
-         u.is_active,
-         u.nidn,
+         d.nidn,
          d.nama
        ORDER BY d.nama ASC`
     );
 
     const data = rows.map((row) => ({
-      id: row.id,
-      username: row.username,
-      isActive: Boolean(row.is_active),
       nidn: row.nidn,
       nama: row.dosen_nama,
+      isActive: Boolean(row.is_active),
       roles: mapRoleCodes(row.role_codes),
     }));
 

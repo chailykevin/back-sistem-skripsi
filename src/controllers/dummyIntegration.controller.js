@@ -159,6 +159,14 @@ async function getUserIdByIdentity(conn, { npm = null, nidn = null }) {
   return rows[0]?.id ?? null;
 }
 
+async function getUserIdByUsername(conn, username) {
+  const [rows] = await conn.query(
+    `SELECT id FROM users WHERE username = ? LIMIT 1`,
+    [username],
+  );
+  return rows[0]?.id ?? null;
+}
+
 async function upsertUserRole(
   conn,
   { userId, roleId, programStudiId = null, assignedByUserId = null },
@@ -452,6 +460,7 @@ exports.seedDosenDummy = async (req, res, next) => {
 
     const result = [];
     for (const dsn of input) {
+      // Lecturer account
       await upsertDosen(conn, dsn);
       await upsertUserAccount(conn, {
         username: dsn.username,
@@ -460,12 +469,9 @@ exports.seedDosenDummy = async (req, res, next) => {
         nidn: dsn.nidn,
       });
 
-      const userId = await getUserIdByIdentity(conn, {
-        npm: null,
-        nidn: dsn.nidn,
-      });
+      const userId = await getUserIdByUsername(conn, dsn.username);
       if (!userId) {
-        throw new Error(`Failed to resolve user account for nidn ${dsn.nidn}`);
+        throw new Error(`Failed to resolve user account for username ${dsn.username}`);
       }
 
       await upsertUserRole(conn, {
@@ -481,11 +487,22 @@ exports.seedDosenDummy = async (req, res, next) => {
         assignedByUserId,
       });
 
-      const roles = ["LECTURER", "PEMBIMBING"];
+      let kaprodiAccount = null;
       let kaprodiProgramStudi = null;
       if (dsn.isKaprodi) {
+        const kaprodiUsername = dsn.username + "_kaprodi";
+        await upsertUserAccount(conn, {
+          username: kaprodiUsername,
+          passwordHash,
+          npm: null,
+          nidn: dsn.nidn,
+        });
+        const kaprodiUserId = await getUserIdByUsername(conn, kaprodiUsername);
+        if (!kaprodiUserId) {
+          throw new Error(`Failed to resolve kaprodi account for username ${kaprodiUsername}`);
+        }
         await upsertUserRole(conn, {
-          userId,
+          userId: kaprodiUserId,
           roleId: kaprodiRoleId,
           programStudiId: dsn.kaprodiProgramStudiId,
           assignedByUserId,
@@ -496,20 +513,41 @@ exports.seedDosenDummy = async (req, res, next) => {
            WHERE id = ?`,
           [dsn.nidn, dsn.kaprodiProgramStudiId],
         );
-        roles.push("KAPRODI");
         kaprodiProgramStudi =
-          programRows.find((p) => Number(p.id) === dsn.kaprodiProgramStudiId) ??
-          null;
+          programRows.find((p) => Number(p.id) === dsn.kaprodiProgramStudiId) ?? null;
+        kaprodiAccount = {
+          userId: kaprodiUserId,
+          username: kaprodiUsername,
+          roles: ["KAPRODI"],
+          kaprodiProgramStudiId: kaprodiProgramStudi?.id ?? null,
+          kaprodiProgramStudiNama: kaprodiProgramStudi?.nama ?? null,
+        };
       }
 
+      let sekretariatAccount = null;
       if (dsn.isSekretariat) {
+        const sekretariatUsername = dsn.username + "_sekretariat";
+        await upsertUserAccount(conn, {
+          username: sekretariatUsername,
+          passwordHash,
+          npm: null,
+          nidn: dsn.nidn,
+        });
+        const sekretariatUserId = await getUserIdByUsername(conn, sekretariatUsername);
+        if (!sekretariatUserId) {
+          throw new Error(`Failed to resolve sekretariat account for username ${sekretariatUsername}`);
+        }
         await upsertUserRole(conn, {
-          userId,
+          userId: sekretariatUserId,
           roleId: sekretariatRoleId,
           programStudiId: null,
           assignedByUserId,
         });
-        roles.push("SEKRETARIAT");
+        sekretariatAccount = {
+          userId: sekretariatUserId,
+          username: sekretariatUsername,
+          roles: ["SEKRETARIAT"],
+        };
       }
 
       result.push({
@@ -518,11 +556,9 @@ exports.seedDosenDummy = async (req, res, next) => {
         nidn: dsn.nidn,
         nama: dsn.nama,
         password: dsn.password,
-        isKaprodi: dsn.isKaprodi,
-        isSekretariat: dsn.isSekretariat,
-        roles,
-        kaprodiProgramStudiId: kaprodiProgramStudi?.id ?? null,
-        kaprodiProgramStudiNama: kaprodiProgramStudi?.nama ?? null,
+        roles: ["LECTURER", "PEMBIMBING"],
+        kaprodiAccount,
+        sekretariatAccount,
       });
     }
 
