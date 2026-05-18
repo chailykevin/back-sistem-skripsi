@@ -345,12 +345,17 @@ exports.signHalamanPersetujuan = async (req, res, next) => {
         .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
-    const signatureImage = req.body?.signatureImage;
-    if (!signatureImage || !String(signatureImage).trim()) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "signatureImage is required" });
+    const [[sigRow]] = await db.query(
+      `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
+      [req.user.id],
+    );
+    if (!sigRow?.signature_image) {
+      return res.status(400).json({
+        ok: false,
+        message: "No saved signature found. Please upload your signature first.",
+      });
     }
+    const signatureImage = sigRow.signature_image;
 
     await conn.beginTransaction();
     txStarted = true;

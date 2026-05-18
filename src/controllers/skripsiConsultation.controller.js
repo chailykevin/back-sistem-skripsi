@@ -747,7 +747,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       decisionStatus,
       catatanMahasiswa,
       catatanKartu,
-      signatureImage,
       reviewFile,
       reviewFileName,
     } = req.body || {};
@@ -819,21 +818,24 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       });
     }
 
-    const signatureImageValue =
-      signatureImage != null ? String(signatureImage) : null;
     const shouldRequireSignature =
       (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
       (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
-    if (
-      shouldRequireSignature &&
-      (!signatureImageValue || !signatureImageValue.trim())
-    ) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message: "signatureImage is required for this decision",
-      });
+    let signatureImageValue = null;
+    if (shouldRequireSignature) {
+      const [[sigRow]] = await conn.query(
+        `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
+        [req.user.id],
+      );
+      if (!sigRow?.signature_image) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: "No saved signature found. Please upload your signature first.",
+        });
+      }
+      signatureImageValue = sigRow.signature_image;
     }
 
     const [subRows] = await conn.query(
