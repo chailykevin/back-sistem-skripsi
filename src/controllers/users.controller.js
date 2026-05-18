@@ -17,6 +17,7 @@ exports.listMahasiswa = async (req, res, next) => {
          u.is_active,
          u.npm,
          m.nama AS mahasiswa_nama,
+         m.sks AS mahasiswa_sks,
          m.program_studi_id,
          ps.nama AS program_studi_nama,
          GROUP_CONCAT(DISTINCT r.code ORDER BY r.code SEPARATOR ',') AS role_codes
@@ -43,6 +44,7 @@ exports.listMahasiswa = async (req, res, next) => {
       isActive: Boolean(row.is_active),
       npm: row.npm,
       nama: row.mahasiswa_nama,
+      sks: row.mahasiswa_sks,
       programStudiId: row.program_studi_id,
       programStudiNama: row.program_studi_nama,
       roles: mapRoleCodes(row.role_codes),

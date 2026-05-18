@@ -7,7 +7,7 @@ async function getStudentNpm(userId) {
      FROM users
      WHERE id = ? AND is_active = 1
      LIMIT 1`,
-    [userId]
+    [userId],
   );
   return urows[0]?.npm ?? null;
 }
@@ -50,7 +50,7 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
      FROM pengajuan_judul_syarat
      WHERE pengajuan_judul_id = ?
      LIMIT 1`,
-    [pengajuanJudulId]
+    [pengajuanJudulId],
   );
 
   if (existing.length > 0) {
@@ -62,7 +62,12 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
          syarat_metodologi_nilai_min_c = ?,
          updated_at = CURRENT_TIMESTAMP
        WHERE pengajuan_judul_id = ?`,
-      [syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c, pengajuanJudulId]
+      [
+        syarat.syarat_transkrip,
+        syarat.syarat_krs,
+        syarat.syarat_metodologi_nilai_min_c,
+        pengajuanJudulId,
+      ],
     );
     return;
   }
@@ -74,22 +79,33 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
        syarat_krs,
        syarat_metodologi_nilai_min_c
      ) VALUES (?, ?, ?, ?)`,
-    [pengajuanJudulId, syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c]
+    [
+      pengajuanJudulId,
+      syarat.syarat_transkrip,
+      syarat.syarat_krs,
+      syarat.syarat_metodologi_nilai_min_c,
+    ],
   );
 }
 
-async function upsertFileByType(conn, pengajuanJudulId, fileType, fileContent, fileName) {
+async function upsertFileByType(
+  conn,
+  pengajuanJudulId,
+  fileType,
+  fileContent,
+  fileName,
+) {
   await conn.query(
     `DELETE FROM pengajuan_judul_file
      WHERE pengajuan_judul_id = ? AND file_type = ?`,
-    [pengajuanJudulId, fileType]
+    [pengajuanJudulId, fileType],
   );
 
   await conn.query(
     `INSERT INTO pengajuan_judul_file (
        pengajuan_judul_id, file_type, file_content, file_name
      ) VALUES (?, ?, ?, ?)`,
-    [pengajuanJudulId, fileType, fileContent, fileName]
+    [pengajuanJudulId, fileType, fileContent, fileName],
   );
 }
 
@@ -104,14 +120,14 @@ async function hydrateTitleSubmissionReadData(baseRow) {
      FROM pengajuan_judul_syarat
      WHERE pengajuan_judul_id = ?
      LIMIT 1`,
-    [baseRow.id]
+    [baseRow.id],
   );
 
   const [fileRows] = await db.query(
     `SELECT file_type, file_content, file_name
      FROM pengajuan_judul_file
      WHERE pengajuan_judul_id = ?`,
-    [baseRow.id]
+    [baseRow.id],
   );
 
   const syarat = syaratRows[0] || null;
@@ -137,7 +153,9 @@ exports.createTitleSubmission = async (req, res, next) => {
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     const outlineId = Number(req.body.outlineId);
@@ -151,7 +169,7 @@ exports.createTitleSubmission = async (req, res, next) => {
        FROM outline
        WHERE id = ? AND npm = ? AND status = 'ACCEPTED'
        LIMIT 1`,
-      [outlineId, npm]
+      [outlineId, npm],
     );
     if (orows.length === 0) {
       return res.status(400).json({
@@ -162,7 +180,9 @@ exports.createTitleSubmission = async (req, res, next) => {
 
     const programStudiId = req.user?.programStudiId ?? null;
     if (!programStudiId) {
-      return res.status(400).json({ ok: false, message: "Program studi tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Program studi tidak valid" });
     }
 
     // Cegah duplikasi pengajuan untuk outline yang sama
@@ -171,7 +191,7 @@ exports.createTitleSubmission = async (req, res, next) => {
        FROM pengajuan_judul
        WHERE outline_id = ? AND npm = ?
        LIMIT 1`,
-      [outlineId, npm]
+      [outlineId, npm],
     );
     if (existing.length > 0) {
       return res.status(409).json({
@@ -223,7 +243,7 @@ exports.createTitleSubmission = async (req, res, next) => {
         pembimbing2DiajukanNidn ?? null,
         perluSuratPengantar ? 1 : 0,
         namaPerusahaan ?? null,
-      ]
+      ],
     );
 
     const pengajuanJudulId = result.insertId;
@@ -240,9 +260,10 @@ exports.createTitleSubmission = async (req, res, next) => {
         pengajuanJudulId,
         "PENGAJUAN_JUDUL",
         String(fileTitleSubmission),
-        fileTitleSubmissionName !== undefined && fileTitleSubmissionName !== null
+        fileTitleSubmissionName !== undefined &&
+          fileTitleSubmissionName !== null
           ? String(fileTitleSubmissionName).trim()
-          : null
+          : null,
       );
     }
     if (fileTranskrip !== undefined && fileTranskrip !== null) {
@@ -253,7 +274,7 @@ exports.createTitleSubmission = async (req, res, next) => {
         String(fileTranskrip),
         fileTranskripName !== undefined && fileTranskripName !== null
           ? String(fileTranskripName).trim()
-          : null
+          : null,
       );
     }
     if (fileKrs !== undefined && fileKrs !== null) {
@@ -262,7 +283,9 @@ exports.createTitleSubmission = async (req, res, next) => {
         pengajuanJudulId,
         "KRS",
         String(fileKrs),
-        fileKrsName !== undefined && fileKrsName !== null ? String(fileKrsName).trim() : null
+        fileKrsName !== undefined && fileKrsName !== null
+          ? String(fileKrsName).trim()
+          : null,
       );
     }
     if (fileMetodologi !== undefined && fileMetodologi !== null) {
@@ -273,13 +296,13 @@ exports.createTitleSubmission = async (req, res, next) => {
         String(fileMetodologi),
         fileMetodologiName !== undefined && fileMetodologiName !== null
           ? String(fileMetodologiName).trim()
-          : null
+          : null,
       );
     }
 
     const [mahasiswaRows] = await conn.query(
       `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
-      [npm]
+      [npm],
     );
     const namaMahasiswa = mahasiswaRows[0]?.nama ?? npm;
 
@@ -290,7 +313,7 @@ exports.createTitleSubmission = async (req, res, next) => {
        JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
        WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
        LIMIT 1`,
-      [programStudiId]
+      [programStudiId],
     );
     if (kaprodiUserRows[0]?.id) {
       await insertNotification(
@@ -298,7 +321,7 @@ exports.createTitleSubmission = async (req, res, next) => {
         kaprodiUserRows[0].id,
         "TITLE_SUBMITTED",
         `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
-        "/kaprodi/title-submissions"
+        "/kaprodi/proposal/title-submissions",
       );
     }
 
@@ -332,7 +355,9 @@ exports.listMine = async (req, res, next) => {
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     // Join outline untuk ambil judul (karena judul ada di outline)
@@ -349,7 +374,7 @@ exports.listMine = async (req, res, next) => {
        INNER JOIN outline o ON o.id = pj.outline_id
        WHERE pj.npm = ?
        ORDER BY pj.created_at DESC`,
-      [npm]
+      [npm],
     );
 
     return res.json({ ok: true, data: rows });
@@ -369,7 +394,9 @@ exports.getLatestMine = async (req, res, next) => {
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     const [rows] = await db.query(
@@ -377,6 +404,7 @@ exports.getLatestMine = async (req, res, next) => {
          pj.*,
          o.judul AS outline_judul,
          m.nama AS mahasiswa_nama,
+         m.sks AS mahasiswa_sks,
          ps.id AS program_studi_id,
          ps.nama AS program_studi_nama,
          d1.nama AS pembimbing1_diajukan_nama,
@@ -394,7 +422,7 @@ exports.getLatestMine = async (req, res, next) => {
        WHERE pj.npm = ?
        ORDER BY pj.updated_at DESC, pj.id DESC
        LIMIT 1`,
-      [npm]
+      [npm],
     );
 
     if (!rows || rows.length === 0) {
@@ -423,11 +451,13 @@ exports.getById = async (req, res, next) => {
     if (req.user.hasRole("STUDENT")) {
       const [urows] = await db.query(
         `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [req.user.id]
+        [req.user.id],
       );
       const npm = urows[0]?.npm;
       if (!npm) {
-        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "Mahasiswa tidak valid" });
       }
 
       const [rows] = await db.query(
@@ -455,6 +485,7 @@ exports.getById = async (req, res, next) => {
           o.judul AS outline_judul,
 
           m.nama AS mahasiswa_nama,
+          m.sks AS mahasiswa_sks,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
           dkap.nama AS kaprodi_nama,
@@ -478,7 +509,7 @@ exports.getById = async (req, res, next) => {
         WHERE pj.id = ? AND pj.npm = ?
         LIMIT 1
         `,
-        [id, npm]
+        [id, npm],
       );
 
       if (rows.length === 0) {
@@ -493,11 +524,13 @@ exports.getById = async (req, res, next) => {
     if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [urows] = await db.query(
         `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [req.user.id]
+        [req.user.id],
       );
       const nidn = urows[0]?.nidn;
       if (!nidn) {
-        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "Dosen tidak valid" });
       }
 
       const [rows] = await db.query(
@@ -525,6 +558,7 @@ exports.getById = async (req, res, next) => {
           o.judul AS outline_judul,
 
           m.nama AS mahasiswa_nama,
+          m.sks AS mahasiswa_sks,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
           dkap.nama AS kaprodi_nama,
@@ -549,7 +583,7 @@ exports.getById = async (req, res, next) => {
           AND ps.kaprodi_nidn = ?
         LIMIT 1
         `,
-        [id, nidn]
+        [id, nidn],
       );
 
       if (rows.length === 0) {
@@ -579,7 +613,9 @@ exports.resubmit = async (req, res, next) => {
 
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid title submission id" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid title submission id" });
     }
 
     const {
@@ -602,9 +638,12 @@ exports.resubmit = async (req, res, next) => {
       fileMetodologiName,
     } = req.body || {};
 
-    const noHpVal = noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
+    const noHpVal =
+      noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
     const sksRaw =
-      sksDiperoleh !== undefined && sksDiperoleh !== null ? String(sksDiperoleh).trim() : null;
+      sksDiperoleh !== undefined && sksDiperoleh !== null
+        ? String(sksDiperoleh).trim()
+        : null;
     let sksVal = null;
     if (sksRaw !== null && sksRaw.length > 0) {
       const parsedSks = Number(sksRaw);
@@ -638,16 +677,23 @@ exports.resubmit = async (req, res, next) => {
         ? String(fileTitleSubmissionName).trim()
         : null;
     const fileTranskripVal =
-      fileTranskrip !== undefined && fileTranskrip !== null ? String(fileTranskrip) : null;
+      fileTranskrip !== undefined && fileTranskrip !== null
+        ? String(fileTranskrip)
+        : null;
     const fileTranskripNameVal =
       fileTranskripName !== undefined && fileTranskripName !== null
         ? String(fileTranskripName).trim()
         : null;
-    const fileKrsVal = fileKrs !== undefined && fileKrs !== null ? String(fileKrs) : null;
+    const fileKrsVal =
+      fileKrs !== undefined && fileKrs !== null ? String(fileKrs) : null;
     const fileKrsNameVal =
-      fileKrsName !== undefined && fileKrsName !== null ? String(fileKrsName).trim() : null;
+      fileKrsName !== undefined && fileKrsName !== null
+        ? String(fileKrsName).trim()
+        : null;
     const fileMetodologiVal =
-      fileMetodologi !== undefined && fileMetodologi !== null ? String(fileMetodologi) : null;
+      fileMetodologi !== undefined && fileMetodologi !== null
+        ? String(fileMetodologi)
+        : null;
     const fileMetodologiNameVal =
       fileMetodologiName !== undefined && fileMetodologiName !== null
         ? String(fileMetodologiName).trim()
@@ -700,7 +746,9 @@ exports.resubmit = async (req, res, next) => {
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     conn = await db.getConnection();
@@ -713,7 +761,7 @@ exports.resubmit = async (req, res, next) => {
        WHERE id = ? AND npm = ?
        LIMIT 1
        FOR UPDATE`,
-      [id, npm]
+      [id, npm],
     );
 
     if (rows.length === 0) {
@@ -782,7 +830,11 @@ exports.resubmit = async (req, res, next) => {
     params.push(id);
     await conn.query(sql, params);
 
-    if (syaratTranskrip !== undefined || syaratKrs !== undefined || syaratMetodologi !== undefined) {
+    if (
+      syaratTranskrip !== undefined ||
+      syaratKrs !== undefined ||
+      syaratMetodologi !== undefined
+    ) {
       const [currentSyaratRows] = await conn.query(
         `SELECT
            syarat_transkrip,
@@ -791,15 +843,18 @@ exports.resubmit = async (req, res, next) => {
          FROM pengajuan_judul_syarat
          WHERE pengajuan_judul_id = ?
          LIMIT 1`,
-        [id]
+        [id],
       );
       const currentSyarat = currentSyaratRows[0] || {};
       await upsertSyarat(conn, id, {
-        syarat_transkrip: toBit(syaratTranskrip, currentSyarat.syarat_transkrip ?? 0),
+        syarat_transkrip: toBit(
+          syaratTranskrip,
+          currentSyarat.syarat_transkrip ?? 0,
+        ),
         syarat_krs: toBit(syaratKrs, currentSyarat.syarat_krs ?? 0),
         syarat_metodologi_nilai_min_c: toBit(
           syaratMetodologi,
-          currentSyarat.syarat_metodologi_nilai_min_c ?? 0
+          currentSyarat.syarat_metodologi_nilai_min_c ?? 0,
         ),
       });
     }
@@ -810,9 +865,10 @@ exports.resubmit = async (req, res, next) => {
         id,
         "PENGAJUAN_JUDUL",
         fileTitleSubmissionVal,
-        fileTitleSubmissionNameVal !== null && fileTitleSubmissionNameVal.length > 0
+        fileTitleSubmissionNameVal !== null &&
+          fileTitleSubmissionNameVal.length > 0
           ? fileTitleSubmissionNameVal
-          : null
+          : null,
       );
     }
     if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
@@ -821,7 +877,9 @@ exports.resubmit = async (req, res, next) => {
         id,
         "TRANSKRIP",
         fileTranskripVal,
-        fileTranskripNameVal !== null && fileTranskripNameVal.length > 0 ? fileTranskripNameVal : null
+        fileTranskripNameVal !== null && fileTranskripNameVal.length > 0
+          ? fileTranskripNameVal
+          : null,
       );
     }
     if (fileKrsVal !== null && fileKrsVal.length > 0) {
@@ -830,7 +888,9 @@ exports.resubmit = async (req, res, next) => {
         id,
         "KRS",
         fileKrsVal,
-        fileKrsNameVal !== null && fileKrsNameVal.length > 0 ? fileKrsNameVal : null
+        fileKrsNameVal !== null && fileKrsNameVal.length > 0
+          ? fileKrsNameVal
+          : null,
       );
     }
     if (fileMetodologiVal !== null && fileMetodologiVal.length > 0) {
@@ -839,13 +899,15 @@ exports.resubmit = async (req, res, next) => {
         id,
         "METODOLOGI",
         fileMetodologiVal,
-        fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0 ? fileMetodologiNameVal : null
+        fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0
+          ? fileMetodologiNameVal
+          : null,
       );
     }
 
     const [resubMahasiswaRows] = await conn.query(
       `SELECT m.nama, m.program_studi_id FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
-      [npm]
+      [npm],
     );
     const resubNama = resubMahasiswaRows[0]?.nama ?? npm;
     const resubProgramStudiId = resubMahasiswaRows[0]?.program_studi_id ?? null;
@@ -857,7 +919,7 @@ exports.resubmit = async (req, res, next) => {
          JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
          WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
          LIMIT 1`,
-        [resubProgramStudiId]
+        [resubProgramStudiId],
       );
       if (resubKaprodiRows[0]?.id) {
         await insertNotification(
@@ -865,7 +927,7 @@ exports.resubmit = async (req, res, next) => {
           resubKaprodiRows[0].id,
           "TITLE_RESUBMITTED",
           `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
-          "/kaprodi/title-submissions"
+          "/kaprodi/proposal/title-submissions",
         );
       }
     }

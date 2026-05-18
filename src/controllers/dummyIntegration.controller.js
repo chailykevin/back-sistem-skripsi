@@ -110,12 +110,13 @@ async function getProgramStudiRows(conn) {
 
 async function upsertMahasiswa(conn, mahasiswa) {
   await conn.query(
-    `INSERT INTO mahasiswa (npm, nama, program_studi_id)
-     VALUES (?, ?, ?)
+    `INSERT INTO mahasiswa (npm, nama, sks, program_studi_id)
+     VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
+       sks = VALUES(sks),
        program_studi_id = VALUES(program_studi_id)`,
-    [mahasiswa.npm, mahasiswa.nama, mahasiswa.programStudiId],
+    [mahasiswa.npm, mahasiswa.nama, mahasiswa.sks, mahasiswa.programStudiId],
   );
 }
 
@@ -219,6 +220,7 @@ function getPredefinedMahasiswa(programRows) {
   return PREDEFINED_MAHASISWA.map((item, index) => ({
     npm: item.npm,
     nama: item.nama,
+    sks: 140,
     username: item.username,
     programStudiNama: item.programStudiNama,
     password: item.password,

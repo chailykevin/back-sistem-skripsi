@@ -78,6 +78,7 @@ exports.listForKaprodi = async (req, res, next) => {
         o.judul AS outline_judul,
         m.npm,
         m.nama AS nama_mahasiswa,
+        m.sks AS mahasiswa_sks,
         ps.nama AS program_studi
       FROM pengajuan_judul pj
       INNER JOIN outline o ON o.id = pj.outline_id

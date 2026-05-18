@@ -164,6 +164,7 @@ exports.getById = async (req, res, next) => {
            o.created_at,
            o.updated_at,
            m.nama AS mahasiswa_nama,
+           m.sks AS mahasiswa_sks,
            m.program_studi_id,
            ps.nama AS program_studi_nama,
            ofl.file_outline_mahasiswa,
@@ -204,6 +205,7 @@ exports.getById = async (req, res, next) => {
            o.created_at,
            o.updated_at,
            m.nama AS mahasiswa_nama,
+           m.sks AS mahasiswa_sks,
            m.program_studi_id,
            ps.nama AS program_studi_nama,
            ofl.file_outline_mahasiswa,
@@ -296,6 +298,7 @@ exports.getLatestMine = async (req, res, next) => {
          o.created_at,
          o.updated_at,
          m.nama AS mahasiswa_nama,
+         m.sks AS mahasiswa_sks,
          m.program_studi_id,
          ps.nama AS program_studi_nama,
          ofl.file_outline_mahasiswa,
@@ -482,6 +485,7 @@ exports.listForKaprodi = async (req, res, next) => {
          o.updated_at,
          o.npm,
          m.nama AS mahasiswa_nama,
+         m.sks AS mahasiswa_sks,
          m.program_studi_id
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
