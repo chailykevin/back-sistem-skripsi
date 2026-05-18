@@ -43,10 +43,12 @@ function decodeSignatureToBuffer(signatureValue) {
   const raw = String(signatureValue).trim();
   if (!raw) return null;
 
-  const dataUrlMatch = raw.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/i);
-  if (dataUrlMatch?.[1]) {
+  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
     try {
-      return Buffer.from(dataUrlMatch[1], "base64");
+      const mimeType = dataUrlMatch[1].toLowerCase();
+      const type = mimeType === "jpeg" ? "jpg" : mimeType;
+      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
     } catch (_) {
       return null;
     }
@@ -57,7 +59,11 @@ function decodeSignatureToBuffer(signatureValue) {
     /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
   if (looksLikeBase64) {
     try {
-      return Buffer.from(normalized, "base64");
+      const buffer = Buffer.from(normalized, "base64");
+      // detect PNG vs JPG from magic bytes
+      const type =
+        buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
+      return { buffer, type };
     } catch (_) {
       return null;
     }
@@ -67,8 +73,8 @@ function decodeSignatureToBuffer(signatureValue) {
 }
 
 function signatureImagePatch(signatureValue) {
-  const signatureBuffer = decodeSignatureToBuffer(signatureValue);
-  if (!signatureBuffer || signatureBuffer.length === 0) {
+  const decoded = decodeSignatureToBuffer(signatureValue);
+  if (!decoded || decoded.buffer.length === 0) {
     return textPatch("");
   }
   try {
@@ -76,7 +82,8 @@ function signatureImagePatch(signatureValue) {
       type: PatchType.PARAGRAPH,
       children: [
         new ImageRun({
-          data: signatureBuffer,
+          type: decoded.type,
+          data: decoded.buffer,
           transformation: { width: 120, height: 50 },
         }),
       ],
@@ -579,7 +586,14 @@ exports.getHalamanPersetujuanFile = async (req, res, next) => {
         });
     }
 
-    return res.json({ ok: true, data: file });
+    const fileBuffer = Buffer.from(file.file_content, "base64");
+    res.setHeader("Content-Type", file.mime_type);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.file_name}"`,
+    );
+    res.setHeader("Content-Length", fileBuffer.length);
+    return res.send(fileBuffer);
   } catch (err) {
     next(err);
   }
