@@ -1,4 +1,5 @@
 const db = require("../db");
+const { insertNotification } = require("../utils/notify");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
@@ -390,6 +391,54 @@ exports.review = async (req, res, next) => {
           ? String(filePengajuanJudulName).trim()
           : null
       );
+    }
+
+    const [reviewedRows] = await conn.query(
+      `SELECT pj.npm, m.nama AS nama_mahasiswa,
+              pj.pembimbing1_ditetapkan_nidn, pj.pembimbing2_ditetapkan_nidn
+       FROM pengajuan_judul pj
+       JOIN mahasiswa m ON m.npm = pj.npm
+       WHERE pj.id = ? LIMIT 1`,
+      [id]
+    );
+    const reviewed = reviewedRows[0];
+    if (reviewed) {
+      const [studentUserRows] = await conn.query(
+        `SELECT id FROM users WHERE npm = ? LIMIT 1`,
+        [reviewed.npm]
+      );
+      const studentUserId = studentUserRows[0]?.id ?? null;
+      if (studentUserId) {
+        const typeMap = {
+          NEED_REVISION: "TITLE_NEED_REVISION",
+          REJECTED: "TITLE_REJECTED",
+          APPROVED: "TITLE_APPROVED",
+        };
+        const msgMap = {
+          NEED_REVISION: "Pengajuan judul Anda memerlukan revisi",
+          REJECTED: "Pengajuan judul Anda ditolak",
+          APPROVED: "Pengajuan judul Anda disetujui",
+        };
+        await insertNotification(conn, studentUserId, typeMap[status], msgMap[status], "/student/title-submissions");
+      }
+
+      if (status === "APPROVED") {
+        const assignMsg = `Anda ditugaskan sebagai pembimbing skripsi untuk ${reviewed.nama_mahasiswa}`;
+        for (const nidn of [reviewed.pembimbing1_ditetapkan_nidn, reviewed.pembimbing2_ditetapkan_nidn]) {
+          if (!nidn) continue;
+          const [pUserRows] = await conn.query(
+            `SELECT u.id FROM users u
+             JOIN user_roles ur ON ur.user_id = u.id
+             JOIN roles r ON r.id = ur.role_id
+             WHERE u.nidn = ? AND r.code = 'PEMBIMBING'
+             LIMIT 1`,
+            [nidn]
+          );
+          if (pUserRows[0]?.id) {
+            await insertNotification(conn, pUserRows[0].id, "ASSIGNED_AS_PEMBIMBING", assignMsg, "/lecturer/outline-consultations");
+          }
+        }
+      }
     }
 
     await conn.commit();

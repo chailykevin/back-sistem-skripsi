@@ -1,4 +1,5 @@
 const db = require("../db");
+const { insertNotification } = require("../utils/notify");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -367,6 +368,23 @@ exports.submitSkPenelitian = async (req, res, next) => {
       [sk.id],
     );
 
+    const [submitNpm] = await conn.query(
+      `SELECT npm FROM pengajuan_sk_penelitian WHERE id = ? LIMIT 1`,
+      [sk.id]
+    );
+    const studentNpmForNotif = submitNpm[0]?.npm ?? null;
+    if (studentNpmForNotif) {
+      const [mRows] = await conn.query(`SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`, [studentNpmForNotif]);
+      const namaMahasiswa = mRows[0]?.nama ?? studentNpmForNotif;
+      const [sekRows] = await conn.query(
+        `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`
+      );
+      for (const sek of sekRows) {
+        await insertNotification(conn, sek.id, "SK_SUBMITTED",
+          `Mahasiswa ${namaMahasiswa} mengajukan SK Penelitian`, "/sekretariat/sk-penelitian");
+      }
+    }
+
     await conn.commit();
     txStarted = false;
 
@@ -487,6 +505,14 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       );
     }
 
+    const [skStudentRows] = await conn.query(
+      `SELECT u.id FROM users u JOIN pengajuan_sk_penelitian psk ON psk.pengajuan_judul_id = ?
+       JOIN mahasiswa m ON m.npm = psk.npm AND u.npm = m.npm
+       LIMIT 1`,
+      [pengajuanJudulId]
+    );
+    const studentUserIdForSk = skStudentRows[0]?.id ?? null;
+
     if (action === "NEED_REVISION") {
       await conn.query(
         `UPDATE pengajuan_sk_penelitian
@@ -496,6 +522,10 @@ exports.reviewSkPenelitian = async (req, res, next) => {
          WHERE id = ?`,
         [String(catatanSekretariat).trim(), sk.id],
       );
+      if (studentUserIdForSk) {
+        await insertNotification(conn, studentUserIdForSk, "SK_FILE_NEED_REUPLOAD",
+          "Sekretariat meminta Anda mengunggah ulang dokumen SK Penelitian", "/student/sk-penelitian");
+      }
       await conn.commit();
       txStarted = false;
       return res.json({ ok: true, message: "SK Penelitian dikembalikan untuk revisi" });
@@ -512,6 +542,10 @@ exports.reviewSkPenelitian = async (req, res, next) => {
          WHERE id = ?`,
         [String(catatanSekretariat).trim(), req.user.id, sk.id],
       );
+      if (studentUserIdForSk) {
+        await insertNotification(conn, studentUserIdForSk, "SK_REJECTED",
+          "SK Penelitian Anda ditolak", "/student/sk-penelitian");
+      }
       await conn.commit();
       txStarted = false;
       return res.json({ ok: true, message: "SK Penelitian ditolak" });
@@ -533,6 +567,11 @@ exports.reviewSkPenelitian = async (req, res, next) => {
         sk.id,
       ],
     );
+
+    if (studentUserIdForSk) {
+      await insertNotification(conn, studentUserIdForSk, "SK_COMPLETED",
+        "SK Penelitian Anda telah diverifikasi", "/student/sk-penelitian");
+    }
 
     await conn.commit();
     txStarted = false;
@@ -657,6 +696,22 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
       `UPDATE pengajuan_sk_penelitian SET status = 'SUBMITTED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [sk.id],
     );
+
+    const [resubNpmRows] = await conn.query(
+      `SELECT npm FROM pengajuan_sk_penelitian WHERE id = ? LIMIT 1`, [sk.id]
+    );
+    const resubNpm = resubNpmRows[0]?.npm ?? null;
+    if (resubNpm) {
+      const [mRows] = await conn.query(`SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`, [resubNpm]);
+      const namaMahasiswa = mRows[0]?.nama ?? resubNpm;
+      const [sekRows] = await conn.query(
+        `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`
+      );
+      for (const sek of sekRows) {
+        await insertNotification(conn, sek.id, "SK_RESUBMITTED",
+          `Mahasiswa ${namaMahasiswa} mengajukan ulang SK Penelitian`, "/sekretariat/sk-penelitian");
+      }
+    }
 
     await conn.commit();
     txStarted = false;

@@ -1,9 +1,11 @@
 const db = require("../db");
+const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 
 const CHAPTER_ORDER = ["BAB_1_2", "BAB_3", "BAB_4", "BAB_5"];
+const CHAPTER_LABEL = { BAB_1_2: "Bab 1 & 2", BAB_3: "Bab 3", BAB_4: "Bab 4", BAB_5: "Bab 5" };
 
 function nextChapterGroup(current) {
   const idx = CHAPTER_ORDER.indexOf(current);
@@ -593,6 +595,20 @@ exports.submitMyChapter = async (req, res, next) => {
       [nextSubmissionNo, activeStage.id],
     );
 
+    const [pUserRows] = await conn.query(
+      `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
+       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+      [activeStage.pembimbing_nidn]
+    );
+    if (pUserRows[0]?.id) {
+      const [mRows] = await conn.query(`SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`, [npm]);
+      const namaMahasiswa = mRows[0]?.nama ?? npm;
+      const chapterLabel = CHAPTER_LABEL[activeStage.chapter_group] ?? activeStage.chapter_group;
+      await insertNotification(conn, pUserRows[0].id, "SKRIPSI_CONSULTATION_SUBMITTED",
+        `Mahasiswa ${namaMahasiswa} mengumpulkan ${chapterLabel} untuk dikonsultasikan`,
+        "/lecturer/skripsi-consultations");
+    }
+
     await conn.commit();
     txStarted = false;
 
@@ -1013,6 +1029,48 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           pengajuanJudulId: stage.pengajuan_judul_id,
           generatedByUserId: req.user.id,
         });
+      }
+    }
+
+    const [kartuInfoRows] = await conn.query(
+      `SELECT npm, nama_mahasiswa, pembimbing1_nidn FROM kartu_konsultasi_skripsi WHERE id = ? LIMIT 1`,
+      [stage.kartu_id]
+    );
+    const kartuInfo = kartuInfoRows[0];
+    if (kartuInfo) {
+      const chapterLabel = CHAPTER_LABEL[stage.chapter_group] ?? stage.chapter_group;
+      const [studentUserRows] = await conn.query(
+        `SELECT id FROM users WHERE npm = ? LIMIT 1`, [kartuInfo.npm]
+      );
+      const studentUserId = studentUserRows[0]?.id ?? null;
+
+      if (decisionStatus === "NEED_REVISION" && studentUserId) {
+        await insertNotification(conn, studentUserId, "SKRIPSI_CONSULTATION_NEED_REVISION",
+          `Pembimbing memberikan catatan revisi untuk ${chapterLabel}`, "/student/skripsi-consultations");
+      } else if (decisionStatus === "CONTINUE") {
+        if (studentUserId) {
+          await insertNotification(conn, studentUserId, "SKRIPSI_CONSULTATION_CONTINUE",
+            `${chapterLabel} Anda dilanjutkan ke Pembimbing 1`, "/student/skripsi-consultations");
+        }
+        const [p1UserRows] = await conn.query(
+          `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
+           WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+          [kartuInfo.pembimbing1_nidn]
+        );
+        if (p1UserRows[0]?.id) {
+          await insertNotification(conn, p1UserRows[0].id, "SKRIPSI_CONSULTATION_SUBMITTED",
+            `${chapterLabel} mahasiswa ${kartuInfo.nama_mahasiswa} siap untuk direview`,
+            "/lecturer/skripsi-consultations");
+        }
+      } else if (decisionStatus === "ACCEPTED" && studentUserId) {
+        const isFinal = stage.stage === "PEMBIMBING_1" && !nextChapterGroup(stage.chapter_group);
+        if (isFinal) {
+          await insertNotification(conn, studentUserId, "SKRIPSI_CONSULTATION_COMPLETED",
+            "Konsultasi skripsi Anda telah selesai", "/student/skripsi-consultations");
+        } else {
+          await insertNotification(conn, studentUserId, "SKRIPSI_CONSULTATION_CHAPTER_ACCEPTED",
+            `${chapterLabel} Anda telah diterima, lanjutkan ke bab berikutnya`, "/student/skripsi-consultations");
+        }
       }
     }
 

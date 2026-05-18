@@ -1,4 +1,5 @@
 const db = require("../db");
+const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -466,6 +467,47 @@ exports.signHalamanPersetujuan = async (req, res, next) => {
         `UPDATE halaman_persetujuan_judul SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [halaman.id],
       );
+    }
+
+    if (isCompleted) {
+      const [studentUserRows] = await conn.query(
+        `SELECT id FROM users WHERE npm = ? LIMIT 1`,
+        [kartu.npm]
+      );
+      if (studentUserRows[0]?.id) {
+        await insertNotification(conn, studentUserRows[0].id, "HALAMAN_PERSETUJUAN_COMPLETED",
+          "Halaman persetujuan judul skripsi Anda telah selesai ditandatangani", "/student/halaman-persetujuan");
+      }
+    } else {
+      const nextSigner = getNextExpectedRole(allSignatures);
+      if (nextSigner === "PEMBIMBING_2" || nextSigner === "PEMBIMBING_1") {
+        const nidn = nextSigner === "PEMBIMBING_2" ? kartu.pembimbing2_nidn : kartu.pembimbing1_nidn;
+        if (nidn) {
+          const [pUserRows] = await conn.query(
+            `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
+             WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+            [nidn]
+          );
+          if (pUserRows[0]?.id) {
+            await insertNotification(conn, pUserRows[0].id, "HALAMAN_PERSETUJUAN_SIGN_REQUEST",
+              "Anda diminta menandatangani halaman persetujuan judul skripsi", "/lecturer/halaman-persetujuan");
+          }
+        }
+      } else if (nextSigner === "KAPRODI") {
+        const [kaprodiUserRows] = await conn.query(
+          `SELECT u.id FROM users u
+           JOIN user_roles ur ON ur.user_id = u.id
+           JOIN roles r ON r.id = ur.role_id
+           JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+           WHERE r.code = 'KAPRODI' AND ps.id = ?
+           LIMIT 1`,
+          [kartu.program_studi_id]
+        );
+        if (kaprodiUserRows[0]?.id) {
+          await insertNotification(conn, kaprodiUserRows[0].id, "HALAMAN_PERSETUJUAN_SIGN_REQUEST",
+            "Anda diminta menandatangani halaman persetujuan judul skripsi", "/kaprodi/halaman-persetujuan");
+        }
+      }
     }
 
     await conn.commit();

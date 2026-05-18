@@ -52,6 +52,9 @@ app.use("/", outlineConsultationRoutes);
 const skripsiConsultationRoutes = require("./routes/skripsiConsultation.routes");
 app.use("/", skripsiConsultationRoutes);
 
+const notificationRoutes = require("./routes/notification.routes");
+app.use("/notifications", notificationRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);

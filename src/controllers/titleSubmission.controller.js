@@ -1,4 +1,5 @@
 const db = require("../db");
+const { insertNotification } = require("../utils/notify");
 
 async function getStudentNpm(userId) {
   const [urows] = await db.query(
@@ -273,6 +274,31 @@ exports.createTitleSubmission = async (req, res, next) => {
         fileMetodologiName !== undefined && fileMetodologiName !== null
           ? String(fileMetodologiName).trim()
           : null
+      );
+    }
+
+    const [mahasiswaRows] = await conn.query(
+      `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
+      [npm]
+    );
+    const namaMahasiswa = mahasiswaRows[0]?.nama ?? npm;
+
+    const [kaprodiUserRows] = await conn.query(
+      `SELECT u.id FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+       WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
+       LIMIT 1`,
+      [programStudiId]
+    );
+    if (kaprodiUserRows[0]?.id) {
+      await insertNotification(
+        conn,
+        kaprodiUserRows[0].id,
+        "TITLE_SUBMITTED",
+        `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
+        "/kaprodi/title-submissions"
       );
     }
 
@@ -815,6 +841,33 @@ exports.resubmit = async (req, res, next) => {
         fileMetodologiVal,
         fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0 ? fileMetodologiNameVal : null
       );
+    }
+
+    const [resubMahasiswaRows] = await conn.query(
+      `SELECT m.nama, m.program_studi_id FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
+      [npm]
+    );
+    const resubNama = resubMahasiswaRows[0]?.nama ?? npm;
+    const resubProgramStudiId = resubMahasiswaRows[0]?.program_studi_id ?? null;
+    if (resubProgramStudiId) {
+      const [resubKaprodiRows] = await conn.query(
+        `SELECT u.id FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
+         LIMIT 1`,
+        [resubProgramStudiId]
+      );
+      if (resubKaprodiRows[0]?.id) {
+        await insertNotification(
+          conn,
+          resubKaprodiRows[0].id,
+          "TITLE_RESUBMITTED",
+          `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
+          "/kaprodi/title-submissions"
+        );
+      }
     }
 
     await conn.commit();

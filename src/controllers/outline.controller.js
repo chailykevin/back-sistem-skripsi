@@ -1,4 +1,5 @@
 const db = require("../db");
+const { insertNotification } = require("../utils/notify");
 
 exports.create = async (req, res, next) => {
   try {
@@ -63,23 +64,62 @@ exports.create = async (req, res, next) => {
 
     const submissionPeriodId = req.openPeriod?.id ?? null;
 
-    // insert outline
-    const [insertResult] = await db.query(
-      `INSERT INTO outline
-       (judul, latar_belakang, npm, status, program_studi_id, submission_period_id)
-       VALUES (?, ?, ?, 'SUBMITTED', ?, ?)`,
-      [judul, latarBelakang, npm, programStudiId, submissionPeriodId]
+    const [mahasiswaRows] = await db.query(
+      `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
+      [npm]
     );
+    const namaMahasiswa = mahasiswaRows[0]?.nama ?? npm;
 
-    const outlineId = insertResult?.insertId ?? null;
-    if (outlineId) {
-      await db.query(
-        `INSERT INTO outline_details
-         (outline_id, revision_no, file_outline_mahasiswa, file_outline_mahasiswa_name)
-         VALUES (?, 1, ?, ?)`,
-        [outlineId, fileOutline, fileOutlineName ?? null]
+    const conn = await db.getConnection();
+    let txStarted = false;
+    try {
+      await conn.beginTransaction();
+      txStarted = true;
+
+      const [insertResult] = await conn.query(
+        `INSERT INTO outline
+         (judul, latar_belakang, npm, status, program_studi_id, submission_period_id)
+         VALUES (?, ?, ?, 'SUBMITTED', ?, ?)`,
+        [judul, latarBelakang, npm, programStudiId, submissionPeriodId]
       );
+
+      const outlineId = insertResult?.insertId ?? null;
+      if (outlineId) {
+        await conn.query(
+          `INSERT INTO outline_details
+           (outline_id, revision_no, file_outline_mahasiswa, file_outline_mahasiswa_name)
+           VALUES (?, 1, ?, ?)`,
+          [outlineId, fileOutline, fileOutlineName ?? null]
+        );
+      }
+
+      const [kaprodiUserRows] = await conn.query(
+        `SELECT u.id FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
+         LIMIT 1`,
+        [programStudiId]
+      );
+      if (kaprodiUserRows[0]?.id) {
+        await insertNotification(
+          conn,
+          kaprodiUserRows[0].id,
+          "OUTLINE_SUBMITTED",
+          `Mahasiswa ${namaMahasiswa} mengajukan outline baru`,
+          "/kaprodi/outline"
+        );
+      }
+
+      await conn.commit();
+      txStarted = false;
+    } catch (err) {
+      try { if (txStarted) await conn.rollback(); } catch (_) {}
+      conn.release();
+      throw err;
     }
+    conn.release();
 
     res.status(201).json({
       ok: true,
@@ -620,6 +660,33 @@ exports.reviewByKaprodi = async (req, res, next) => {
       }
     }
 
+    if (status !== "SUBMITTED") {
+      const [oStudentRows] = await db.query(
+        `SELECT u.id, m.nama FROM outline o
+         JOIN mahasiswa m ON m.npm = o.npm
+         JOIN users u ON u.npm = o.npm
+         WHERE o.id = ? LIMIT 1`,
+        [outlineId]
+      );
+      const studentUserId = oStudentRows[0]?.id ?? null;
+      if (studentUserId) {
+        const typeMap = {
+          NEED_REVISION: "OUTLINE_NEED_REVISION",
+          REJECTED: "OUTLINE_REJECTED",
+          ACCEPTED: "OUTLINE_ACCEPTED",
+        };
+        const msgMap = {
+          NEED_REVISION: "Outline Anda memerlukan revisi",
+          REJECTED: "Outline Anda ditolak",
+          ACCEPTED: "Outline Anda diterima",
+        };
+        await db.query(
+          `INSERT INTO notifications (user_id, type, message, link) VALUES (?, ?, ?, ?)`,
+          [studentUserId, typeMap[status], msgMap[status], "/student/outline"]
+        );
+      }
+    }
+
     return res.json({
       ok: true,
       message: "Outline reviewed",
@@ -741,8 +808,31 @@ exports.resubmit = async (req, res, next) => {
          VALUES (?, ?, ?, ?)`,
         [outlineId, nextRev, fileVal, fileNameVal ?? null]
       );
+    }
 
+    const [mRows] = await conn.query(
+      `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
+      [npm]
+    );
+    const namaMahasiswa = mRows[0]?.nama ?? npm;
 
+    const [kaprodiUserRows] = await conn.query(
+      `SELECT u.id FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+       WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
+       LIMIT 1`,
+      [programStudiId]
+    );
+    if (kaprodiUserRows[0]?.id) {
+      await insertNotification(
+        conn,
+        kaprodiUserRows[0].id,
+        "OUTLINE_RESUBMITTED",
+        `Mahasiswa ${namaMahasiswa} mengajukan ulang outline`,
+        "/kaprodi/outline"
+      );
     }
 
     await conn.commit();
