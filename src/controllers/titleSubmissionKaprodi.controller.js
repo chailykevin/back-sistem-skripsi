@@ -9,7 +9,7 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
      FROM pengajuan_judul_syarat
      WHERE pengajuan_judul_id = ?
      LIMIT 1`,
-    [pengajuanJudulId]
+    [pengajuanJudulId],
   );
 
   if (existing.length > 0) {
@@ -21,7 +21,12 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
          syarat_metodologi_nilai_min_c = ?,
          updated_at = CURRENT_TIMESTAMP
        WHERE pengajuan_judul_id = ?`,
-      [syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c, pengajuanJudulId]
+      [
+        syarat.syarat_transkrip,
+        syarat.syarat_krs,
+        syarat.syarat_metodologi_nilai_min_c,
+        pengajuanJudulId,
+      ],
     );
     return;
   }
@@ -33,22 +38,33 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
        syarat_krs,
        syarat_metodologi_nilai_min_c
      ) VALUES (?, ?, ?, ?)`,
-    [pengajuanJudulId, syarat.syarat_transkrip, syarat.syarat_krs, syarat.syarat_metodologi_nilai_min_c]
+    [
+      pengajuanJudulId,
+      syarat.syarat_transkrip,
+      syarat.syarat_krs,
+      syarat.syarat_metodologi_nilai_min_c,
+    ],
   );
 }
 
-async function upsertFileByType(conn, pengajuanJudulId, fileType, fileContent, fileName) {
+async function upsertFileByType(
+  conn,
+  pengajuanJudulId,
+  fileType,
+  fileContent,
+  fileName,
+) {
   await conn.query(
     `DELETE FROM pengajuan_judul_file
      WHERE pengajuan_judul_id = ? AND file_type = ?`,
-    [pengajuanJudulId, fileType]
+    [pengajuanJudulId, fileType],
   );
 
   await conn.query(
     `INSERT INTO pengajuan_judul_file (
        pengajuan_judul_id, file_type, file_content, file_name
      ) VALUES (?, ?, ?, ?)`,
-    [pengajuanJudulId, fileType, fileContent, fileName]
+    [pengajuanJudulId, fileType, fileContent, fileName],
   );
 }
 
@@ -61,7 +77,7 @@ exports.listForKaprodi = async (req, res, next) => {
     // Ambil nidn dosen dari user
     const [urows] = await db.query(
       `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
     const nidn = urows[0]?.nidn;
     if (!nidn) {
@@ -87,7 +103,7 @@ exports.listForKaprodi = async (req, res, next) => {
       WHERE ps.kaprodi_nidn = ?
       ORDER BY pj.submitted_at DESC
       `,
-      [nidn]
+      [nidn],
     );
 
     if (rows.length > 0) {
@@ -97,7 +113,7 @@ exports.listForKaprodi = async (req, res, next) => {
          FROM pengajuan_judul_file
          WHERE file_type = 'PENGAJUAN_JUDUL'
            AND pengajuan_judul_id IN (?)`,
-        [ids]
+        [ids],
       );
       const fileMap = new Map();
       for (const fr of fileRows) {
@@ -109,7 +125,8 @@ exports.listForKaprodi = async (req, res, next) => {
       for (const row of rows) {
         const fileData = fileMap.get(row.id) || {};
         row.file_pengajuan_judul = fileData.file_pengajuan_judul ?? null;
-        row.file_pengajuan_judul_name = fileData.file_pengajuan_judul_name ?? null;
+        row.file_pengajuan_judul_name =
+          fileData.file_pengajuan_judul_name ?? null;
       }
     }
 
@@ -150,7 +167,8 @@ exports.review = async (req, res, next) => {
 
     if (
       status === "APPROVED" &&
-      (!pembimbing2DitapkanNidn || String(pembimbing2DitapkanNidn).trim().length === 0)
+      (!pembimbing2DitapkanNidn ||
+        String(pembimbing2DitapkanNidn).trim().length === 0)
     ) {
       return res.status(400).json({
         ok: false,
@@ -171,7 +189,7 @@ exports.review = async (req, res, next) => {
     // Ambil nidn Kaprodi
     const [urows] = await db.query(
       `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
     const kaprodiNidn = urows[0]?.nidn;
     if (!kaprodiNidn) {
@@ -190,7 +208,7 @@ exports.review = async (req, res, next) => {
         AND pj.status = 'SUBMITTED'
       LIMIT 1
       `,
-      [id, kaprodiNidn]
+      [id, kaprodiNidn],
     );
 
     if (check.length === 0) {
@@ -225,7 +243,7 @@ exports.review = async (req, res, next) => {
         catatanKaprodi ?? null,
         req.user.id,
         id,
-      ]
+      ],
     );
 
     if (status === "APPROVED") {
@@ -235,7 +253,7 @@ exports.review = async (req, res, next) => {
          WHERE pengajuan_judul_id = ?
          LIMIT 1
          FOR UPDATE`,
-        [id]
+        [id],
       );
 
       if (kartuRows.length === 0) {
@@ -259,7 +277,7 @@ exports.review = async (req, res, next) => {
            LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_ditetapkan_nidn
            WHERE pj.id = ?
            LIMIT 1`,
-          [id]
+          [id],
         );
         const snap = snapshotRows[0] || null;
 
@@ -268,7 +286,8 @@ exports.review = async (req, res, next) => {
           txStarted = false;
           return res.status(409).json({
             ok: false,
-            message: "Failed to resolve snapshot data for consultation initialization",
+            message:
+              "Failed to resolve snapshot data for consultation initialization",
           });
         }
         if (!snap.program_studi_id) {
@@ -279,7 +298,10 @@ exports.review = async (req, res, next) => {
             message: "Missing required snapshot data: program_studi_id",
           });
         }
-        if (!snap.program_studi_nama || String(snap.program_studi_nama).trim().length === 0) {
+        if (
+          !snap.program_studi_nama ||
+          String(snap.program_studi_nama).trim().length === 0
+        ) {
           await conn.rollback();
           txStarted = false;
           return res.status(409).json({
@@ -287,7 +309,10 @@ exports.review = async (req, res, next) => {
             message: "Missing required snapshot data: program_studi_nama",
           });
         }
-        if (!snap.judul_skripsi || String(snap.judul_skripsi).trim().length === 0) {
+        if (
+          !snap.judul_skripsi ||
+          String(snap.judul_skripsi).trim().length === 0
+        ) {
           await conn.rollback();
           txStarted = false;
           return res.status(409).json({
@@ -295,7 +320,10 @@ exports.review = async (req, res, next) => {
             message: "Missing required snapshot data: judul_skripsi",
           });
         }
-        if (!snap.nama_mahasiswa || String(snap.nama_mahasiswa).trim().length === 0) {
+        if (
+          !snap.nama_mahasiswa ||
+          String(snap.nama_mahasiswa).trim().length === 0
+        ) {
           await conn.rollback();
           txStarted = false;
           return res.status(409).json({
@@ -311,7 +339,8 @@ exports.review = async (req, res, next) => {
           txStarted = false;
           return res.status(409).json({
             ok: false,
-            message: "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
+            message:
+              "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
           });
         }
 
@@ -340,7 +369,7 @@ exports.review = async (req, res, next) => {
             snap.pembimbing1_nama ?? null,
             String(snap.pembimbing2_ditetapkan_nidn).trim(),
             snap.pembimbing2_nama ?? null,
-          ]
+          ],
         );
 
         await conn.query(
@@ -353,14 +382,22 @@ exports.review = async (req, res, next) => {
              current_submission_no,
              started_at
            ) VALUES (?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-          [insKartu.insertId, snap.pengajuan_judul_id, String(snap.pembimbing2_ditetapkan_nidn).trim()]
+          [
+            insKartu.insertId,
+            snap.pengajuan_judul_id,
+            String(snap.pembimbing2_ditetapkan_nidn).trim(),
+          ],
         );
 
         consultationInitialized = true;
       }
     }
 
-    if (syaratTranskrip !== undefined || syaratKrs !== undefined || syaratMetodologi !== undefined) {
+    if (
+      syaratTranskrip !== undefined ||
+      syaratKrs !== undefined ||
+      syaratMetodologi !== undefined
+    ) {
       const [currentSyaratRows] = await conn.query(
         `SELECT
            syarat_transkrip,
@@ -369,15 +406,18 @@ exports.review = async (req, res, next) => {
          FROM pengajuan_judul_syarat
          WHERE pengajuan_judul_id = ?
          LIMIT 1`,
-        [id]
+        [id],
       );
       const currentSyarat = currentSyaratRows[0] || {};
       await upsertSyarat(conn, id, {
-        syarat_transkrip: toBit(syaratTranskrip, currentSyarat.syarat_transkrip ?? 0),
+        syarat_transkrip: toBit(
+          syaratTranskrip,
+          currentSyarat.syarat_transkrip ?? 0,
+        ),
         syarat_krs: toBit(syaratKrs, currentSyarat.syarat_krs ?? 0),
         syarat_metodologi_nilai_min_c: toBit(
           syaratMetodologi,
-          currentSyarat.syarat_metodologi_nilai_min_c ?? 0
+          currentSyarat.syarat_metodologi_nilai_min_c ?? 0,
         ),
       });
     }
@@ -390,7 +430,7 @@ exports.review = async (req, res, next) => {
         String(filePengajuanJudul),
         filePengajuanJudulName !== undefined && filePengajuanJudulName !== null
           ? String(filePengajuanJudulName).trim()
-          : null
+          : null,
       );
     }
 
@@ -400,13 +440,13 @@ exports.review = async (req, res, next) => {
        FROM pengajuan_judul pj
        JOIN mahasiswa m ON m.npm = pj.npm
        WHERE pj.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     const reviewed = reviewedRows[0];
     if (reviewed) {
       const [studentUserRows] = await conn.query(
         `SELECT id FROM users WHERE npm = ? LIMIT 1`,
-        [reviewed.npm]
+        [reviewed.npm],
       );
       const studentUserId = studentUserRows[0]?.id ?? null;
       if (studentUserId) {
@@ -420,12 +460,21 @@ exports.review = async (req, res, next) => {
           REJECTED: "Pengajuan judul Anda ditolak",
           APPROVED: "Pengajuan judul Anda disetujui",
         };
-        await insertNotification(conn, studentUserId, typeMap[status], msgMap[status], "/student/title-submissions");
+        await insertNotification(
+          conn,
+          studentUserId,
+          typeMap[status],
+          msgMap[status],
+          "/student/proposal",
+        );
       }
 
       if (status === "APPROVED") {
         const assignMsg = `Anda ditugaskan sebagai pembimbing skripsi untuk ${reviewed.nama_mahasiswa}`;
-        for (const nidn of [reviewed.pembimbing1_ditetapkan_nidn, reviewed.pembimbing2_ditetapkan_nidn]) {
+        for (const nidn of [
+          reviewed.pembimbing1_ditetapkan_nidn,
+          reviewed.pembimbing2_ditetapkan_nidn,
+        ]) {
           if (!nidn) continue;
           const [pUserRows] = await conn.query(
             `SELECT u.id FROM users u
@@ -433,10 +482,16 @@ exports.review = async (req, res, next) => {
              JOIN roles r ON r.id = ur.role_id
              WHERE u.nidn = ? AND r.code = 'PEMBIMBING'
              LIMIT 1`,
-            [nidn]
+            [nidn],
           );
           if (pUserRows[0]?.id) {
-            await insertNotification(conn, pUserRows[0].id, "ASSIGNED_AS_PEMBIMBING", assignMsg, "/lecturer/outline-consultations");
+            await insertNotification(
+              conn,
+              pUserRows[0].id,
+              "ASSIGNED_AS_PEMBIMBING",
+              assignMsg,
+              "/lecturer/outline-consultations",
+            );
           }
         }
       }
@@ -447,7 +502,9 @@ exports.review = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message: consultationInitialized ? "Review saved and consultation initialized" : "Review saved",
+      message: consultationInitialized
+        ? "Review saved and consultation initialized"
+        : "Review saved",
     });
   } catch (err) {
     try {
