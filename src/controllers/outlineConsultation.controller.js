@@ -118,7 +118,9 @@ function decodeSignatureToBuffer(signatureValue) {
   const raw = String(signatureValue).trim();
   if (!raw) return null;
 
-  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  const dataUrlMatch = raw.match(
+    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
+  );
   if (dataUrlMatch) {
     try {
       const mimeType = dataUrlMatch[1].toLowerCase();
@@ -135,8 +137,7 @@ function decodeSignatureToBuffer(signatureValue) {
   if (looksLikeBase64) {
     try {
       const buffer = Buffer.from(normalized, "base64");
-      const type =
-        buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
+      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
       return { buffer, type };
     } catch (_) {
       return null;
@@ -318,6 +319,217 @@ async function generateAndStoreFinalKartuDocx(
     fileName,
     mimeType,
   };
+}
+
+async function buildHalamanPersetujuanDocxBuffer({
+  kartu,
+  signatures,
+  programStudiNama,
+  namaKaprodi,
+}) {
+  const templatePath = path.join(
+    __dirname,
+    "..",
+    "templates",
+    "template_halaman_persetujuan_judul_desain_skripsi.docx",
+  );
+  const templateBuffer = await readFile(templatePath);
+
+  const sigMap = {};
+  for (const s of signatures) {
+    sigMap[s.signer_role] = s.signature_image;
+  }
+
+  const programStudi = programStudiNama ?? kartu.program_studi_nama ?? "";
+
+  const patches = {
+    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
+    npm: textPatch(kartu.npm),
+    program_studi1: textPatch(programStudi),
+    program_studi2: textPatch(programStudi.toUpperCase()),
+    judul_skripsi: textPatch((kartu.judul_skripsi ?? "").toUpperCase()),
+    nama_pembimbing1: textPatch(kartu.pembimbing1_nama),
+    nama_pembimbing2: textPatch(kartu.pembimbing2_nama),
+    nama_kaprodi: textPatch(namaKaprodi ?? ""),
+    tahun: textPatch(String(new Date().getFullYear())),
+    ttd_mahasiswa: signatureImagePatch(sigMap["MAHASISWA"]),
+    ttd_pembimbing2: signatureImagePatch(sigMap["PEMBIMBING_2"]),
+    ttd_pembimbing1: signatureImagePatch(sigMap["PEMBIMBING_1"]),
+    ttd_kaprodi: signatureImagePatch(sigMap["KAPRODI"]),
+  };
+
+  return patchDocument({
+    outputType: "nodebuffer",
+    data: templateBuffer,
+    patches,
+  });
+}
+
+async function generateAndStoreHalamanDocx(
+  queryable,
+  {
+    halamanId,
+    pengajuanJudulId,
+    kartu,
+    signatures,
+    programStudiNama,
+    namaKaprodi,
+    generatedByUserId,
+  },
+) {
+  const outputBuffer = await buildHalamanPersetujuanDocxBuffer({
+    kartu,
+    signatures,
+    programStudiNama,
+    namaKaprodi,
+  });
+
+  const mimeType =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const fileName = `halaman-persetujuan-judul-${pengajuanJudulId}-${Date.now()}.docx`;
+
+  const [ins] = await queryable.query(
+    `INSERT INTO halaman_persetujuan_judul_file (
+       halaman_persetujuan_judul_id,
+       file_name,
+       mime_type,
+       file_content,
+       generated_by_user_id,
+       generated_at
+     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    [
+      halamanId,
+      fileName,
+      mimeType,
+      outputBuffer.toString("base64"),
+      generatedByUserId,
+    ],
+  );
+
+  return { id: ins.insertId, fileName, mimeType };
+}
+
+async function autoGenerateHalamanPersetujuan(
+  conn,
+  { pengajuanJudulId, kartu, generatedByUserId },
+) {
+  console.log("[autoGenerateHalamanPersetujuan] start", { pengajuanJudulId, kartuId: kartu?.id, npm: kartu?.npm });
+
+  const [pjRows] = await conn.query(
+    `SELECT id FROM pengajuan_judul WHERE id = ? AND status = 'APPROVED' LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  if (pjRows.length === 0) {
+    console.log("[autoGenerateHalamanPersetujuan] skip: pengajuan_judul not APPROVED for id", pengajuanJudulId);
+    return { file: null, skippedReason: "pengajuan_judul_not_approved" };
+  }
+
+  const [existingRows] = await conn.query(
+    `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_judul_id = ? LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  if (existingRows.length > 0) {
+    console.log("[autoGenerateHalamanPersetujuan] skip: halaman already exists", existingRows[0].id);
+    return { file: null, skippedReason: "already_exists" };
+  }
+
+  const [[mahasiswaRow]] = await conn.query(
+    `SELECT signature_image FROM users WHERE npm = ? LIMIT 1`,
+    [kartu.npm],
+  );
+  const [[p2Row]] = await conn.query(
+    `SELECT u.signature_image FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+    [kartu.pembimbing2_nidn],
+  );
+  const [[p1Row]] = await conn.query(
+    `SELECT u.signature_image FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+    [kartu.pembimbing1_nidn],
+  );
+  const [[kaprodiRow]] = await conn.query(
+    `SELECT u.signature_image FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+     WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
+    [kartu.program_studi_id],
+  );
+
+  console.log("[autoGenerateHalamanPersetujuan] signatures found", {
+    mahasiswa: !!mahasiswaRow?.signature_image,
+    pembimbing2: !!p2Row?.signature_image,
+    pembimbing1: !!p1Row?.signature_image,
+    kaprodi: !!kaprodiRow?.signature_image,
+    npm: kartu.npm,
+    pembimbing2_nidn: kartu.pembimbing2_nidn,
+    pembimbing1_nidn: kartu.pembimbing1_nidn,
+    program_studi_id: kartu.program_studi_id,
+  });
+
+  const missingSigs = [
+    !mahasiswaRow?.signature_image && "MAHASISWA",
+    !p2Row?.signature_image && "PEMBIMBING_2",
+    !p1Row?.signature_image && "PEMBIMBING_1",
+    !kaprodiRow?.signature_image && "KAPRODI",
+  ].filter(Boolean);
+
+  if (missingSigs.length > 0) {
+    console.log("[autoGenerateHalamanPersetujuan] skip: missing signatures for", missingSigs);
+    return { file: null, skippedReason: "missing_signatures", missingSigs };
+  }
+
+  const [[psRow]] = await conn.query(
+    `SELECT ps.nama AS program_studi_nama, d.nama AS kaprodi_nama
+     FROM program_studi ps
+     LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+     WHERE ps.id = ? LIMIT 1`,
+    [kartu.program_studi_id],
+  );
+
+  const [ins] = await conn.query(
+    `INSERT INTO halaman_persetujuan_judul (pengajuan_judul_id, status) VALUES (?, 'PENDING')`,
+    [pengajuanJudulId],
+  );
+  const halamanId = ins.insertId;
+
+  const signatures = [
+    { signer_role: "MAHASISWA", signature_image: mahasiswaRow.signature_image },
+    { signer_role: "PEMBIMBING_2", signature_image: p2Row.signature_image },
+    { signer_role: "PEMBIMBING_1", signature_image: p1Row.signature_image },
+    { signer_role: "KAPRODI", signature_image: kaprodiRow.signature_image },
+  ];
+
+  for (const sig of signatures) {
+    await conn.query(
+      `INSERT INTO halaman_persetujuan_judul_signatures
+         (halaman_persetujuan_judul_id, signer_role, signature_image, signed_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+      [halamanId, sig.signer_role, String(sig.signature_image)],
+    );
+  }
+
+  const generatedFile = await generateAndStoreHalamanDocx(conn, {
+    halamanId,
+    pengajuanJudulId,
+    kartu,
+    signatures,
+    programStudiNama: psRow?.program_studi_nama ?? "",
+    namaKaprodi: psRow?.kaprodi_nama ?? "",
+    generatedByUserId,
+  });
+
+  await conn.query(
+    `UPDATE halaman_persetujuan_judul SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [halamanId],
+  );
+
+  console.log("[autoGenerateHalamanPersetujuan] done", { halamanId, generatedFile });
+  return { file: generatedFile, skippedReason: null };
 }
 
 async function getAuthorizedKartuForDocument(queryable, req, pengajuanJudulId) {
@@ -607,12 +819,10 @@ exports.submitMyOutline = async (req, res, next) => {
       txStarted = false;
       const hasP2 = stageRows.some((s) => s.stage === "PEMBIMBING_2");
       if (!hasP2) {
-        return res
-          .status(409)
-          .json({
-            ok: false,
-            message: "Stage PEMBIMBING_2 is not initialized",
-          });
+        return res.status(409).json({
+          ok: false,
+          message: "Stage PEMBIMBING_2 is not initialized",
+        });
       }
       return res.status(409).json({
         ok: false,
@@ -738,7 +948,6 @@ exports.getMyReviewHistory = async (req, res, next) => {
          st.stage,
          r.submission_no,
          r.decision_status,
-         r.catatan_mahasiswa,
          r.reviewed_at,
          rf.id AS review_file_id,
          rf.file_name AS review_file_name,
@@ -1554,7 +1763,6 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          rs.stage,
          r.submission_no,
          r.decision_status,
-         r.catatan_mahasiswa,
          r.catatan_kartu,
          r.reviewed_at,
          rf.id AS review_file_id,
@@ -1894,7 +2102,14 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       }
     }
 
+    const [kartuInfoRows] = await conn.query(
+      `SELECT * FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
+      [stage.kartu_id],
+    );
+    const kartuInfo = kartuInfoRows[0];
+
     let autoFinalizedFile = null;
+    let autoHalamanResult = null;
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
       await conn.query(
         `UPDATE kartu_konsultasi_outline
@@ -1912,13 +2127,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         pengajuanJudulId: stage.pengajuan_judul_id,
         generatedByUserId: req.user.id,
       });
+
+      if (kartuInfo) {
+        autoHalamanResult = await autoGenerateHalamanPersetujuan(conn, {
+          pengajuanJudulId: stage.pengajuan_judul_id,
+          kartu: kartuInfo,
+          generatedByUserId: req.user.id,
+        });
+      }
     }
 
-    const [kartuInfoRows] = await conn.query(
-      `SELECT npm, nama_mahasiswa, pembimbing1_nidn FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
-      [stage.kartu_id],
-    );
-    const kartuInfo = kartuInfoRows[0];
     if (kartuInfo) {
       const [studentUserRows] = await conn.query(
         `SELECT id FROM users WHERE npm = ? LIMIT 1`,
@@ -1966,6 +2184,15 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           "Outline Anda telah diterima oleh Pembimbing 1",
           "/student/outline-consultations",
         );
+        if (autoHalamanResult?.file) {
+          await insertNotification(
+            conn,
+            studentUserId,
+            "HALAMAN_PERSETUJUAN_COMPLETED",
+            "Halaman persetujuan judul skripsi Anda telah dibuat otomatis",
+            "/student/halaman-persetujuan",
+          );
+        }
       }
     }
 
@@ -1984,6 +2211,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         decisionStatus,
         hasReviewFile,
         finalFile: autoFinalizedFile,
+        halamanPersetujuan: autoHalamanResult,
       },
     });
   } catch (err) {
