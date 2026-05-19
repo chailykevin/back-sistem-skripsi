@@ -494,7 +494,7 @@ exports.getMyDetail = async (req, res, next) => {
          st.stage,
          r.submission_no,
          r.decision_status,
-         r.catatan_mahasiswa,
+         r.catatan_kartu,
          r.reviewed_at,
          rf.id AS review_file_id,
          rf.file_name AS review_file_name,
@@ -1433,7 +1433,6 @@ exports.getDetailForKaprodi = async (req, res, next) => {
          st.stage,
          r.submission_no,
          r.decision_status,
-         r.catatan_mahasiswa,
          r.catatan_kartu,
          r.reviewed_at,
          rf.id AS review_file_id,
@@ -1642,21 +1641,15 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
     const {
       decisionStatus,
-      catatanMahasiswa,
       catatanKartu,
       reviewFile,
       reviewFileName,
       reviewFileMimeType,
     } = req.body || {};
-    if (
-      !decisionStatus ||
-      !String(catatanMahasiswa || "").trim() ||
-      !String(catatanKartu || "").trim()
-    ) {
+    if (!decisionStatus || !String(catatanKartu || "").trim()) {
       return res.status(400).json({
         ok: false,
-        message:
-          "decisionStatus, catatanMahasiswa, and catatanKartu are required",
+        message: "decisionStatus and catatanKartu are required",
       });
     }
 
@@ -1776,15 +1769,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
          submission_no,
          reviewer_user_id,
          decision_status,
-         catatan_mahasiswa,
          catatan_kartu
-       ) VALUES (?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?)`,
       [
         stageId,
         latestSubmission.submission_no,
         req.user.id,
         decisionStatus,
-        String(catatanMahasiswa).trim(),
         String(catatanKartu).trim(),
       ],
     );

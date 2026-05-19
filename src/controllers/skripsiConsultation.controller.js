@@ -457,7 +457,7 @@ exports.getMyDetail = async (req, res, next) => {
     const [reviews] = await db.query(
       `SELECT
          r.id, r.konsultasi_skripsi_stage_id, st.chapter_group, st.stage,
-         r.submission_no, r.decision_status, r.catatan_mahasiswa, r.catatan_kartu, r.reviewed_at,
+         r.submission_no, r.decision_status, r.catatan_kartu, r.reviewed_at,
          CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file,
          rf.id AS review_file_id, rf.file_name AS review_file_name
        FROM konsultasi_skripsi_review r
@@ -750,21 +750,15 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
     const {
       decisionStatus,
-      catatanMahasiswa,
       catatanKartu,
       reviewFile,
       reviewFileName,
     } = req.body || {};
 
-    if (
-      !decisionStatus ||
-      !String(catatanMahasiswa || "").trim() ||
-      !String(catatanKartu || "").trim()
-    ) {
+    if (!decisionStatus || !String(catatanKartu || "").trim()) {
       return res.status(400).json({
         ok: false,
-        message:
-          "decisionStatus, catatanMahasiswa, and catatanKartu are required",
+        message: "decisionStatus and catatanKartu are required",
       });
     }
 
@@ -875,14 +869,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     const [reviewIns] = await conn.query(
       `INSERT INTO konsultasi_skripsi_review (
          konsultasi_skripsi_stage_id, submission_no, reviewer_user_id,
-         decision_status, catatan_mahasiswa, catatan_kartu
-       ) VALUES (?, ?, ?, ?, ?, ?)`,
+         decision_status, catatan_kartu
+       ) VALUES (?, ?, ?, ?, ?)`,
       [
         stageId,
         latestSubmission.submission_no,
         req.user.id,
         decisionStatus,
-        String(catatanMahasiswa).trim(),
         String(catatanKartu).trim(),
       ],
     );
@@ -1157,7 +1150,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
 
     const [reviews] = await db.query(
       `SELECT
-         r.id, r.submission_no, r.decision_status, r.catatan_mahasiswa, r.catatan_kartu, r.reviewed_at,
+         r.id, r.submission_no, r.decision_status, r.catatan_kartu, r.reviewed_at,
          CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file,
          rf.id AS review_file_id, rf.file_name AS review_file_name
        FROM konsultasi_skripsi_review r
