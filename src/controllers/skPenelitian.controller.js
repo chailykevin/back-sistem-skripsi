@@ -179,19 +179,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
         .json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
-    const { rekapNilaiContent, rekapNilaiName, rekapNilaiMimeType } =
-      req.body ?? {};
-    if (!rekapNilaiContent || !String(rekapNilaiContent).trim()) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "rekapNilaiContent is required" });
-    }
-    if (!rekapNilaiName || !String(rekapNilaiName).trim()) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "rekapNilaiName is required" });
-    }
-
     await conn.beginTransaction();
     txStarted = true;
 
@@ -207,14 +194,14 @@ exports.submitSkPenelitian = async (req, res, next) => {
         .status(404)
         .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
     }
-    if (sk.status !== "DRAFT") {
+    if (sk.status !== "DRAFT" && sk.status !== "NEED_REVISION") {
       await conn.rollback();
       txStarted = false;
       return res
         .status(409)
         .json({
           ok: false,
-          message: "SK Penelitian hanya bisa disubmit saat status DRAFT",
+          message: "SK Penelitian hanya bisa disubmit saat status DRAFT atau NEED_REVISION",
         });
     }
 
@@ -314,15 +301,29 @@ exports.submitSkPenelitian = async (req, res, next) => {
     }
     const halamanFile = halamanFileRows[0];
 
+    // System-pull Rekap Nilai (Transkrip)
+    const [rekapRows] = await conn.query(
+      `SELECT file_content, file_name FROM pengajuan_judul_file WHERE pengajuan_judul_id = ? AND file_type = 'TRANSKRIP' LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (rekapRows.length === 0) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(400)
+        .json({ ok: false, message: "File transkrip/rekap nilai tidak ditemukan pada pengajuan judul" });
+    }
+    const rekapRow = rekapRows[0];
+
     // Upsert all 5 files
     await upsertSkFile(
       conn,
       sk.id,
       "REKAP_NILAI",
-      String(rekapNilaiName).trim(),
-      rekapNilaiMimeType ?? "application/octet-stream",
-      String(rekapNilaiContent),
-      "UPLOADED",
+      rekapRow.file_name,
+      "application/octet-stream",
+      rekapRow.file_content,
+      "SYSTEM",
     );
     await upsertSkFile(
       conn,
@@ -368,21 +369,22 @@ exports.submitSkPenelitian = async (req, res, next) => {
       [sk.id],
     );
 
-    const [submitNpm] = await conn.query(
-      `SELECT npm FROM pengajuan_sk_penelitian WHERE id = ? LIMIT 1`,
-      [sk.id]
+    const [[studentRow]] = await conn.query(
+      `SELECT u.npm, m.nama FROM users u LEFT JOIN mahasiswa m ON m.npm = u.npm WHERE u.id = ? LIMIT 1`,
+      [req.user.id],
     );
-    const studentNpmForNotif = submitNpm[0]?.npm ?? null;
-    if (studentNpmForNotif) {
-      const [mRows] = await conn.query(`SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`, [studentNpmForNotif]);
-      const namaMahasiswa = mRows[0]?.nama ?? studentNpmForNotif;
-      const [sekRows] = await conn.query(
-        `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`
+    const namaMahasiswa = studentRow?.nama ?? studentRow?.npm ?? "";
+    const [sekRows] = await conn.query(
+      `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`,
+    );
+    for (const sek of sekRows) {
+      await insertNotification(
+        conn,
+        sek.id,
+        "SK_SUBMITTED",
+        `Mahasiswa ${namaMahasiswa} mengajukan SK Penelitian`,
+        "/sekretariat/sk-penelitian",
       );
-      for (const sek of sekRows) {
-        await insertNotification(conn, sek.id, "SK_SUBMITTED",
-          `Mahasiswa ${namaMahasiswa} mengajukan SK Penelitian`, "/sekretariat/sk-penelitian");
-      }
     }
 
     await conn.commit();

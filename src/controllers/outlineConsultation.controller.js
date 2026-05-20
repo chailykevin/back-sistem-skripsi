@@ -409,6 +409,85 @@ async function generateAndStoreHalamanDocx(
   return { id: ins.insertId, fileName, mimeType };
 }
 
+async function autoSubmitSkPenelitian(
+  conn,
+  { pengajuanJudulId, kartuId, halamanPersetujuanJudulId },
+) {
+  console.log("[autoSubmitSkPenelitian] start", { pengajuanJudulId, kartuId, halamanPersetujuanJudulId });
+
+  const [existingRows] = await conn.query(
+    `SELECT id FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  if (existingRows.length > 0) {
+    console.log("[autoSubmitSkPenelitian] skip: already_exists", existingRows[0].id);
+    return { skippedReason: "already_exists" };
+  }
+
+  const [krsRows] = await conn.query(
+    `SELECT file_content, file_name FROM pengajuan_judul_file WHERE pengajuan_judul_id = ? AND file_type = 'KRS' LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  const [rekapRows] = await conn.query(
+    `SELECT file_content, file_name FROM pengajuan_judul_file WHERE pengajuan_judul_id = ? AND file_type = 'TRANSKRIP' LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  const [kartuFileRows] = await conn.query(
+    `SELECT file_content, file_name, mime_type FROM kartu_konsultasi_outline_file WHERE kartu_konsultasi_outline_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1 ORDER BY generated_at DESC LIMIT 1`,
+    [kartuId],
+  );
+  const [outlineRows] = await conn.query(
+    `SELECT s.file_outline, s.file_outline_name FROM konsultasi_outline_submission s INNER JOIN konsultasi_outline_stage st ON st.id = s.konsultasi_outline_stage_id WHERE st.kartu_konsultasi_outline_id = ? ORDER BY s.submitted_at DESC LIMIT 1`,
+    [kartuId],
+  );
+  const [halamanFileRows] = await conn.query(
+    `SELECT file_content, file_name, mime_type FROM halaman_persetujuan_judul_file WHERE halaman_persetujuan_judul_id = ? ORDER BY generated_at DESC LIMIT 1`,
+    [halamanPersetujuanJudulId],
+  );
+
+  console.log("[autoSubmitSkPenelitian] files found", {
+    krs: krsRows.length > 0,
+    rekap: rekapRows.length > 0,
+    kartu: kartuFileRows.length > 0,
+    outline: outlineRows.length > 0,
+    halaman: halamanFileRows.length > 0,
+  });
+
+  const missingFiles = [];
+  if (krsRows.length === 0) missingFiles.push("KRS");
+  if (rekapRows.length === 0) missingFiles.push("REKAP_NILAI");
+  if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
+  if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
+  if (halamanFileRows.length === 0) missingFiles.push("HALAMAN_PERSETUJUAN");
+  if (missingFiles.length > 0) {
+    console.log("[autoSubmitSkPenelitian] skip: missing_files", missingFiles);
+    return { skippedReason: "missing_files", missingFiles };
+  }
+
+  const [ins] = await conn.query(
+    `INSERT INTO pengajuan_sk_penelitian (pengajuan_judul_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+    [pengajuanJudulId],
+  );
+  const skId = ins.insertId;
+
+  const files = [
+    { type: "KRS", name: krsRows[0].file_name, mime: null, content: krsRows[0].file_content },
+    { type: "REKAP_NILAI", name: rekapRows[0].file_name, mime: null, content: rekapRows[0].file_content },
+    { type: "KARTU_KONSULTASI_OUTLINE", name: kartuFileRows[0].file_name, mime: kartuFileRows[0].mime_type, content: kartuFileRows[0].file_content },
+    { type: "FILE_OUTLINE", name: outlineRows[0].file_outline_name, mime: null, content: outlineRows[0].file_outline },
+    { type: "HALAMAN_PERSETUJUAN", name: halamanFileRows[0].file_name, mime: halamanFileRows[0].mime_type, content: halamanFileRows[0].file_content },
+  ];
+  for (const f of files) {
+    await conn.query(
+      `INSERT INTO pengajuan_sk_penelitian_files (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status) VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      [skId, f.type, f.name, f.mime ?? "application/octet-stream", f.content],
+    );
+  }
+
+  console.log("[autoSubmitSkPenelitian] done", { skId });
+  return { skippedReason: null, skId };
+}
+
 async function autoGenerateHalamanPersetujuan(
   conn,
   { pengajuanJudulId, kartu, generatedByUserId },
@@ -529,7 +608,7 @@ async function autoGenerateHalamanPersetujuan(
   );
 
   console.log("[autoGenerateHalamanPersetujuan] done", { halamanId, generatedFile });
-  return { file: generatedFile, skippedReason: null };
+  return { file: generatedFile, skippedReason: null, halamanId };
 }
 
 async function getAuthorizedKartuForDocument(queryable, req, pengajuanJudulId) {
@@ -2137,6 +2216,25 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       }
     }
 
+    let autoSkResult = null;
+    if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
+      let halamanId = autoHalamanResult?.halamanId ?? null;
+      if (!halamanId) {
+        const [[hRow]] = await conn.query(
+          `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_judul_id = ? LIMIT 1`,
+          [stage.pengajuan_judul_id],
+        );
+        halamanId = hRow?.id ?? null;
+      }
+      if (halamanId) {
+        autoSkResult = await autoSubmitSkPenelitian(conn, {
+          pengajuanJudulId: stage.pengajuan_judul_id,
+          kartuId: stage.kartu_id,
+          halamanPersetujuanJudulId: halamanId,
+        });
+      }
+    }
+
     if (kartuInfo) {
       const [studentUserRows] = await conn.query(
         `SELECT id FROM users WHERE npm = ? LIMIT 1`,
@@ -2193,6 +2291,27 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             "/student/halaman-persetujuan",
           );
         }
+        if (autoSkResult && autoSkResult.skippedReason === null) {
+          await insertNotification(
+            conn,
+            studentUserId,
+            "SK_PENELITIAN_AUTO_SUBMITTED",
+            "Pengajuan SK Penelitian Anda telah diajukan secara otomatis",
+            "/student/sk-penelitian",
+          );
+          const [sekRows] = await conn.query(
+            `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`,
+          );
+          for (const sek of sekRows) {
+            await insertNotification(
+              conn,
+              sek.id,
+              "SK_SUBMITTED",
+              `Mahasiswa ${kartuInfo.nama_mahasiswa} mengajukan SK Penelitian`,
+              "/sekretariat/sk-penelitian",
+            );
+          }
+        }
       }
     }
 
@@ -2212,6 +2331,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         hasReviewFile,
         finalFile: autoFinalizedFile,
         halamanPersetujuan: autoHalamanResult,
+        skPenelitian: autoSkResult,
       },
     });
   } catch (err) {
