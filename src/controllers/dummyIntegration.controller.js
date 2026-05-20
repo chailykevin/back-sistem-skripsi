@@ -46,6 +46,7 @@ const PREDEFINED_DOSEN = [
     username: "susan",
     isKaprodi: true,
     isSekretariat: false,
+    isDekan: false,
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
@@ -55,6 +56,7 @@ const PREDEFINED_DOSEN = [
     username: "hendro",
     isKaprodi: false,
     isSekretariat: false,
+    isDekan: false,
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
@@ -63,6 +65,7 @@ const PREDEFINED_DOSEN = [
     username: "thomlay",
     isKaprodi: true,
     isSekretariat: false,
+    isDekan: false,
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
   },
@@ -72,6 +75,7 @@ const PREDEFINED_DOSEN = [
     username: "antonius",
     isKaprodi: false,
     isSekretariat: true,
+    isDekan: false,
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
@@ -80,16 +84,42 @@ const PREDEFINED_DOSEN = [
     username: "riyadi",
     isKaprodi: false,
     isSekretariat: false,
+    isDekan: false,
+    password: DUMMY_PASSWORD_PLAIN,
+  },
+  {
+    nidn: "00006",
+    nama: "Paskalia Kartini, S.T., M.T.",
+    username: "paskalia",
+    isKaprodi: false,
+    isSekretariat: false,
+    isDekan: true,
     password: DUMMY_PASSWORD_PLAIN,
   },
 ];
+
+// Fakultas seeded alongside dosen
+const PREDEFINED_FAKULTAS = [
+  {
+    nama: "Fakultas Teknologi Informasi",
+    kode: "UWDP-FTI",
+    dekanNidn: "00006",
+  },
+];
+
+// program_studi kode mapping (matched by nama)
+const PROGRAM_STUDI_KODE = {
+  informatika: "INF",
+  "sistem informasi": "SI",
+  "bisnis digital": "BD",
+};
 
 async function getActiveRolesMap(conn) {
   const [rows] = await conn.query(
     `SELECT id, code
      FROM roles
      WHERE is_active = 1
-       AND code IN ('STUDENT', 'LECTURER', 'KAPRODI', 'PEMBIMBING', 'SEKRETARIAT')`,
+       AND code IN ('STUDENT', 'LECTURER', 'KAPRODI', 'PEMBIMBING', 'SEKRETARIAT', 'DEKAN')`,
   );
 
   const map = new Map();
@@ -244,6 +274,7 @@ function getPredefinedDosen(programRows) {
     username: item.username,
     isKaprodi: item.isKaprodi,
     isSekretariat: item.isSekretariat ?? false,
+    isDekan: item.isDekan ?? false,
     password: item.password,
     programStudiNama: item.isKaprodi
       ? String(item.programStudiNama ?? "").trim()
@@ -398,19 +429,49 @@ exports.seedDosenDummy = async (req, res, next) => {
     const kaprodiRoleId = rolesMap.get("KAPRODI");
     const pembimbingRoleId = rolesMap.get("PEMBIMBING");
     const sekretariatRoleId = rolesMap.get("SEKRETARIAT");
+    const dekanRoleId = rolesMap.get("DEKAN");
     if (
       !lecturerRoleId ||
       !kaprodiRoleId ||
       !pembimbingRoleId ||
-      !sekretariatRoleId
+      !sekretariatRoleId ||
+      !dekanRoleId
     ) {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
         message:
-          "Required roles are missing (LECTURER, KAPRODI, PEMBIMBING, SEKRETARIAT)",
+          "Required roles are missing (LECTURER, KAPRODI, PEMBIMBING, SEKRETARIAT, DEKAN)",
       });
+    }
+
+    // Seed fakultas and update program_studi kode + fakultas_id
+    for (const fak of PREDEFINED_FAKULTAS) {
+      await conn.query(
+        `INSERT INTO fakultas (nama, kode, dekan_nidn)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           nama = VALUES(nama),
+           dekan_nidn = VALUES(dekan_nidn)`,
+        [fak.nama, fak.kode, fak.dekanNidn],
+      );
+    }
+
+    // Update program_studi rows with kode and fakultas_id
+    for (const ps of programRows) {
+      const kode = PROGRAM_STUDI_KODE[String(ps.nama).toLowerCase()] ?? null;
+      if (!kode) continue;
+      // Find the fakultas for this prodi (first one seeded, assuming single faculty for now)
+      const [[fakRow]] = await conn.query(
+        `SELECT id FROM fakultas WHERE kode = ? LIMIT 1`,
+        [PREDEFINED_FAKULTAS[0].kode],
+      );
+      if (!fakRow) continue;
+      await conn.query(
+        `UPDATE program_studi SET kode = ?, fakultas_id = ? WHERE id = ?`,
+        [kode, fakRow.id, ps.id],
+      );
     }
 
     const input = getPredefinedDosen(programRows);
@@ -473,7 +534,9 @@ exports.seedDosenDummy = async (req, res, next) => {
 
       const userId = await getUserIdByUsername(conn, dsn.username);
       if (!userId) {
-        throw new Error(`Failed to resolve user account for username ${dsn.username}`);
+        throw new Error(
+          `Failed to resolve user account for username ${dsn.username}`,
+        );
       }
 
       await upsertUserRole(conn, {
@@ -501,7 +564,9 @@ exports.seedDosenDummy = async (req, res, next) => {
         });
         const kaprodiUserId = await getUserIdByUsername(conn, kaprodiUsername);
         if (!kaprodiUserId) {
-          throw new Error(`Failed to resolve kaprodi account for username ${kaprodiUsername}`);
+          throw new Error(
+            `Failed to resolve kaprodi account for username ${kaprodiUsername}`,
+          );
         }
         await upsertUserRole(conn, {
           userId: kaprodiUserId,
@@ -516,7 +581,8 @@ exports.seedDosenDummy = async (req, res, next) => {
           [dsn.nidn, dsn.kaprodiProgramStudiId],
         );
         kaprodiProgramStudi =
-          programRows.find((p) => Number(p.id) === dsn.kaprodiProgramStudiId) ?? null;
+          programRows.find((p) => Number(p.id) === dsn.kaprodiProgramStudiId) ??
+          null;
         kaprodiAccount = {
           userId: kaprodiUserId,
           username: kaprodiUsername,
@@ -535,9 +601,14 @@ exports.seedDosenDummy = async (req, res, next) => {
           npm: null,
           nidn: dsn.nidn,
         });
-        const sekretariatUserId = await getUserIdByUsername(conn, sekretariatUsername);
+        const sekretariatUserId = await getUserIdByUsername(
+          conn,
+          sekretariatUsername,
+        );
         if (!sekretariatUserId) {
-          throw new Error(`Failed to resolve sekretariat account for username ${sekretariatUsername}`);
+          throw new Error(
+            `Failed to resolve sekretariat account for username ${sekretariatUsername}`,
+          );
         }
         await upsertUserRole(conn, {
           userId: sekretariatUserId,
@@ -552,15 +623,29 @@ exports.seedDosenDummy = async (req, res, next) => {
         };
       }
 
+      let dekanAccount = null;
+      if (dsn.isDekan) {
+        await upsertUserRole(conn, {
+          userId,
+          roleId: dekanRoleId,
+          programStudiId: null,
+          assignedByUserId,
+        });
+        dekanAccount = { userId, username: dsn.username, roles: ["DEKAN"] };
+      }
+
       result.push({
         userId,
         username: dsn.username,
         nidn: dsn.nidn,
         nama: dsn.nama,
         password: dsn.password,
-        roles: ["LECTURER", "PEMBIMBING"],
+        roles: dsn.isDekan
+          ? ["LECTURER", "PEMBIMBING", "DEKAN"]
+          : ["LECTURER", "PEMBIMBING"],
         kaprodiAccount,
         sekretariatAccount,
+        dekanAccount,
       });
     }
 

@@ -1,5 +1,8 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const path = require("path");
+const { readFile } = require("fs/promises");
+const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -9,6 +12,226 @@ async function getStudentNpm(userId) {
   return rows[0]?.npm ?? null;
 }
 
+function textPatch(value) {
+  return {
+    type: PatchType.PARAGRAPH,
+    children: [new TextRun(String(value ?? ""))],
+  };
+}
+
+function decodeSignatureToBuffer(signatureValue) {
+  if (signatureValue === undefined || signatureValue === null) return null;
+  const raw = String(signatureValue).trim();
+  if (!raw) return null;
+  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    try {
+      const mimeType = dataUrlMatch[1].toLowerCase();
+      const type = mimeType === "jpeg" ? "jpg" : mimeType;
+      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
+    } catch (_) {
+      return null;
+    }
+  }
+  const normalized = raw.replace(/\s+/g, "");
+  const looksLikeBase64 =
+    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
+  if (looksLikeBase64) {
+    try {
+      const buffer = Buffer.from(normalized, "base64");
+      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
+      return { buffer, type };
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function signatureImagePatch(signatureValue) {
+  const decoded = decodeSignatureToBuffer(signatureValue);
+  if (!decoded || decoded.buffer.length === 0) return textPatch("");
+  try {
+    return {
+      type: PatchType.PARAGRAPH,
+      children: [
+        new ImageRun({
+          type: decoded.type,
+          data: decoded.buffer,
+          transformation: { width: 120, height: 50 },
+        }),
+      ],
+    };
+  } catch (_) {
+    return textPatch("");
+  }
+}
+
+const BULAN_ID = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+
+const BULAN_ROMAWI = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"];
+
+function formatTanggalIndonesia(date) {
+  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+async function buildSkDocxBuffer({ nomorSurat, prodi, namaMahasiswa, npm, dospem1Nama, dospem2Nama, judulSkripsi, tanggal, dekanSignature, namaDekan }) {
+  const templatePath = path.join(__dirname, "../templates/template_SK_skripsi.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    nomor_surat: textPatch(nomorSurat),
+    prodi: textPatch(prodi),
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm: textPatch(npm),
+    dospem1_nama: textPatch(dospem1Nama),
+    dospem2_nama: textPatch(dospem2Nama),
+    judul_skripsi: textPatch(judulSkripsi),
+    tanggal: textPatch(tanggal),
+    dekan_signature: signatureImagePatch(dekanSignature),
+    nama_dekan: textPatch(namaDekan),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
+}
+
+async function buildSuratKeteranganDocxBuffer({ namaMahasiswa, npm, programStudi, lokasi, judul }) {
+  const templatePath = path.join(__dirname, "../templates/template_surat_keterangan.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm: textPatch(npm),
+    program_studi: textPatch(programStudi),
+    lokasi: textPatch(lokasi),
+    judul: textPatch(judul),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
+}
+
+async function generateSkDocuments(conn, sk, pengajuanJudulId) {
+  // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
+  const [[kartu]] = await conn.query(
+    `SELECT k.nama_mahasiswa, k.npm, k.judul_skripsi,
+            k.pembimbing1_nama, k.pembimbing2_nama, k.program_studi_id, k.program_studi_nama
+     FROM kartu_konsultasi_outline k
+     WHERE k.pengajuan_judul_id = ?
+     LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  if (!kartu) throw Object.assign(new Error("Kartu konsultasi outline tidak ditemukan"), { status: 400 });
+
+  // Fetch pengajuan judul for perlu_surat_pengantar + nama_perusahaan
+  const [[pj]] = await conn.query(
+    `SELECT perlu_surat_pengantar, nama_perusahaan FROM pengajuan_judul WHERE id = ? LIMIT 1`,
+    [pengajuanJudulId],
+  );
+  if (!pj) throw Object.assign(new Error("Pengajuan judul tidak ditemukan"), { status: 400 });
+
+  // Fetch program studi + fakultas
+  const [[ps]] = await conn.query(
+    `SELECT ps.kode AS ps_kode, ps.nama AS ps_nama, f.kode AS f_kode, f.dekan_nidn
+     FROM program_studi ps
+     LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+     WHERE ps.id = ?
+     LIMIT 1`,
+    [kartu.program_studi_id],
+  );
+  if (!ps) throw Object.assign(new Error("Program studi tidak ditemukan"), { status: 400 });
+  if (!ps.f_kode || !ps.dekan_nidn) {
+    throw Object.assign(new Error("Dekan belum dikonfigurasi untuk fakultas ini"), { status: 400 });
+  }
+
+  // Fetch dekan user + dosen name + signature
+  const [[dekan]] = await conn.query(
+    `SELECT u.signature_image, d.nama AS nama_dekan
+     FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     JOIN dosen d ON d.nidn = u.nidn
+     WHERE r.code = 'DEKAN' AND u.nidn = ?
+     LIMIT 1`,
+    [ps.dekan_nidn],
+  );
+  if (!dekan) throw Object.assign(new Error("Dekan belum dikonfigurasi"), { status: 400 });
+
+  // Generate nomor_surat sequence (count SKs completed this month for same prodi)
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // 1-based
+  const [[{ seq }]] = await conn.query(
+    `SELECT COUNT(*) AS seq
+     FROM pengajuan_sk_penelitian psk
+     JOIN kartu_konsultasi_outline k ON k.pengajuan_judul_id = psk.pengajuan_judul_id
+     WHERE k.program_studi_id = ?
+       AND psk.nomor_surat IS NOT NULL
+       AND YEAR(psk.completed_at) = ?
+       AND MONTH(psk.completed_at) = ?`,
+    [kartu.program_studi_id, year, month],
+  );
+  const seqNum = Number(seq) + 1;
+  const nomorSurat = `${String(seqNum).padStart(3, "0")}/${ps.f_kode}/${ps.ps_kode}/Skep-Skripsi/${BULAN_ROMAWI[month - 1]}/${year}`;
+
+  // Update nomor_surat on the SK record
+  await conn.query(
+    `UPDATE pengajuan_sk_penelitian SET nomor_surat = ? WHERE id = ?`,
+    [nomorSurat, sk.id],
+  );
+
+  const tanggal = formatTanggalIndonesia(now);
+
+  // Generate SK_PENELITIAN DOCX
+  const skBuffer = await buildSkDocxBuffer({
+    nomorSurat,
+    prodi: kartu.program_studi_nama,
+    namaMahasiswa: kartu.nama_mahasiswa,
+    npm: kartu.npm,
+    dospem1Nama: kartu.pembimbing1_nama,
+    dospem2Nama: kartu.pembimbing2_nama,
+    judulSkripsi: kartu.judul_skripsi,
+    tanggal,
+    dekanSignature: dekan.signature_image,
+    namaDekan: dekan.nama_dekan,
+  });
+  const skBase64 = skBuffer.toString("base64");
+  const mimeDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+  await conn.query(
+    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SK_PENELITIAN'`,
+    [sk.id],
+  );
+  await conn.query(
+    `INSERT INTO pengajuan_sk_penelitian_files
+       (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+     VALUES (?, 'SK_PENELITIAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+    [sk.id, `SK_Skripsi_${kartu.npm}.docx`, mimeDocx, skBase64],
+  );
+
+  // Generate SURAT_KETERANGAN if needed
+  if (pj.perlu_surat_pengantar) {
+    const suratBuffer = await buildSuratKeteranganDocxBuffer({
+      namaMahasiswa: kartu.nama_mahasiswa,
+      npm: kartu.npm,
+      programStudi: kartu.program_studi_nama,
+      lokasi: pj.nama_perusahaan ?? "",
+      judul: kartu.judul_skripsi,
+    });
+    const suratBase64 = suratBuffer.toString("base64");
+    await conn.query(
+      `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_KETERANGAN'`,
+      [sk.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sk_penelitian_files
+         (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'SURAT_KETERANGAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+      [sk.id, `Surat_Keterangan_${kartu.npm}.docx`, mimeDocx, suratBase64],
+    );
+  }
+}
+
 const VALID_FILE_TYPES = [
   "KRS",
   "REKAP_NILAI",
@@ -16,6 +239,7 @@ const VALID_FILE_TYPES = [
   "FILE_OUTLINE",
   "HALAMAN_PERSETUJUAN",
   "SK_PENELITIAN",
+  "SURAT_KETERANGAN",
 ];
 
 const VALID_SK_STATUSES = [
@@ -508,8 +732,9 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     }
 
     const [skStudentRows] = await conn.query(
-      `SELECT u.id FROM users u JOIN pengajuan_sk_penelitian psk ON psk.pengajuan_judul_id = ?
-       JOIN mahasiswa m ON m.npm = psk.npm AND u.npm = m.npm
+      `SELECT u.id FROM users u
+       JOIN mahasiswa m ON m.npm = u.npm
+       JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
        LIMIT 1`,
       [pengajuanJudulId]
     );
@@ -553,7 +778,7 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       return res.json({ ok: true, message: "SK Penelitian ditolak" });
     }
 
-    // VERIFY — set COMPLETED (SK DOCX generation deferred until template is ready)
+    // VERIFY — set COMPLETED then generate documents
     await conn.query(
       `UPDATE pengajuan_sk_penelitian
        SET status = 'COMPLETED',
@@ -569,6 +794,8 @@ exports.reviewSkPenelitian = async (req, res, next) => {
         sk.id,
       ],
     );
+
+    await generateSkDocuments(conn, sk, pengajuanJudulId);
 
     if (studentUserIdForSk) {
       await insertNotification(conn, studentUserIdForSk, "SK_COMPLETED",
@@ -700,7 +927,10 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
     );
 
     const [resubNpmRows] = await conn.query(
-      `SELECT npm FROM pengajuan_sk_penelitian WHERE id = ? LIMIT 1`, [sk.id]
+      `SELECT pj.npm FROM pengajuan_judul pj
+       JOIN pengajuan_sk_penelitian psk ON psk.pengajuan_judul_id = pj.id
+       WHERE psk.id = ? LIMIT 1`,
+      [sk.id]
     );
     const resubNpm = resubNpmRows[0]?.npm ?? null;
     if (resubNpm) {
@@ -790,10 +1020,7 @@ exports.listSkForSekretariat = async (req, res, next) => {
     }
 
     const statusParam = req.query?.status;
-    const status =
-      statusParam && VALID_SK_STATUSES.includes(statusParam)
-        ? statusParam
-        : "SUBMITTED";
+    const filterByStatus = statusParam && VALID_SK_STATUSES.includes(statusParam);
 
     const [rows] = await db.query(
       `SELECT
@@ -810,9 +1037,9 @@ exports.listSkForSekretariat = async (req, res, next) => {
          k.program_studi_nama
        FROM pengajuan_sk_penelitian sk
        LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_judul_id = sk.pengajuan_judul_id
-       WHERE sk.status = ?
+       ${filterByStatus ? "WHERE sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
-      [status],
+      filterByStatus ? [statusParam] : [],
     );
 
     return res.json({ ok: true, data: rows });

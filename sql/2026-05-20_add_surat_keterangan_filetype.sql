@@ -1,0 +1,10 @@
+ALTER TABLE pengajuan_sk_penelitian_files
+  MODIFY COLUMN file_type ENUM(
+    'KRS',
+    'REKAP_NILAI',
+    'KARTU_KONSULTASI_OUTLINE',
+    'FILE_OUTLINE',
+    'HALAMAN_PERSETUJUAN',
+    'SK_PENELITIAN',
+    'SURAT_KETERANGAN'
+  ) NOT NULL;
