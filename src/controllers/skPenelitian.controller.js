@@ -797,6 +797,37 @@ exports.reviewSkPenelitian = async (req, res, next) => {
 
     await generateSkDocuments(conn, sk, pengajuanJudulId);
 
+    const [[skripsiSource]] = await conn.query(
+      `SELECT k.npm, k.judul_skripsi AS judul, k.nama_mahasiswa,
+              k.program_studi_id, k.program_studi_nama,
+              k.pembimbing1_nidn, k.pembimbing1_nama,
+              k.pembimbing2_nidn, k.pembimbing2_nama
+       FROM kartu_konsultasi_outline k
+       WHERE k.pengajuan_judul_id = ?
+       LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (skripsiSource) {
+      await conn.query(
+        `INSERT INTO skripsi
+           (npm, judul, status, program_studi_id, program_studi_nama,
+            pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
+            nama_mahasiswa)
+         VALUES (?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          skripsiSource.npm,
+          skripsiSource.judul,
+          skripsiSource.program_studi_id ?? null,
+          skripsiSource.program_studi_nama ?? null,
+          skripsiSource.pembimbing1_nidn ?? null,
+          skripsiSource.pembimbing1_nama ?? null,
+          skripsiSource.pembimbing2_nidn ?? null,
+          skripsiSource.pembimbing2_nama ?? null,
+          skripsiSource.nama_mahasiswa ?? null,
+        ],
+      );
+    }
+
     if (studentUserIdForSk) {
       await insertNotification(conn, studentUserIdForSk, "SK_COMPLETED",
         "SK Penelitian Anda telah diverifikasi", "/student/sk-penelitian");

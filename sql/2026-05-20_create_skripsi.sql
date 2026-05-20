@@ -1,0 +1,20 @@
+CREATE TABLE `skripsi` (
+  `id`                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `npm`                VARCHAR(20)     NOT NULL,
+  `judul`              VARCHAR(255)    NOT NULL,
+  `status`             ENUM('IN_PROGRESS','COMPLETED') NOT NULL DEFAULT 'IN_PROGRESS',
+  `program_studi_id`   BIGINT UNSIGNED DEFAULT NULL,
+  `program_studi_nama` VARCHAR(255)    DEFAULT NULL,
+  `pembimbing1_nidn`   VARCHAR(20)     DEFAULT NULL,
+  `pembimbing1_nama`   VARCHAR(255)    DEFAULT NULL,
+  `pembimbing2_nidn`   VARCHAR(20)     DEFAULT NULL,
+  `pembimbing2_nama`   VARCHAR(255)    DEFAULT NULL,
+  `nama_mahasiswa`     VARCHAR(255)    DEFAULT NULL,
+  `completed_at`       TIMESTAMP       NULL DEFAULT NULL,
+  `created_at`         TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`         TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_npm` (`npm`),
+  KEY `idx_status` (`status`),
+  KEY `idx_program_studi_id` (`program_studi_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

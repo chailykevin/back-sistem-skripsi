@@ -1105,6 +1105,14 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             "Konsultasi skripsi Anda telah selesai",
             "/student/skripsi-consultations",
           );
+          await conn.query(
+            `UPDATE skripsi
+             SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+             WHERE npm = ?
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [kartuInfo.npm],
+          );
         } else {
           await insertNotification(
             conn,
