@@ -19,5 +19,6 @@ router.post("/lecturer/skripsi-consultations/:stageId/reviews", auth, c.reviewSt
 
 // Kaprodi routes
 router.get("/kaprodi/skripsi-consultations", auth, c.listForKaprodi);
+router.get("/kaprodi/skripsi-consultations/:pengajuanJudulId", auth, c.getDetailForKaprodi);
 
 module.exports = router;
