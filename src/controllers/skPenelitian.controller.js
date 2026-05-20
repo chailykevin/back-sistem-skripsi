@@ -810,12 +810,13 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     if (skripsiSource) {
       await conn.query(
         `INSERT INTO skripsi
-           (npm, judul, status, program_studi_id, program_studi_nama,
+           (npm, pengajuan_judul_id, judul, status, program_studi_id, program_studi_nama,
             pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
             nama_mahasiswa)
-         VALUES (?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?, ?, ?)`,
         [
           skripsiSource.npm,
+          pengajuanJudulId,
           skripsiSource.judul,
           skripsiSource.program_studi_id ?? null,
           skripsiSource.program_studi_nama ?? null,
