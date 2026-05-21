@@ -199,27 +199,32 @@ async function getKartuLogs(queryable, kartuId) {
   return logs;
 }
 
-async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs) {
+async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra = {}) {
   const templatePath = path.join(
     __dirname,
     "..",
     "templates",
-    "template_kartu_konsultasi_skripsi.docx",
+    "template_kartu_penulisan_skripsi.docx",
   );
   const templateBuffer = await readFile(templatePath);
 
   const patches = {
+    fakultas: textPatch((extra.fakultasNama ?? "").toUpperCase()),
+    nomor_sk: textPatch(extra.nomorSk ?? ""),
     nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
     npm: textPatch(kartu.npm),
-    program_studi: textPatch(kartu.program_studi_nama),
+    prodi: textPatch(kartu.program_studi_nama),
     judul_skripsi: textPatch(kartu.judul_skripsi),
-    pembimbing1: textPatch(kartu.pembimbing1_nama),
-    pembimbing2: textPatch(kartu.pembimbing2_nama),
-    ttd_pembimbing1: signatureImagePatch(kartu.pembimbing1_signature),
-    ttd_pembimbing2: signatureImagePatch(kartu.pembimbing2_signature),
+    pembimbing1_name: textPatch(kartu.pembimbing1_nama),
+    pembimbing2_name: textPatch(kartu.pembimbing2_nama),
+    pembimbing1_signature: signatureImagePatch(kartu.pembimbing1_signature),
+    pembimbing2_signature: signatureImagePatch(kartu.pembimbing2_signature),
+    kaprodi_signature: signatureImagePatch(extra.kaprodiSignature ?? null),
+    tanggal_mulai: textPatch(extra.tanggalMulai ?? ""),
+    kaprodi_name: textPatch(extra.kaprodiNama ?? ""),
   };
 
-  for (let i = 1; i <= 18; i += 1) {
+  for (let i = 1; i <= 53; i += 1) {
     const log = logs[i - 1];
     const keterangan = log
       ? `${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`
@@ -238,6 +243,48 @@ async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs) {
   });
 }
 
+async function fetchKartuExtra(queryable, kartuId, pengajuanJudulId) {
+  const [[skRow]] = await queryable.query(
+    `SELECT nomor_surat, verified_at FROM pengajuan_sk_penelitian
+     WHERE pengajuan_judul_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [pengajuanJudulId],
+  );
+
+  const [[psRow]] = await queryable.query(
+    `SELECT f.nama AS fakultas_nama, ps.kaprodi_nidn
+     FROM kartu_konsultasi_skripsi k
+     JOIN program_studi ps ON ps.id = k.program_studi_id
+     LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+     WHERE k.id = ? LIMIT 1`,
+    [kartuId],
+  );
+
+  let kaprodiNama = "";
+  let kaprodiSignature = null;
+  if (psRow?.kaprodi_nidn) {
+    const [[kaprodiRow]] = await queryable.query(
+      `SELECT d.nama, u.signature_image
+       FROM dosen d
+       LEFT JOIN users u ON u.nidn = d.nidn
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id AND r.code = 'KAPRODI'
+       WHERE d.nidn = ? AND r.id IS NOT NULL
+       LIMIT 1`,
+      [psRow.kaprodi_nidn],
+    );
+    kaprodiNama = kaprodiRow?.nama ?? "";
+    kaprodiSignature = kaprodiRow?.signature_image ?? null;
+  }
+
+  return {
+    fakultasNama: psRow?.fakultas_nama ?? "",
+    nomorSk: skRow?.nomor_surat ?? "",
+    tanggalMulai: skRow?.verified_at ? formatKartuDate(skRow.verified_at) : "",
+    kaprodiNama,
+    kaprodiSignature,
+  };
+}
+
 async function generateAndStoreFinalKartuDocx(
   queryable,
   { kartuId, pengajuanJudulId, generatedByUserId },
@@ -254,8 +301,9 @@ async function generateAndStoreFinalKartuDocx(
   }
 
   const logs = await getKartuLogs(queryable, kartuId);
-  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs);
-  const fileName = `kartu-konsultasi-skripsi-${pengajuanJudulId}-${Date.now()}.docx`;
+  const extra = await fetchKartuExtra(queryable, kartuId, pengajuanJudulId);
+  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra);
+  const fileName = `kartu-penulisan-skripsi-${pengajuanJudulId}-${Date.now()}.docx`;
 
   await queryable.query(
     `UPDATE kartu_konsultasi_skripsi_file
@@ -1622,6 +1670,66 @@ exports.getDetailForKaprodi = async (req, res, next) => {
         stages: stagesWithDetail,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.previewKartuDocx = async (req, res, next) => {
+  try {
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const [kartuRows] = await db.query(
+      `SELECT * FROM kartu_konsultasi_skripsi WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    const kartu = kartuRows[0] ?? null;
+    if (!kartu) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "Consultation not found" });
+    }
+
+    let isAuthorized = false;
+    if (req.user.userType === "STUDENT") {
+      const npm = await getStudentNpm(req.user.id);
+      isAuthorized = Boolean(npm) && npm === kartu.npm;
+    } else if (req.user.userType === "LECTURER") {
+      const nidn = await getLecturerNidn(req.user.id);
+      if (nidn) {
+        isAuthorized =
+          nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn;
+        if (!isAuthorized && hasRole(req, "KAPRODI")) {
+          const kaprodiProgramStudiIds =
+            await getKaprodiProgramStudiIdsByNidn(nidn);
+          isAuthorized = kaprodiProgramStudiIds.includes(
+            Number(kartu.program_studi_id),
+          );
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const logs = await getKartuLogs(db, kartu.id);
+    const extra = await fetchKartuExtra(db, kartu.id, kartu.pengajuan_judul_id);
+    const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra);
+    const fileName = `kartu-penulisan-skripsi-${pengajuanJudulId}-preview.docx`;
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Content-Length", outputBuffer.length);
+    return res.send(outputBuffer);
   } catch (err) {
     next(err);
   }
