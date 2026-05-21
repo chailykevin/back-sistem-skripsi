@@ -1192,11 +1192,13 @@ exports.getLecturerStageDetail = async (req, res, next) => {
     }
 
     const [submissions] = await db.query(
-      `SELECT id, submission_no, file_name, submitted_by_user_id, submitted_at
-       FROM konsultasi_skripsi_submission
-       WHERE konsultasi_skripsi_stage_id = ?
-       ORDER BY submission_no DESC`,
-      [stageId],
+      `SELECT sub.id, sub.konsultasi_skripsi_stage_id, st.chapter_group, st.stage AS stage_name,
+              sub.submission_no, sub.file_name, sub.submitted_by_user_id, sub.submitted_at
+       FROM konsultasi_skripsi_submission sub
+       INNER JOIN konsultasi_skripsi_stage st ON st.id = sub.konsultasi_skripsi_stage_id
+       WHERE st.kartu_konsultasi_skripsi_id = ?
+       ORDER BY sub.submitted_at DESC`,
+      [row.kartu_id],
     );
 
     const [reviews] = await db.query(
