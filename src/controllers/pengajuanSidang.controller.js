@@ -154,6 +154,20 @@ exports.getPengajuanSidang = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Pengajuan Sidang tidak ditemukan" });
     }
 
+    const [[mahasiswaInfo]] = await db.query(
+      `SELECT
+         m.npm,
+         m.nama AS nama_mahasiswa,
+         m.sks,
+         ps.nama AS program_studi_nama,
+         ps.id AS program_studi_id
+       FROM mahasiswa m
+       INNER JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
+       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       LIMIT 1`,
+      [pengajuanJudulId],
+    );
+
     const [files] = await db.query(
       `SELECT id, file_type, file_name, mime_type, source, status, created_at
        FROM pengajuan_sidang_files
@@ -162,7 +176,7 @@ exports.getPengajuanSidang = async (req, res, next) => {
       [sidang.id],
     );
 
-    return res.json({ ok: true, data: { sidang, files } });
+    return res.json({ ok: true, data: { sidang, mahasiswa: mahasiswaInfo ?? null, files } });
   } catch (err) {
     next(err);
   }
@@ -482,37 +496,6 @@ exports.reviewFile = async (req, res, next) => {
       [status, fileRow.id],
     );
 
-    // Recalculate parent status
-    const [allFiles] = await conn.query(
-      `SELECT file_type, status FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
-      [sidang.id],
-    );
-    const hasNeedReupload = allFiles.some((f) => f.status === "NEED_REUPLOAD");
-
-    if (hasNeedReupload && sidang.status !== "NEED_REVISION") {
-      await conn.query(
-        `UPDATE pengajuan_sidang SET status = 'NEED_REVISION', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [sidang.id],
-      );
-      const [[studentRow]] = await conn.query(
-        `SELECT u.id FROM users u
-         INNER JOIN mahasiswa m ON m.npm = u.npm
-         INNER JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
-         WHERE u.is_active = 1
-         LIMIT 1`,
-        [pengajuanJudulId],
-      );
-      if (studentRow) {
-        await insertNotification(conn, studentRow.id, "SIDANG_NEED_REVISION",
-          "Sekretariat meminta Anda mengunggah ulang dokumen pengajuan sidang", "/student/pengajuan-sidang");
-      }
-    } else if (!hasNeedReupload && sidang.status === "NEED_REVISION") {
-      await conn.query(
-        `UPDATE pengajuan_sidang SET status = 'SUBMITTED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [sidang.id],
-      );
-    }
-
     await conn.commit();
     txStarted = false;
 
@@ -539,11 +522,11 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
     }
 
     const { action, catatanSekretariat } = req.body ?? {};
-    if (action !== "VERIFY" && action !== "REJECT") {
-      return res.status(400).json({ ok: false, message: "action harus 'VERIFY' atau 'REJECT'" });
+    if (action !== "VERIFY" && action !== "REJECT" && action !== "NEED_REVISION") {
+      return res.status(400).json({ ok: false, message: "action harus 'VERIFY', 'REJECT', atau 'NEED_REVISION'" });
     }
-    if (action === "REJECT" && (!catatanSekretariat || !String(catatanSekretariat).trim())) {
-      return res.status(400).json({ ok: false, message: "catatanSekretariat wajib diisi untuk REJECT" });
+    if ((action === "REJECT" || action === "NEED_REVISION") && (!catatanSekretariat || !String(catatanSekretariat).trim())) {
+      return res.status(400).json({ ok: false, message: "catatanSekretariat wajib diisi" });
     }
 
     await conn.beginTransaction();
@@ -565,6 +548,32 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
         ok: false,
         message: "Pengajuan Sidang harus berstatus SUBMITTED untuk difinalisasi",
       });
+    }
+
+    if (action === "NEED_REVISION") {
+      await conn.query(
+        `UPDATE pengajuan_sidang
+         SET status = 'NEED_REVISION',
+             catatan_sekretariat = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [String(catatanSekretariat).trim(), sidang.id],
+      );
+      const [[studentRow]] = await conn.query(
+        `SELECT u.id FROM users u
+         INNER JOIN mahasiswa m ON m.npm = u.npm
+         INNER JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
+         WHERE u.is_active = 1
+         LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (studentRow) {
+        await insertNotification(conn, studentRow.id, "SIDANG_NEED_REVISION",
+          "Sekretariat meminta Anda mengunggah ulang dokumen pengajuan sidang", "/student/pengajuan-sidang");
+      }
+      await conn.commit();
+      txStarted = false;
+      return res.json({ ok: true, message: "Pengajuan Sidang dikembalikan untuk revisi" });
     }
 
     if (action === "VERIFY") {
