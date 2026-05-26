@@ -11,4 +11,11 @@ router.get("/pengajuan-sidang/:pengajuanJudulId/files/:fileType", auth, c.getFil
 router.patch("/pengajuan-sidang/:pengajuanJudulId/files/:fileType/status", auth, c.reviewFile);
 router.patch("/pengajuan-sidang/:pengajuanJudulId/verify", auth, c.finalizePengajuanSidang);
 
+router.get("/kaprodi/pengajuan-sidang-kaprodi", auth, c.listKaprodiSubmissions);
+router.post("/pengajuan-sidang-kaprodi/:pengajuanJudulId/init", auth, c.initKaprodi);
+router.get("/pengajuan-sidang-kaprodi/:pengajuanJudulId", auth, c.getKaprodi);
+router.patch("/pengajuan-sidang-kaprodi/:pengajuanJudulId", auth, c.updateKaprodi);
+router.post("/pengajuan-sidang-kaprodi/:pengajuanJudulId/submit", auth, c.submitKaprodi);
+router.patch("/pengajuan-sidang-kaprodi/:pengajuanJudulId/review", auth, c.reviewKaprodi);
+
 module.exports = router;
