@@ -584,7 +584,9 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       );
       const fileMap = Object.fromEntries(fileRows.map((f) => [f.file_type, f.status]));
 
-      const unverified = REQUIRED_FILE_TYPES.filter((t) => fileMap[t] !== "VERIFIED");
+      const unverified = REQUIRED_FILE_TYPES.filter(
+        (t) => !SYSTEM_FILE_TYPES.includes(t) && fileMap[t] !== "VERIFIED",
+      );
 
       if (unverified.length > 0) {
         await conn.rollback(); txStarted = false;
