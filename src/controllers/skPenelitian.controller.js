@@ -199,13 +199,13 @@ async function generateSkDocuments(conn, sk, pengajuanJudulId) {
   const mimeDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
   await conn.query(
-    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SK_PENELITIAN'`,
+    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
     [sk.id],
   );
   await conn.query(
     `INSERT INTO pengajuan_sk_penelitian_files
        (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-     VALUES (?, 'SK_PENELITIAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+     VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
     [sk.id, `SK_Skripsi_${kartu.npm}.docx`, mimeDocx, skBase64],
   );
 
@@ -238,7 +238,7 @@ const VALID_FILE_TYPES = [
   "KARTU_KONSULTASI_OUTLINE",
   "FILE_OUTLINE",
   "HALAMAN_PERSETUJUAN",
-  "SK_PENELITIAN",
+  "SK_PENUNJUKAN_PEMBIMBING",
   "SURAT_KETERANGAN",
 ];
 

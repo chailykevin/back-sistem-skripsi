@@ -403,7 +403,7 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       `SELECT f.file_content, f.file_name, f.mime_type
        FROM pengajuan_sk_penelitian_files f
        INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SK_PENELITIAN'
+       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
        ORDER BY f.created_at DESC LIMIT 1`,
       [pengajuanJudulId],
     );

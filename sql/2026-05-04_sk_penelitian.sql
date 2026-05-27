@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS `pengajuan_sk_penelitian` (
 CREATE TABLE IF NOT EXISTS `pengajuan_sk_penelitian_files` (
   `id`                         bigint unsigned NOT NULL AUTO_INCREMENT,
   `pengajuan_sk_penelitian_id` bigint unsigned NOT NULL,
-  `file_type`                  ENUM('KRS','REKAP_NILAI','KARTU_KONSULTASI_OUTLINE','FILE_OUTLINE','HALAMAN_PERSETUJUAN','SK_PENELITIAN') NOT NULL,
+  `file_type`                  ENUM('KRS','REKAP_NILAI','KARTU_KONSULTASI_OUTLINE','FILE_OUTLINE','HALAMAN_PERSETUJUAN','SK_PENUNJUKAN_PEMBIMBING') NOT NULL,
   `file_name`                  varchar(255) NOT NULL,
   `mime_type`                  varchar(100) DEFAULT NULL,
   `file_content`               LONGTEXT NOT NULL,
