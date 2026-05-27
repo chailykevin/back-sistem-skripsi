@@ -1,5 +1,9 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const path = require("path");
+const { readFile } = require("fs/promises");
+const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const AdmZip = require("adm-zip");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -25,6 +29,255 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
   return rows
     .map((row) => Number(row.id))
     .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+const MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+const ANGKA_TERBILANG = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh"];
+
+function terbilang(n) {
+  const i = Number(n);
+  return ANGKA_TERBILANG[i] ?? String(i);
+}
+
+const BULAN_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+function formatTanggalIndonesia(date) {
+  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+function textPatch(value) {
+  return { type: PatchType.PARAGRAPH, children: [new TextRun(String(value ?? ""))] };
+}
+
+function decodeSignatureToBuffer(signatureValue) {
+  if (signatureValue == null) return null;
+  const raw = String(signatureValue).trim();
+  if (!raw) return null;
+  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    try {
+      const mimeType = dataUrlMatch[1].toLowerCase();
+      const type = mimeType === "jpeg" ? "jpg" : mimeType;
+      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
+    } catch (_) { return null; }
+  }
+  const normalized = raw.replace(/\s+/g, "");
+  const looksLikeBase64 = /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
+  if (looksLikeBase64) {
+    try {
+      const buffer = Buffer.from(normalized, "base64");
+      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
+      return { buffer, type };
+    } catch (_) { return null; }
+  }
+  return null;
+}
+
+function signatureImagePatch(signatureValue) {
+  const decoded = decodeSignatureToBuffer(signatureValue);
+  if (!decoded || decoded.buffer.length === 0) return textPatch("");
+  try {
+    return {
+      type: PatchType.PARAGRAPH,
+      children: [new ImageRun({ type: decoded.type, data: decoded.buffer, transformation: { width: 120, height: 50 } })],
+    };
+  } catch (_) { return textPatch(""); }
+}
+
+async function buildLembarPermohonanUjianBuffer({
+  todayDate, fakultas, namaMahasiswa, npm, ttl,
+  prodi, tahunMasuk, alamat, noHp, noWa,
+  statusPernikahan, judulSkripsi,
+  ujianCount, ujianCountString, ipk, sks,
+  ttdKaprodi, namaKaprodi, ttdMahasiswa,
+}) {
+  const templatePath = path.join(__dirname, "../templates/template_permohonan_ujian_skripsi.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    today_date:         textPatch(todayDate),
+    fakultas:           textPatch(fakultas),
+    nama_mahasiswa:     textPatch(namaMahasiswa),
+    npm:                textPatch(npm),
+    ttl:                textPatch(ttl),
+    prodi:              textPatch(prodi),
+    tahun_masuk:        textPatch(tahunMasuk),
+    alamat:             textPatch(alamat),
+    no_hp:              textPatch(noHp),
+    no_wa:              textPatch(noWa),
+    status:             textPatch(statusPernikahan),
+    judul_skripsi:      textPatch(judulSkripsi),
+    ujian_count:        textPatch(String(ujianCount)),
+    ujian_count_string: textPatch(ujianCountString),
+    ipk:                textPatch(String(ipk ?? "")),
+    sks:                textPatch(String(sks ?? "")),
+    ttd_kaprodi:        signatureImagePatch(ttdKaprodi),
+    nama_kaprodi:       textPatch(namaKaprodi),
+    ttd_mahasiswa:      signatureImagePatch(ttdMahasiswa),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
+}
+
+async function buildSuratPernyataanPerbaikanBuffer({
+  namaMahasiswa, npm, alamat, noHp, judulSkripsi,
+  fakultas, ttdKaprodi, namaKaprodi, prodi, ttdMahasiswa,
+}) {
+  const templatePath = path.join(__dirname, "../templates/template_pernyataan_perbaikan.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm:            textPatch(npm),
+    alamat:         textPatch(alamat),
+    no_hp:          textPatch(noHp),
+    judul_skripsi:  textPatch(judulSkripsi),
+    fakultas:       textPatch(fakultas),
+    ttd_kaprodi:    signatureImagePatch(ttdKaprodi),
+    nama_kaprodi:   textPatch(namaKaprodi),
+    prodi:          textPatch(prodi),
+    ttd_mahasiswa:  signatureImagePatch(ttdMahasiswa),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
+}
+
+async function buildSuratPernyataanKelengkapanBuffer({
+  prodi, fakultas, namaMahasiswa, npm, todayDate, ttdMahasiswa,
+}) {
+  const templatePath = path.join(__dirname, "../templates/template_pernyataan_kelengkapan_dan_nilai_matkul.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    prodi:          textPatch(prodi),
+    fakultas:       textPatch(fakultas),
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm:            textPatch(npm),
+    today_date:     textPatch(todayDate),
+    ttd_mahasiswa:  signatureImagePatch(ttdMahasiswa),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
+}
+
+function injectHighlight(xml, name, cellIndex) {
+  if (!name) return xml;
+  const normalize = (s) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  const targetNorm = normalize(name);
+
+  function highlightInXml(fragment) {
+    const runRe = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+    const segments = [];
+    let lastIndex = 0;
+    let m;
+    while ((m = runRe.exec(fragment)) !== null) {
+      segments.push({ type: "gap", text: fragment.slice(lastIndex, m.index) });
+      segments.push({ type: "run", text: m[0] });
+      lastIndex = m.index + m[0].length;
+    }
+    segments.push({ type: "gap", text: fragment.slice(lastIndex) });
+
+    const runs = segments.reduce((acc, seg, i) => {
+      if (seg.type === "run") acc.push(i);
+      return acc;
+    }, []);
+
+    function runText(segIndex) {
+      const tMatch = segments[segIndex].text.match(/<w:t(?:[^>]*)>([\s\S]*?)<\/w:t>/);
+      return tMatch ? tMatch[1] : "";
+    }
+
+    function addHighlightToRun(run) {
+      if (run.includes("<w:highlight")) return run;
+      if (run.includes("<w:rPr>")) {
+        return run.replace("</w:rPr>", '<w:highlight w:val="yellow"/></w:rPr>');
+      }
+      return run.replace(/(<w:t(?:[^>]*)>)/, '<w:rPr><w:highlight w:val="yellow"/></w:rPr>$1');
+    }
+
+    let i = 0;
+    while (i < runs.length) {
+      let acc = "";
+      let j = i;
+      while (j < runs.length) {
+        acc += runText(runs[j]).replace(/\s+/g, " ");
+        const accNorm = normalize(acc);
+        if (accNorm === targetNorm) {
+          for (let k = i; k <= j; k++) {
+            segments[runs[k]].text = addHighlightToRun(segments[runs[k]].text);
+          }
+          i = j + 1;
+          break;
+        }
+        if (accNorm.length >= targetNorm.length) {
+          i++;
+          break;
+        }
+        j++;
+      }
+      if (j >= runs.length) i++;
+    }
+
+    return segments.map((s) => s.text).join("");
+  }
+
+  if (cellIndex === undefined) return highlightInXml(xml);
+
+  return xml.replace(/(<w:tr\b[^>]*>)([\s\S]*?)(<\/w:tr>)/g, (_, open, rowContent, close) => {
+    const cells = [...rowContent.matchAll(/<w:tc\b[^>]*>/g)];
+    const totalCells = cells.length;
+    let targetIdx;
+    if (cellIndex === "UTAMA") {
+      targetIdx = totalCells === 5 ? 1 : -1;
+    } else if (cellIndex === "KEDUA") {
+      targetIdx = totalCells >= 4 ? totalCells - 1 : -1;
+    } else {
+      targetIdx = cellIndex;
+    }
+    if (targetIdx < 0) return open + rowContent + close;
+    let colCount = 0;
+    const processedRow = rowContent.replace(/(<w:tc\b[^>]*>)([\s\S]*?)(<\/w:tc>)/g, (__, tcOpen, cellContent, tcClose) => {
+      const idx = colCount++;
+      const content = idx === targetIdx ? highlightInXml(cellContent) : cellContent;
+      return tcOpen + content + tcClose;
+    });
+    return open + processedRow + close;
+  });
+}
+
+async function buildLembarUsulanPengujiBuffer({
+  prodi, fakultas, namaMahasiswa, npm,
+  namaDospem1, namaDospem2, judul, todayDate,
+  penguji1Nama, penguji2Nama, ttdMahasiswa, namaKaprodi,
+}) {
+  const templatePath = path.join(__dirname, "../templates/template_usulan_penguji.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    prodi:          textPatch(prodi),
+    fakultas:       textPatch(fakultas),
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm:            textPatch(npm),
+    nama_dospem1:   textPatch(namaDospem1),
+    nama_dospem2:   textPatch(namaDospem2),
+    judul:          textPatch(judul),
+    today_date:     textPatch(todayDate),
+    ttd_mahasiswa:  signatureImagePatch(ttdMahasiswa),
+    sidang_date:    textPatch(""),
+    sidang_time:    textPatch(""),
+    nama_penguji1:  textPatch(""),
+    nama_penguji2:  textPatch(""),
+    disposisi_date: textPatch(""),
+    nama_kaprodi:   textPatch(namaKaprodi),
+    ttd_kaprodi:    textPatch(""),
+  };
+  const patchedBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  const zip = new AdmZip(patchedBuffer);
+  const docEntry = zip.getEntry("word/document.xml");
+  if (docEntry) {
+    let xml = docEntry.getData().toString("utf8");
+    if (penguji1Nama) xml = injectHighlight(xml, penguji1Nama, "UTAMA");
+    if (penguji2Nama) xml = injectHighlight(xml, penguji2Nama, "KEDUA");
+    zip.updateFile("word/document.xml", Buffer.from(xml, "utf8"));
+  }
+  return zip.toBuffer();
 }
 
 const VALID_KAPRODI_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VALID", "REJECTED"];
@@ -75,8 +328,12 @@ const ALL_FILE_TYPES = [
   "SERTIFIKAT_POINT",
 ];
 
-// Auto-pulled by system on submit; mahasiswa cannot manually upload these
-const SYSTEM_FILE_TYPES = ["KARTU_KONSULTASI_SKRIPSI", "SK_PEMBIMBING"];
+// Auto-pulled by system; mahasiswa cannot manually upload these
+const SYSTEM_FILE_TYPES = [
+  "KARTU_KONSULTASI_SKRIPSI", "SK_PEMBIMBING",
+  "LEMBAR_PERMOHONAN_UJIAN", "SURAT_PERNYATAAN_PERBAIKAN",
+  "SURAT_PERNYATAAN_KELENGKAPAN", "LEMBAR_USULAN_PENGUJI",
+];
 
 const OPTIONAL_FILE_TYPES = [
   "DAFTAR_LAMPIRAN",
@@ -151,12 +408,16 @@ exports.initPengajuanSidang = async (req, res, next) => {
 
     // Block if there is already an active (non-terminal) sidang
     const [[activeRow]] = await db.query(
-      `SELECT id FROM pengajuan_sidang
+      `SELECT id, status, submitted_at FROM pengajuan_sidang
        WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
        LIMIT 1`,
       [pengajuanJudulId],
     );
     if (activeRow) {
+      // System auto-created a DRAFT when student submitted kaprodi form — reuse it
+      if (activeRow.status === "DRAFT" && !activeRow.submitted_at) {
+        return res.status(200).json({ ok: true, message: "Pengajuan Sidang sudah ada", data: { id: activeRow.id } });
+      }
       return res.status(409).json({ ok: false, message: "Masih ada Pengajuan Sidang yang aktif" });
     }
 
@@ -922,6 +1183,7 @@ exports.updateKaprodi = async (req, res, next) => {
 
     const {
       tempatLahir, tglLahir, alamat, noHp, noWa,
+      statusPernikahan,
       ujianKe, ipk, semuaMkLulus,
       penguji1Nama, penguji1Nidn, penguji2Nama, penguji2Nidn,
     } = req.body ?? {};
@@ -934,6 +1196,10 @@ exports.updateKaprodi = async (req, res, next) => {
     if (alamat !== undefined) { setClauses.push("alamat = ?"); params.push(String(alamat).trim() || null); }
     if (noHp !== undefined) { setClauses.push("no_hp = ?"); params.push(String(noHp).trim() || null); }
     if (noWa !== undefined) { setClauses.push("no_wa = ?"); params.push(String(noWa).trim() || null); }
+    if (statusPernikahan !== undefined) {
+      setClauses.push("status_pernikahan = ?");
+      params.push(statusPernikahan === "Belum Menikah" || statusPernikahan === "Sudah Menikah" ? statusPernikahan : null);
+    }
     if (ujianKe !== undefined) { setClauses.push("ujian_ke = ?"); params.push(Number(ujianKe) || null); }
     if (ipk !== undefined) { setClauses.push("ipk = ?"); params.push(ipk !== null && ipk !== "" ? Number(ipk) : null); }
     if (semuaMkLulus !== undefined) { setClauses.push("semua_mk_lulus = ?"); params.push(semuaMkLulus ? 1 : 0); }
@@ -1012,6 +1278,7 @@ exports.submitKaprodi = async (req, res, next) => {
     if (!kaprodi.penguji1_nidn) missingFields.push("penguji1Nidn");
     if (!kaprodi.penguji2_nama) missingFields.push("penguji2Nama");
     if (!kaprodi.penguji2_nidn) missingFields.push("penguji2Nidn");
+    if (!kaprodi.status_pernikahan) missingFields.push("statusPernikahan");
     if (missingFields.length > 0) {
       await conn.rollback(); txStarted = false;
       return res.status(400).json({ ok: false, message: `Field berikut belum diisi: ${missingFields.join(", ")}` });
@@ -1026,6 +1293,169 @@ exports.submitKaprodi = async (req, res, next) => {
        SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [kaprodi.id],
+    );
+
+    // Generate LEMBAR_PERMOHONAN_UJIAN
+    const [[docData]] = await conn.query(
+      `SELECT
+         m.npm, m.nama AS nama_mahasiswa, m.sks,
+         ps.nama AS prodi_nama,
+         f.nama AS fakultas_nama,
+         k.judul_skripsi,
+         k.pembimbing1_nama AS dospem1_nama,
+         k.pembimbing2_nama AS dospem2_nama,
+         u_kaprodi.signature_image AS kaprodi_sig,
+         d_kaprodi.nama AS nama_kaprodi,
+         u_mhs.signature_image AS mahasiswa_sig
+       FROM pengajuan_judul pj
+       INNER JOIN mahasiswa m ON m.npm = pj.npm
+       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_judul_id = pj.id
+       LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
+         AND u_kaprodi.is_active = 1
+         AND EXISTS (
+           SELECT 1 FROM user_roles ur2
+           INNER JOIN roles r2 ON r2.id = ur2.role_id
+           WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
+         )
+       LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
+       LEFT JOIN users u_mhs ON u_mhs.npm = m.npm AND u_mhs.is_active = 1
+       WHERE pj.id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+
+    const todayDate = formatTanggalIndonesia(new Date());
+    const tahunMasuk = docData?.npm ? "20" + String(docData.npm).substring(0, 2) : "";
+    const tglLahirFormatted = kaprodi.tgl_lahir ? formatTanggalIndonesia(new Date(kaprodi.tgl_lahir)) : "";
+    const ttl = `${kaprodi.tempat_lahir ?? ""}, ${tglLahirFormatted}`;
+    const ujianCount = kaprodi.ujian_ke ?? 1;
+    const ujianCountString = terbilang(ujianCount);
+    const namaKaprodi = docData?.nama_kaprodi ?? "";
+
+    const lembarBuffer = await buildLembarPermohonanUjianBuffer({
+      todayDate,
+      fakultas: docData?.fakultas_nama ?? "",
+      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+      npm: docData?.npm ?? npm,
+      ttl,
+      prodi: docData?.prodi_nama ?? "",
+      tahunMasuk,
+      alamat: kaprodi.alamat ?? "",
+      noHp: kaprodi.no_hp ?? "",
+      noWa: kaprodi.no_wa ?? "",
+      statusPernikahan: kaprodi.status_pernikahan ?? "",
+      judulSkripsi: docData?.judul_skripsi ?? "",
+      ujianCount,
+      ujianCountString,
+      ipk: kaprodi.ipk,
+      sks: docData?.sks,
+      ttdKaprodi: docData?.kaprodi_sig ?? null,
+      namaKaprodi,
+      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    });
+    const lembarBase64 = lembarBuffer.toString("base64");
+
+    // Auto-create pengajuan_sidang DRAFT if none exists, then upsert the file
+    let [[existingSidang]] = await conn.query(
+      `SELECT id FROM pengajuan_sidang
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       ORDER BY created_at DESC LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!existingSidang) {
+      const [ins] = await conn.query(
+        `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
+        [pengajuanJudulId],
+      );
+      existingSidang = { id: ins.insertId };
+    }
+
+    await conn.query(
+      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_PERMOHONAN_UJIAN'`,
+      [existingSidang.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sidang_files
+         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'LEMBAR_PERMOHONAN_UJIAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      [existingSidang.id, `Lembar_Permohonan_Ujian_${npm}.docx`, MIME_DOCX, lembarBase64],
+    );
+
+    // Generate SURAT_PERNYATAAN_PERBAIKAN
+    const perbaikanBuffer = await buildSuratPernyataanPerbaikanBuffer({
+      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+      npm: docData?.npm ?? npm,
+      alamat: kaprodi.alamat ?? "",
+      noHp: kaprodi.no_hp ?? "",
+      judulSkripsi: docData?.judul_skripsi ?? "",
+      fakultas: docData?.fakultas_nama ?? "",
+      ttdKaprodi: docData?.kaprodi_sig ?? null,
+      namaKaprodi,
+      prodi: docData?.prodi_nama ?? "",
+      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    });
+    const perbaikanBase64 = perbaikanBuffer.toString("base64");
+
+    await conn.query(
+      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PERBAIKAN'`,
+      [existingSidang.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sidang_files
+         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'SURAT_PERNYATAAN_PERBAIKAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      [existingSidang.id, `Surat_Pernyataan_Perbaikan_${npm}.docx`, MIME_DOCX, perbaikanBase64],
+    );
+
+    // Generate SURAT_PERNYATAAN_KELENGKAPAN
+    const kelengkapanBuffer = await buildSuratPernyataanKelengkapanBuffer({
+      prodi: docData?.prodi_nama ?? "",
+      fakultas: docData?.fakultas_nama ?? "",
+      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+      npm: docData?.npm ?? npm,
+      todayDate,
+      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    });
+    const kelengkapanBase64 = kelengkapanBuffer.toString("base64");
+
+    await conn.query(
+      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_KELENGKAPAN'`,
+      [existingSidang.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sidang_files
+         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'SURAT_PERNYATAAN_KELENGKAPAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      [existingSidang.id, `Surat_Pernyataan_Kelengkapan_${npm}.docx`, MIME_DOCX, kelengkapanBase64],
+    );
+
+    // Generate LEMBAR_USULAN_PENGUJI
+    const usulanBuffer = await buildLembarUsulanPengujiBuffer({
+      prodi: docData?.prodi_nama ?? "",
+      fakultas: docData?.fakultas_nama ?? "",
+      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+      npm: docData?.npm ?? npm,
+      namaDospem1: docData?.dospem1_nama ?? "",
+      namaDospem2: docData?.dospem2_nama ?? "",
+      judul: docData?.judul_skripsi ?? "",
+      todayDate,
+      penguji1Nama: kaprodi.penguji1_nama ?? null,
+      penguji2Nama: kaprodi.penguji2_nama ?? null,
+      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+      namaKaprodi,
+    });
+    const usulanBase64 = usulanBuffer.toString("base64");
+
+    await conn.query(
+      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_USULAN_PENGUJI'`,
+      [existingSidang.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sidang_files
+         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      [existingSidang.id, `Lembar_Usulan_Penguji_${npm}.docx`, MIME_DOCX, usulanBase64],
     );
 
     const [[mahasiswaRow]] = await conn.query(
