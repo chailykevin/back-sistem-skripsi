@@ -347,17 +347,23 @@ const OPTIONAL_FILE_TYPES = [
 
 const REQUIRED_FILE_TYPES = ALL_FILE_TYPES.filter((t) => !OPTIONAL_FILE_TYPES.includes(t));
 
-// File types that Kaprodi verifies (skripsi content + consultation docs)
+// File types that Kaprodi verifies (skripsi content + optional skripsi content + consultation docs)
 const KAPRODI_FILE_TYPES = [
   "JUDUL_LUAR", "JUDUL_DALAM", "PERSETUJUAN_UJIAN",
   "ABSTRAK", "KATA_PENGANTAR", "DAFTAR_ISI",
   "DAFTAR_TABEL", "DAFTAR_GAMBAR", "BAB_1_5",
   "DAFTAR_PUSTAKA", "RIWAYAT_HIDUP",
+  "DAFTAR_LAMPIRAN", "HALAMAN_LAMPIRAN", "INDEKS",
   "KARTU_KONSULTASI_SKRIPSI", "SK_PEMBIMBING",
 ];
 
-// Uploadable subset (excludes SYSTEM_FILE_TYPES which are auto-pulled later)
-const KAPRODI_REQUIRED_FILE_TYPES = KAPRODI_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
+// Optional skripsi content — uploadable at Kaprodi step but do NOT block the VALID gate
+const KAPRODI_OPTIONAL_FILE_TYPES = ["DAFTAR_LAMPIRAN", "HALAMAN_LAMPIRAN", "INDEKS"];
+
+// Must all be VERIFIED (kaprodi_status) before Kaprodi can mark VALID
+const KAPRODI_REQUIRED_FILE_TYPES = KAPRODI_FILE_TYPES.filter(
+  (t) => !SYSTEM_FILE_TYPES.includes(t) && !KAPRODI_OPTIONAL_FILE_TYPES.includes(t),
+);
 
 const VALID_SIDANG_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VERIFIED", "REJECTED"];
 const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
@@ -1069,6 +1075,8 @@ exports.listForSekretariat = async (req, res, next) => {
 // ─── Pengajuan Sidang Kaprodi ────────────────────────────────────────────────
 
 exports.initKaprodi = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
   try {
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({ ok: false, message: "Only students can initialize Pengajuan Sidang Kaprodi" });
@@ -1084,7 +1092,7 @@ exports.initKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const [[pjRow]] = await db.query(
+    const [[pjRow]] = await conn.query(
       `SELECT id FROM pengajuan_judul WHERE id = ? LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -1092,7 +1100,7 @@ exports.initKaprodi = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Pengajuan judul tidak ditemukan" });
     }
 
-    const [[skripsiRow]] = await db.query(
+    const [[skripsiRow]] = await conn.query(
       `SELECT id FROM skripsi WHERE pengajuan_judul_id = ? AND status = 'COMPLETED' LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -1100,7 +1108,7 @@ exports.initKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Konsultasi skripsi belum selesai" });
     }
 
-    const [[existing]] = await db.query(
+    const [[existing]] = await conn.query(
       `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -1108,14 +1116,37 @@ exports.initKaprodi = async (req, res, next) => {
       return res.status(409).json({ ok: false, message: "Pengajuan Sidang Kaprodi sudah dibuat" });
     }
 
-    const [ins] = await db.query(
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [ins] = await conn.query(
       `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
       [pengajuanJudulId],
     );
 
+    // Auto-create DRAFT pengajuan_sidang so the student can upload skripsi files immediately
+    const [[existingSidang]] = await conn.query(
+      `SELECT id FROM pengajuan_sidang
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!existingSidang) {
+      await conn.query(
+        `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
+        [pengajuanJudulId],
+      );
+    }
+
+    await conn.commit();
+    txStarted = false;
+
     return res.status(201).json({ ok: true, message: "Pengajuan Sidang Kaprodi dibuat", data: { id: ins.insertId } });
   } catch (err) {
+    try { if (txStarted) await conn.rollback(); } catch (_) {}
     next(err);
+  } finally {
+    conn.release();
   }
 };
 
@@ -1774,7 +1805,10 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
     const statusParam = req.query?.status;
     const filterByStatus = statusParam && VALID_KAPRODI_STATUSES.includes(statusParam);
 
-    const conditions = [`m.program_studi_id IN (${kaprodiProgramStudiIds.map(() => "?").join(",")})`];
+    const conditions = [
+      `m.program_studi_id IN (${kaprodiProgramStudiIds.map(() => "?").join(",")})`,
+      `psk.status != 'DRAFT'`,
+    ];
     const params = [...kaprodiProgramStudiIds];
 
     if (filterByStatus) {

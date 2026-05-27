@@ -1092,6 +1092,30 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           pengajuanJudulId: stage.pengajuan_judul_id,
           generatedByUserId: req.user.id,
         });
+
+        // Auto-init pengajuan_sidang_kaprodi + pengajuan_sidang DRAFT
+        const [[existingKaprodi]] = await conn.query(
+          `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
+          [stage.pengajuan_judul_id],
+        );
+        if (!existingKaprodi) {
+          await conn.query(
+            `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
+            [stage.pengajuan_judul_id],
+          );
+          const [[existingSidang]] = await conn.query(
+            `SELECT id FROM pengajuan_sidang
+             WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+             LIMIT 1`,
+            [stage.pengajuan_judul_id],
+          );
+          if (!existingSidang) {
+            await conn.query(
+              `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
+              [stage.pengajuan_judul_id],
+            );
+          }
+        }
       }
     }
 
