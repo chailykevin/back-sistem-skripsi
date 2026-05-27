@@ -1,0 +1,3 @@
+ALTER TABLE pengajuan_sidang_files
+  ADD COLUMN kaprodi_status ENUM('SUBMITTED','NEED_REUPLOAD','VERIFIED') NULL DEFAULT NULL
+  AFTER status;

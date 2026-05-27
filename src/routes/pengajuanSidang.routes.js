@@ -16,6 +16,7 @@ router.post("/pengajuan-sidang-kaprodi/:pengajuanJudulId/init", auth, c.initKapr
 router.get("/pengajuan-sidang-kaprodi/:pengajuanJudulId", auth, c.getKaprodi);
 router.patch("/pengajuan-sidang-kaprodi/:pengajuanJudulId", auth, c.updateKaprodi);
 router.post("/pengajuan-sidang-kaprodi/:pengajuanJudulId/submit", auth, c.submitKaprodi);
+router.patch("/pengajuan-sidang-kaprodi/:pengajuanJudulId/files/:fileType/status", auth, c.reviewFileKaprodi);
 router.patch("/pengajuan-sidang-kaprodi/:pengajuanJudulId/review", auth, c.reviewKaprodi);
 
 module.exports = router;
