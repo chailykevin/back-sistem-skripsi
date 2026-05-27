@@ -97,6 +97,24 @@ async function buildSkDocxBuffer({ nomorSurat, prodi, namaMahasiswa, npm, dospem
   return outputBuffer;
 }
 
+async function buildSuratPenyelesaianDocxBuffer({ namaMahasiswa, npm, alamat, noHp, judulSkripsi, ttdKaprodi, namaKaprodi, ttdMahasiswa, prodi }) {
+  const templatePath = path.join(__dirname, "../templates/template_penyelesaian_skripsi.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm: textPatch(npm),
+    alamat: textPatch(alamat),
+    no_hp: textPatch(noHp),
+    judul_skripsi: textPatch(judulSkripsi),
+    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
+    nama_kaprodi: textPatch(namaKaprodi),
+    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
+    prodi: textPatch(prodi),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
+}
+
 async function buildSuratKeteranganDocxBuffer({ namaMahasiswa, npm, programStudi, lokasi, judul }) {
   const templatePath = path.join(__dirname, "../templates/template_surat_keterangan.docx");
   const templateBuffer = await readFile(templatePath);
@@ -157,6 +175,23 @@ async function generateSkDocuments(conn, sk, pengajuanJudulId) {
   );
   if (!dekan) throw Object.assign(new Error("Dekan belum dikonfigurasi"), { status: 400 });
 
+  const [[kaprodi]] = await conn.query(
+    `SELECT u.signature_image, d.nama AS nama_kaprodi
+     FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     JOIN dosen d ON d.nidn = u.nidn
+     JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+     WHERE r.code = 'KAPRODI' AND ps.id = ?
+     LIMIT 1`,
+    [kartu.program_studi_id],
+  );
+
+  const [[mahasiswaUser]] = await conn.query(
+    `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
+    [kartu.npm],
+  );
+
   // Generate nomor_surat sequence (count SKs completed this month for same prodi)
   const now = new Date();
   const year = now.getFullYear();
@@ -209,6 +244,30 @@ async function generateSkDocuments(conn, sk, pengajuanJudulId) {
     [sk.id, `SK_Skripsi_${kartu.npm}.docx`, mimeDocx, skBase64],
   );
 
+  // Generate SURAT_PENYELESAIAN_SKRIPSI (always)
+  const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
+    namaMahasiswa: kartu.nama_mahasiswa,
+    npm: kartu.npm,
+    alamat: "",
+    noHp: "",
+    judulSkripsi: kartu.judul_skripsi,
+    ttdKaprodi: kaprodi?.signature_image ?? null,
+    namaKaprodi: kaprodi?.nama_kaprodi ?? "",
+    ttdMahasiswa: mahasiswaUser?.signature_image ?? null,
+    prodi: kartu.program_studi_nama,
+  });
+  const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
+  await conn.query(
+    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
+    [sk.id],
+  );
+  await conn.query(
+    `INSERT INTO pengajuan_sk_penelitian_files
+       (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+     VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+    [sk.id, `Surat_Penyelesaian_Skripsi_${kartu.npm}.docx`, mimeDocx, penyelesaianBase64],
+  );
+
   // Generate SURAT_KETERANGAN if needed
   if (pj.perlu_surat_pengantar) {
     const suratBuffer = await buildSuratKeteranganDocxBuffer({
@@ -240,6 +299,7 @@ const VALID_FILE_TYPES = [
   "HALAMAN_PERSETUJUAN",
   "SK_PENUNJUKAN_PEMBIMBING",
   "SURAT_KETERANGAN",
+  "SURAT_PENYELESAIAN_SKRIPSI",
 ];
 
 const VALID_SK_STATUSES = [
