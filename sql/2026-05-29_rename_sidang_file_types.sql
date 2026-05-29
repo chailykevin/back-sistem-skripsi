@@ -1,0 +1,111 @@
+-- Migration: 2026-05-29_rename_sidang_file_types.sql
+-- Renames file_type enum values in pengajuan_sidang_files:
+--   SK_PEMBIMBING            → SK_PENUNJUKAN_PEMBIMBING
+--   SURAT_KETERANGAN_PENELITIAN → SURAT_KETERANGAN
+
+-- Step 1: Add new values alongside the old ones so existing rows remain valid
+ALTER TABLE pengajuan_sidang_files
+  MODIFY COLUMN file_type ENUM(
+    'JUDUL_LUAR',
+    'JUDUL_DALAM',
+    'PERSETUJUAN_UJIAN',
+    'ABSTRAK',
+    'KATA_PENGANTAR',
+    'DAFTAR_ISI',
+    'DAFTAR_TABEL',
+    'DAFTAR_GAMBAR',
+    'DAFTAR_LAMPIRAN',
+    'BAB_1_5',
+    'DAFTAR_PUSTAKA',
+    'RIWAYAT_HIDUP',
+    'TIDAK_PLAGIAT',
+    'HALAMAN_LAMPIRAN',
+    'INDEKS',
+    'SURAT_KETERANGAN_PENELITIAN',
+    'SURAT_KETERANGAN',
+    'SURAT_PERNYATAAN_TIDAK_PLAGIAT',
+    'LEMBAR_USULAN_PENGUJI',
+    'LEMBAR_PERMOHONAN_UJIAN',
+    'PAS_FOTO',
+    'KTM',
+    'BUKTI_PEMBAYARAN',
+    'LEMBAR_KONSULTASI_JURNAL',
+    'KARTU_KONSULTASI_SKRIPSI',
+    'SK_PEMBIMBING',
+    'SK_PENUNJUKAN_PEMBIMBING',
+    'REKAP_NILAI',
+    'SURAT_KETERANGAN_PERUSAHAAN',
+    'SURAT_PERNYATAAN_PENYELESAIAN',
+    'SURAT_PERNYATAAN_PERBAIKAN',
+    'SURAT_PERNYATAAN_KELENGKAPAN',
+    'KHS_1',
+    'KHS_2',
+    'KHS_3',
+    'KHS_4',
+    'KHS_5',
+    'KHS_6',
+    'KHS_7',
+    'KHS_8',
+    'FOTOCOPY_KONVERSI',
+    'BUKTI_HADIR_SIDANG',
+    'KARTU_KONSULTASI_PA',
+    'KARTU_PRAKTIKUM',
+    'SERTIFIKAT_POINT'
+  ) NOT NULL;
+
+-- Step 2: Migrate existing rows to the new values
+UPDATE pengajuan_sidang_files
+  SET file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+  WHERE file_type = 'SK_PEMBIMBING';
+
+UPDATE pengajuan_sidang_files
+  SET file_type = 'SURAT_KETERANGAN'
+  WHERE file_type = 'SURAT_KETERANGAN_PENELITIAN';
+
+-- Step 3: Drop the old values from the ENUM now that no rows use them
+ALTER TABLE pengajuan_sidang_files
+  MODIFY COLUMN file_type ENUM(
+    'JUDUL_LUAR',
+    'JUDUL_DALAM',
+    'PERSETUJUAN_UJIAN',
+    'ABSTRAK',
+    'KATA_PENGANTAR',
+    'DAFTAR_ISI',
+    'DAFTAR_TABEL',
+    'DAFTAR_GAMBAR',
+    'DAFTAR_LAMPIRAN',
+    'BAB_1_5',
+    'DAFTAR_PUSTAKA',
+    'RIWAYAT_HIDUP',
+    'TIDAK_PLAGIAT',
+    'HALAMAN_LAMPIRAN',
+    'INDEKS',
+    'SURAT_KETERANGAN',
+    'SURAT_PERNYATAAN_TIDAK_PLAGIAT',
+    'LEMBAR_USULAN_PENGUJI',
+    'LEMBAR_PERMOHONAN_UJIAN',
+    'PAS_FOTO',
+    'KTM',
+    'BUKTI_PEMBAYARAN',
+    'LEMBAR_KONSULTASI_JURNAL',
+    'KARTU_KONSULTASI_SKRIPSI',
+    'SK_PENUNJUKAN_PEMBIMBING',
+    'REKAP_NILAI',
+    'SURAT_KETERANGAN_PERUSAHAAN',
+    'SURAT_PERNYATAAN_PENYELESAIAN',
+    'SURAT_PERNYATAAN_PERBAIKAN',
+    'SURAT_PERNYATAAN_KELENGKAPAN',
+    'KHS_1',
+    'KHS_2',
+    'KHS_3',
+    'KHS_4',
+    'KHS_5',
+    'KHS_6',
+    'KHS_7',
+    'KHS_8',
+    'FOTOCOPY_KONVERSI',
+    'BUKTI_HADIR_SIDANG',
+    'KARTU_KONSULTASI_PA',
+    'KARTU_PRAKTIKUM',
+    'SERTIFIKAT_POINT'
+  ) NOT NULL;

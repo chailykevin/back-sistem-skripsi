@@ -298,7 +298,7 @@ const ALL_FILE_TYPES = [
   "TIDAK_PLAGIAT",
   "HALAMAN_LAMPIRAN",
   "INDEKS",
-  "SURAT_KETERANGAN_PENELITIAN",
+  "SURAT_KETERANGAN",
   "SURAT_PERNYATAAN_TIDAK_PLAGIAT",
   "LEMBAR_USULAN_PENGUJI",
   "LEMBAR_PERMOHONAN_UJIAN",
@@ -307,7 +307,7 @@ const ALL_FILE_TYPES = [
   "BUKTI_PEMBAYARAN",
   "LEMBAR_KONSULTASI_JURNAL",
   "KARTU_KONSULTASI_SKRIPSI",
-  "SK_PEMBIMBING",
+  "SK_PENUNJUKAN_PEMBIMBING",
   "REKAP_NILAI",
   "SURAT_KETERANGAN_PERUSAHAAN",
   "SURAT_PERNYATAAN_PENYELESAIAN",
@@ -330,7 +330,7 @@ const ALL_FILE_TYPES = [
 
 // Auto-pulled by system; mahasiswa cannot manually upload these
 const SYSTEM_FILE_TYPES = [
-  "KARTU_KONSULTASI_SKRIPSI", "SK_PEMBIMBING",
+  "KARTU_KONSULTASI_SKRIPSI", "SK_PENUNJUKAN_PEMBIMBING",
   "LEMBAR_PERMOHONAN_UJIAN", "SURAT_PERNYATAAN_PERBAIKAN",
   "SURAT_PERNYATAAN_KELENGKAPAN", "LEMBAR_USULAN_PENGUJI",
 ];
@@ -354,7 +354,7 @@ const KAPRODI_FILE_TYPES = [
   "DAFTAR_TABEL", "DAFTAR_GAMBAR", "BAB_1_5",
   "DAFTAR_PUSTAKA", "RIWAYAT_HIDUP", "SURAT_PERNYATAAN_TIDAK_PLAGIAT",
   "DAFTAR_LAMPIRAN", "HALAMAN_LAMPIRAN", "INDEKS",
-  "KARTU_KONSULTASI_SKRIPSI", "SK_PEMBIMBING",
+  "KARTU_KONSULTASI_SKRIPSI", "SK_PENUNJUKAN_PEMBIMBING",
 ];
 
 // Optional skripsi content — uploadable at Kaprodi step but do NOT block the VALID gate
@@ -692,7 +692,7 @@ exports.submitPengajuanSidang = async (req, res, next) => {
         kartuSkripsiFile.file_content],
     );
 
-    // Auto-pull SK_PEMBIMBING from pengajuan_sk_penelitian_files
+    // Auto-pull SK_PENUNJUKAN_PEMBIMBING from pengajuan_sk_penelitian_files
     const [[skPembimbingRow]] = await conn.query(
       `SELECT f.file_content, f.file_name, f.mime_type
        FROM pengajuan_sk_penelitian_files f
@@ -707,13 +707,13 @@ exports.submitPengajuanSidang = async (req, res, next) => {
     }
 
     await conn.query(
-      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SK_PEMBIMBING'`,
+      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
       [sidang.id],
     );
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SK_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
       [sidang.id, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
     );
 
