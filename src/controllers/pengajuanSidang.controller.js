@@ -568,7 +568,8 @@ exports.getPengajuanSidang = async (req, res, next) => {
          m.nama AS nama_mahasiswa,
          m.sks,
          ps.nama AS program_studi_nama,
-         ps.id AS program_studi_id
+         ps.id AS program_studi_id,
+         pj.perlu_surat_pengantar
        FROM mahasiswa m
        INNER JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
