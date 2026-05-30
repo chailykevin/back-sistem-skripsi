@@ -308,7 +308,6 @@ const ALL_FILE_TYPES = [
   "KARTU_KONSULTASI_SKRIPSI",
   "SK_PENUNJUKAN_PEMBIMBING",
   "REKAP_NILAI",
-  "SURAT_KETERANGAN_PERUSAHAAN",
   "SURAT_PERNYATAAN_PENYELESAIAN",
   "SURAT_PERNYATAAN_PERBAIKAN",
   "SURAT_PERNYATAAN_KELENGKAPAN",
@@ -340,10 +339,13 @@ const OPTIONAL_FILE_TYPES = [
   "HALAMAN_LAMPIRAN",
   "INDEKS",
   "KHS_8",
-  "SURAT_KETERANGAN_PERUSAHAAN",
+  "SURAT_KETERANGAN",
   "FOTOCOPY_KONVERSI",
   "SERTIFIKAT_POINT",
 ];
+
+// Required only when pengajuan_judul.perlu_surat_pengantar = 1
+const CONDITIONALLY_REQUIRED_FILE_TYPES = ["SURAT_KETERANGAN"];
 
 const REQUIRED_FILE_TYPES = ALL_FILE_TYPES.filter((t) => !OPTIONAL_FILE_TYPES.includes(t));
 
@@ -737,6 +739,12 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       });
     }
 
+    const [[pjRow]] = await conn.query(
+      `SELECT perlu_surat_pengantar FROM pengajuan_judul WHERE id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
+
     // Validate all required files are present (uploaded by student)
     const [existingFiles] = await conn.query(
       `SELECT file_type FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
@@ -752,6 +760,14 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: `File berikut belum diunggah: ${missingUploads.join(", ")}`,
+      });
+    }
+
+    if (perluSuratKeterangan && !existingTypes.has("SURAT_KETERANGAN")) {
+      await conn.rollback(); txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "File SURAT_KETERANGAN belum diunggah",
       });
     }
 
@@ -938,6 +954,12 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
     }
 
     if (action === "VERIFY") {
+      const [[pjRow]] = await conn.query(
+        `SELECT perlu_surat_pengantar FROM pengajuan_judul WHERE id = ? LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
+
       // All required files must be VERIFIED
       const [fileRows] = await conn.query(
         `SELECT file_type, status FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
@@ -954,6 +976,14 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
         return res.status(400).json({
           ok: false,
           message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
+        });
+      }
+
+      if (perluSuratKeterangan && fileMap["SURAT_KETERANGAN"] !== "VERIFIED") {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: "File SURAT_KETERANGAN belum diverifikasi",
         });
       }
 
