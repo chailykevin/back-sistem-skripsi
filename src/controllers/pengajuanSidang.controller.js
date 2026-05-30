@@ -332,6 +332,7 @@ const SYSTEM_FILE_TYPES = [
   "KARTU_KONSULTASI_SKRIPSI", "SK_PENUNJUKAN_PEMBIMBING",
   "LEMBAR_PERMOHONAN_UJIAN", "SURAT_PERNYATAAN_PERBAIKAN",
   "SURAT_PERNYATAAN_KELENGKAPAN", "LEMBAR_USULAN_PENGUJI",
+  "SURAT_PERNYATAAN_PENYELESAIAN",
 ];
 
 const OPTIONAL_FILE_TYPES = [
@@ -509,6 +510,28 @@ exports.initPengajuanSidang = async (req, res, next) => {
        VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
       [sidangId, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
     );
+
+    // Auto-pull SURAT_PERNYATAAN_PENYELESAIAN
+    const [[suratPenyelesaianRow]] = await conn.query(
+      `SELECT f.file_content, f.file_name, f.mime_type
+       FROM pengajuan_sk_penelitian_files f
+       INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
+       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+       ORDER BY f.created_at DESC LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (suratPenyelesaianRow) {
+      await conn.query(
+        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+        [sidangId],
+      );
+      await conn.query(
+        `INSERT INTO pengajuan_sidang_files
+           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+        [sidangId, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
+      );
+    }
 
     await conn.commit();
     txStarted = false;
@@ -1199,6 +1222,28 @@ exports.initKaprodi = async (req, res, next) => {
            (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
          VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
         [existingSidang.id, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
+      );
+    }
+
+    // Auto-pull SURAT_PERNYATAAN_PENYELESAIAN
+    const [[suratPenyelesaianRow]] = await conn.query(
+      `SELECT f.file_content, f.file_name, f.mime_type
+       FROM pengajuan_sk_penelitian_files f
+       INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
+       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+       ORDER BY f.created_at DESC LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (suratPenyelesaianRow) {
+      await conn.query(
+        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+        [existingSidang.id],
+      );
+      await conn.query(
+        `INSERT INTO pengajuan_sidang_files
+           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+        [existingSidang.id, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
       );
     }
 
