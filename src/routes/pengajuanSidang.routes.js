@@ -58,5 +58,17 @@ router.patch(
   auth,
   c.reviewKaprodi,
 );
+router.patch(
+  "/pengajuan-sidang-kaprodi/:pengajuanJudulId/disposisi",
+  auth,
+  c.updateDisposisi,
+);
+router.post(
+  "/pengajuan-sidang-kaprodi/:pengajuanJudulId/disposisi/submit",
+  auth,
+  c.submitDisposisi,
+);
+
+router.get("/sekretariat/disposisi-sidang", auth, c.listDisposisiForSekretariat);
 
 module.exports = router;
