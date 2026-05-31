@@ -318,7 +318,7 @@ async function buildLembarUsulanPengujiBufferFull({
   return zip.toBuffer();
 }
 
-const VALID_KAPRODI_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VALID", "REJECTED", "DISPOSISI_SENT"];
+const VALID_KAPRODI_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VALID", "REJECTED", "DISPOSISI_SENT", "COMPLETED"];
 
 const ALL_FILE_TYPES = [
   "JUDUL_LUAR",
@@ -362,6 +362,7 @@ const ALL_FILE_TYPES = [
   "KARTU_KONSULTASI_PA",
   "KARTU_PRAKTIKUM",
   "SERTIFIKAT_POINT",
+  "SURAT_UNDANGAN_SIDANG",
 ];
 
 // Auto-pulled by system; mahasiswa cannot manually upload these
@@ -369,7 +370,7 @@ const SYSTEM_FILE_TYPES = [
   "KARTU_KONSULTASI_SKRIPSI", "SK_PENUNJUKAN_PEMBIMBING",
   "LEMBAR_PERMOHONAN_UJIAN", "SURAT_PERNYATAAN_PERBAIKAN",
   "SURAT_PERNYATAAN_KELENGKAPAN", "LEMBAR_USULAN_PENGUJI",
-  "SURAT_PERNYATAAN_PENYELESAIAN",
+  "SURAT_PERNYATAAN_PENYELESAIAN", "SURAT_UNDANGAN_SIDANG",
 ];
 
 const OPTIONAL_FILE_TYPES = [
@@ -405,7 +406,7 @@ const KAPRODI_REQUIRED_FILE_TYPES = KAPRODI_FILE_TYPES.filter(
   (t) => !SYSTEM_FILE_TYPES.includes(t) && !KAPRODI_OPTIONAL_FILE_TYPES.includes(t),
 );
 
-const VALID_SIDANG_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VERIFIED", "REJECTED"];
+const VALID_SIDANG_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VERIFIED", "WAITING_FOR_DISPOSISI", "WAITING_FOR_SURAT", "COMPLETED", "REJECTED"];
 const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
 
 // Returns the active (non-terminal) sidang or the most recent one
@@ -414,7 +415,7 @@ async function getActiveSidang(conn, pengajuanJudulId) {
     `SELECT * FROM pengajuan_sidang
      WHERE pengajuan_judul_id = ?
      ORDER BY
-       CASE WHEN status NOT IN ('VERIFIED','REJECTED') THEN 0 ELSE 1 END ASC,
+       CASE WHEN status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED') THEN 0 ELSE 1 END ASC,
        created_at DESC
      LIMIT 1`,
     [pengajuanJudulId],
@@ -469,7 +470,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
     // Block if there is already an active (non-terminal) sidang
     const [[activeRow]] = await conn.query(
       `SELECT id, status, submitted_at FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -762,7 +763,7 @@ exports.submitPengajuanSidang = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
       [pengajuanJudulId],
     );
@@ -882,7 +883,7 @@ exports.reviewFile = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
       [pengajuanJudulId],
     );
@@ -950,7 +951,7 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
       [pengajuanJudulId],
     );
@@ -1028,7 +1029,7 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
 
       await conn.query(
         `UPDATE pengajuan_sidang
-         SET status = 'VERIFIED',
+         SET status = 'WAITING_FOR_DISPOSISI',
              catatan_sekretariat = ?,
              verified_by_user_id = ?,
              verified_at = CURRENT_TIMESTAMP,
@@ -1047,8 +1048,8 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
         [pengajuanJudulId],
       );
       if (studentRow) {
-        await insertNotification(conn, studentRow.id, "SIDANG_VERIFIED",
-          "Pengajuan Sidang Skripsi Anda telah diverifikasi", "/student/pengajuan-sidang");
+        await insertNotification(conn, studentRow.id, "SIDANG_WAITING_FOR_DISPOSISI",
+          "Dokumen pengajuan sidang telah diverifikasi. Menunggu disposisi dari Kaprodi.", "/student/pengajuan-sidang");
       }
 
       await conn.commit();
@@ -1234,7 +1235,7 @@ exports.initKaprodi = async (req, res, next) => {
     // Auto-create DRAFT pengajuan_sidang and attach system files immediately
     let [[existingSidang]] = await conn.query(
       `SELECT id FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -1609,7 +1610,7 @@ exports.submitKaprodi = async (req, res, next) => {
     // Auto-create pengajuan_sidang DRAFT if none exists, then upsert the file
     let [[existingSidang]] = await conn.query(
       `SELECT id FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -2157,11 +2158,11 @@ exports.submitDisposisi = async (req, res, next) => {
     }
 
     const sidang = await getActiveSidang(conn, pengajuanJudulId);
-    if (!sidang || sidang.status !== "VERIFIED") {
+    if (!sidang || !["VERIFIED", "WAITING_FOR_DISPOSISI"].includes(sidang.status)) {
       await conn.rollback(); txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: "Pengajuan Sidang harus berstatus VERIFIED sebelum mengirim disposisi",
+        message: "Pengajuan Sidang harus berstatus WAITING_FOR_DISPOSISI sebelum mengirim disposisi",
       });
     }
 
@@ -2243,13 +2244,38 @@ exports.submitDisposisi = async (req, res, next) => {
       [kaprodi.id],
     );
 
+    await conn.query(
+      `UPDATE pengajuan_sidang
+       SET status = 'WAITING_FOR_SURAT', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [sidang.id],
+    );
+
+    const namaMahasiswa = docData?.nama_mahasiswa ?? npm;
+
+    // Notify mahasiswa that schedule has been set and surat is pending
+    const [[studentRow]] = await conn.query(
+      `SELECT u.id FROM users u
+       INNER JOIN mahasiswa m ON m.npm = u.npm
+       INNER JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
+       WHERE u.is_active = 1
+       LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (studentRow) {
+      await insertNotification(
+        conn, studentRow.id, "SIDANG_DISPOSISI_SUBMITTED",
+        "Kaprodi telah mengisi jadwal sidang. Menunggu surat undangan dari Sekretariat.",
+        "/student/pengajuan-sidang",
+      );
+    }
+
     const [sekRows] = await conn.query(
       `SELECT u.id FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
        WHERE r.code = 'SEKRETARIAT'`,
     );
-    const namaMahasiswa = docData?.nama_mahasiswa ?? npm;
     for (const sek of sekRows) {
       await insertNotification(
         conn, sek.id, "DISPOSISI_SIDANG_SENT",
@@ -2326,7 +2352,7 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
        LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_judul_id = pj.id
        LEFT JOIN pengajuan_sidang ps2 ON ps2.pengajuan_judul_id = psk.pengajuan_judul_id
-         AND ps2.status = 'VERIFIED'
+         AND ps2.status IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED')
        WHERE ${conditions.join(" AND ")}
        ORDER BY psk.disposisi_submitted_at DESC, psk.reviewed_at DESC`,
       params,
@@ -2335,5 +2361,108 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
     return res.json({ ok: true, data: rows });
   } catch (err) {
     next(err);
+  }
+};
+
+exports.generateSuratUndangan = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
+  try {
+    if (!req.user.hasRole("SEKRETARIAT")) {
+      return res.status(403).json({ ok: false, message: "Only sekretariat can generate surat undangan" });
+    }
+
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [[sidang]] = await conn.query(
+      `SELECT * FROM pengajuan_sidang
+       WHERE pengajuan_judul_id = ?
+       ORDER BY
+         CASE WHEN status = 'WAITING_FOR_SURAT' THEN 0 ELSE 1 END ASC,
+         created_at DESC
+       LIMIT 1 FOR UPDATE`,
+      [pengajuanJudulId],
+    );
+    if (!sidang) {
+      await conn.rollback(); txStarted = false;
+      return res.status(404).json({ ok: false, message: "Pengajuan Sidang tidak ditemukan" });
+    }
+    if (sidang.status !== "WAITING_FOR_SURAT") {
+      await conn.rollback(); txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan Sidang harus berstatus WAITING_FOR_SURAT untuk menghasilkan surat undangan",
+      });
+    }
+
+    // TODO: generate surat undangan sidang from template once template is available
+    // const templatePath = path.join(__dirname, "../templates/template_surat_undangan_sidang.docx");
+    // const templateBuffer = await readFile(templatePath);
+    // const patches = { ... };
+    // const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+    // const fileBase64 = outputBuffer.toString("base64");
+
+    const [[pjRow]] = await conn.query(
+      `SELECT npm FROM pengajuan_judul WHERE id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    const npm = pjRow?.npm ?? "";
+
+    await conn.query(
+      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_UNDANGAN_SIDANG'`,
+      [sidang.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sidang_files
+         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'SURAT_UNDANGAN_SIDANG', ?, ?, '', 'SYSTEM', 'VERIFIED')`,
+      [sidang.id, `Surat_Undangan_Sidang_${npm}.docx`, MIME_DOCX],
+    );
+
+    await conn.query(
+      `UPDATE pengajuan_sidang
+       SET status = 'COMPLETED', verified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [sidang.id],
+    );
+
+    await conn.query(
+      `UPDATE pengajuan_sidang_kaprodi
+       SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP
+       WHERE pengajuan_judul_id = ?`,
+      [pengajuanJudulId],
+    );
+
+    const [[studentRow]] = await conn.query(
+      `SELECT u.id FROM users u
+       INNER JOIN mahasiswa m ON m.npm = u.npm
+       INNER JOIN pengajuan_judul pj ON pj.npm = m.npm AND pj.id = ?
+       WHERE u.is_active = 1
+       LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (studentRow) {
+      await insertNotification(
+        conn, studentRow.id, "SIDANG_COMPLETED",
+        "Surat undangan sidang telah dikirim. Pengajuan sidang selesai.",
+        "/student/pengajuan-sidang",
+      );
+    }
+
+    await conn.commit();
+    txStarted = false;
+
+    return res.json({ ok: true, data: { status: "COMPLETED" } });
+  } catch (err) {
+    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    next(err);
+  } finally {
+    conn.release();
   }
 };

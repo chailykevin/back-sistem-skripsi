@@ -30,6 +30,11 @@ router.patch(
   auth,
   c.finalizePengajuanSidang,
 );
+router.patch(
+  "/pengajuan-sidang/:pengajuanJudulId/generate-surat-undangan",
+  auth,
+  c.generateSuratUndangan,
+);
 
 router.get("/kaprodi/pengajuan-sidang-kaprodi", auth, c.listKaprodiSubmissions);
 router.post(
