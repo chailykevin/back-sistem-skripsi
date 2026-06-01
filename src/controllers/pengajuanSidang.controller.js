@@ -524,7 +524,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [sidangId, kartuSkripsiFile.file_name, MIME_DOCX, kartuSkripsiFile.file_content],
     );
 
@@ -548,7 +548,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [sidangId, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
     );
 
@@ -569,7 +569,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
       await conn.query(
         `INSERT INTO pengajuan_sidang_files
            (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
         [sidangId, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
       );
     }
@@ -1267,7 +1267,7 @@ exports.initKaprodi = async (req, res, next) => {
         await conn.query(
           `INSERT INTO pengajuan_sidang_files
              (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-           VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+           VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
           [existingSidang.id, kartuSkripsiFile.file_name, MIME_DOCX, kartuSkripsiFile.file_content],
         );
       }
@@ -1290,7 +1290,7 @@ exports.initKaprodi = async (req, res, next) => {
       await conn.query(
         `INSERT INTO pengajuan_sidang_files
            (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+         VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
         [existingSidang.id, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
       );
     }
@@ -1312,7 +1312,7 @@ exports.initKaprodi = async (req, res, next) => {
       await conn.query(
         `INSERT INTO pengajuan_sidang_files
            (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
         [existingSidang.id, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
       );
     }
@@ -1629,7 +1629,7 @@ exports.submitKaprodi = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'LEMBAR_PERMOHONAN_UJIAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'LEMBAR_PERMOHONAN_UJIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [existingSidang.id, `Lembar_Permohonan_Ujian_${npm}.docx`, MIME_DOCX, lembarBase64],
     );
 
@@ -1655,7 +1655,7 @@ exports.submitKaprodi = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SURAT_PERNYATAAN_PERBAIKAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'SURAT_PERNYATAAN_PERBAIKAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [existingSidang.id, `Surat_Pernyataan_Perbaikan_${npm}.docx`, MIME_DOCX, perbaikanBase64],
     );
 
@@ -1677,7 +1677,7 @@ exports.submitKaprodi = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SURAT_PERNYATAAN_KELENGKAPAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'SURAT_PERNYATAAN_KELENGKAPAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [existingSidang.id, `Surat_Pernyataan_Kelengkapan_${npm}.docx`, MIME_DOCX, kelengkapanBase64],
     );
 
@@ -1705,7 +1705,7 @@ exports.submitKaprodi = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [existingSidang.id, `Lembar_Usulan_Penguji_${npm}.docx`, MIME_DOCX, usulanBase64],
     );
 
@@ -2233,7 +2233,7 @@ exports.submitDisposisi = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+       VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [sidang.id, `Lembar_Usulan_Penguji_${npm}.docx`, MIME_DOCX, usulanBase64],
     );
 
