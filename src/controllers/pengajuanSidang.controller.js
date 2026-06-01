@@ -1,5 +1,6 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const { sendSuratUndangan } = require("../utils/email");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -316,6 +317,40 @@ async function buildLembarUsulanPengujiBufferFull({
     zip.updateFile("word/document.xml", Buffer.from(xml, "utf8"));
   }
   return zip.toBuffer();
+}
+
+async function buildSuratUndanganBuffer({
+  nomorSurat, lampiran, namaPembimbing1, namaPembimbing2,
+  namaPenguji1, namaPenguji2, tanggal, fakultas,
+  nomorSk, tanggalSk, namaMahasiswa, npm, prodi,
+  judulSkripsi, sidangDate, sidangTime, tempatSidang,
+  ttdKaprodi, namaKaprodi,
+}) {
+  const templatePath = path.join(__dirname, "../templates/template_surat_undangan_sidang.docx");
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    nomor_surat:      textPatch(nomorSurat ?? ""),
+    lampiran:         textPatch(lampiran ?? "-"),
+    nama_pembimbing1: textPatch(namaPembimbing1 ?? ""),
+    nama_pembimbing2: textPatch(namaPembimbing2 ?? ""),
+    nama_penguji1:    textPatch(namaPenguji1 ?? ""),
+    nama_penguji2:    textPatch(namaPenguji2 ?? ""),
+    tanggal:          textPatch(tanggal ?? ""),
+    fakultas:         textPatch(fakultas ?? ""),
+    nomor_sk:         textPatch(nomorSk ?? ""),
+    tanggal_sk:       textPatch(tanggalSk ?? ""),
+    nama_mahasiswa:   textPatch(namaMahasiswa ?? ""),
+    npm:              textPatch(npm ?? ""),
+    prodi:            textPatch(prodi ?? ""),
+    judul_skripsi:    textPatch(judulSkripsi ?? ""),
+    sidang_date:      textPatch(sidangDate ?? ""),
+    sidang_time:      textPatch(sidangTime ?? ""),
+    tempat_sidang:    textPatch(tempatSidang ?? ""),
+    ttd_kaprodi:      signatureImagePatch(ttdKaprodi),
+    nama_kaprodi:     textPatch(namaKaprodi ?? ""),
+  };
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer;
 }
 
 const VALID_KAPRODI_STATUSES = ["DRAFT", "SUBMITTED", "NEED_REVISION", "VALID", "REJECTED", "DISPOSISI_SENT", "COMPLETED"];
@@ -2401,18 +2436,98 @@ exports.generateSuratUndangan = async (req, res, next) => {
       });
     }
 
-    // TODO: generate surat undangan sidang from template once template is available
-    // const templatePath = path.join(__dirname, "../templates/template_surat_undangan_sidang.docx");
-    // const templateBuffer = await readFile(templatePath);
-    // const patches = { ... };
-    // const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
-    // const fileBase64 = outputBuffer.toString("base64");
-
-    const [[pjRow]] = await conn.query(
-      `SELECT npm FROM pengajuan_judul WHERE id = ? LIMIT 1`,
+    // Gather all data needed for the surat undangan template
+    const [[dataRow]] = await conn.query(
+      `SELECT
+         pj.npm,
+         m.nama AS nama_mahasiswa,
+         m.email AS mahasiswa_email,
+         ps.nama AS prodi_nama,
+         ps.kaprodi_nidn,
+         f.nama AS fakultas_nama,
+         sk.judul AS judul_skripsi,
+         kko.pembimbing1_nama, kko.pembimbing1_nidn,
+         kko.pembimbing2_nama, kko.pembimbing2_nidn,
+         psk.nomor_surat, psk.verified_at AS sk_verified_at,
+         psk_k.penguji1_nama, psk_k.penguji1_nidn,
+         psk_k.penguji2_nama, psk_k.penguji2_nidn,
+         psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang
+       FROM pengajuan_judul pj
+       JOIN mahasiswa m ON m.npm = pj.npm
+       JOIN program_studi ps ON ps.id = m.program_studi_id
+       JOIN fakultas f ON f.id = ps.fakultas_id
+       LEFT JOIN skripsi sk ON sk.pengajuan_judul_id = pj.id
+       LEFT JOIN kartu_konsultasi_outline kko ON kko.pengajuan_judul_id = pj.id
+       LEFT JOIN pengajuan_sk_penelitian psk ON psk.pengajuan_judul_id = pj.id
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_judul_id = pj.id
+       WHERE pj.id = ?
+       LIMIT 1`,
       [pengajuanJudulId],
     );
-    const npm = pjRow?.npm ?? "";
+
+    const npm = dataRow?.npm ?? "";
+
+    // Kaprodi signature + name
+    const kaprodiNidn = dataRow?.kaprodi_nidn ?? null;
+    const [[kaprodiUserRow]] = kaprodiNidn
+      ? await conn.query(
+          `SELECT u.signature_image FROM users u WHERE u.nidn = ? AND u.is_active = 1 ORDER BY u.id DESC LIMIT 1`,
+          [kaprodiNidn],
+        )
+      : [[null]];
+    const [[kaprodiDosenRow]] = kaprodiNidn
+      ? await conn.query(`SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`, [kaprodiNidn])
+      : [[null]];
+
+    // Dosen emails for pembimbing and penguji
+    async function getDosenEmail(nidn) {
+      if (!nidn) return null;
+      const [[row]] = await conn.query(`SELECT email FROM dosen WHERE nidn = ? LIMIT 1`, [nidn]);
+      return row?.email ?? null;
+    }
+
+    const [pembimbing1Email, pembimbing2Email, penguji1Email, penguji2Email] = await Promise.all([
+      getDosenEmail(dataRow?.pembimbing1_nidn),
+      getDosenEmail(dataRow?.pembimbing2_nidn),
+      getDosenEmail(dataRow?.penguji1_nidn),
+      getDosenEmail(dataRow?.penguji2_nidn),
+    ]);
+
+    // Format dates
+    const today = formatTanggalIndonesia(new Date());
+    const tanggalSk = dataRow?.sk_verified_at
+      ? formatTanggalIndonesia(new Date(dataRow.sk_verified_at))
+      : "";
+    const sidangDate = dataRow?.tanggal_sidang
+      ? formatTanggalIndonesia(new Date(dataRow.tanggal_sidang))
+      : "";
+    const sidangTime = dataRow?.waktu_sidang
+      ? String(dataRow.waktu_sidang).substring(0, 5)
+      : "";
+
+    const suratBuffer = await buildSuratUndanganBuffer({
+      nomorSurat:      dataRow?.nomor_surat ?? "",
+      lampiran:        "-",
+      namaPembimbing1: dataRow?.pembimbing1_nama ?? "",
+      namaPembimbing2: dataRow?.pembimbing2_nama ?? "",
+      namaPenguji1:    dataRow?.penguji1_nama ?? "",
+      namaPenguji2:    dataRow?.penguji2_nama ?? "",
+      tanggal:         today,
+      fakultas:        dataRow?.fakultas_nama ?? "",
+      nomorSk:         dataRow?.nomor_surat ?? "",
+      tanggalSk,
+      namaMahasiswa:   dataRow?.nama_mahasiswa ?? "",
+      npm,
+      prodi:           dataRow?.prodi_nama ?? "",
+      judulSkripsi:    dataRow?.judul_skripsi ?? "",
+      sidangDate,
+      sidangTime,
+      tempatSidang:    dataRow?.tempat_sidang ?? "",
+      ttdKaprodi:      kaprodiUserRow?.signature_image ?? null,
+      namaKaprodi:     kaprodiDosenRow?.nama ?? "",
+    });
+
+    const fileBase64 = suratBuffer.toString("base64");
 
     await conn.query(
       `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_UNDANGAN_SIDANG'`,
@@ -2421,8 +2536,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SURAT_UNDANGAN_SIDANG', ?, ?, '', 'SYSTEM', 'VERIFIED')`,
-      [sidang.id, `Surat_Undangan_Sidang_${npm}.docx`, MIME_DOCX],
+       VALUES (?, 'SURAT_UNDANGAN_SIDANG', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+      [sidang.id, `Surat_Undangan_Sidang_${npm}.docx`, MIME_DOCX, fileBase64],
     );
 
     await conn.query(
@@ -2457,6 +2572,30 @@ exports.generateSuratUndangan = async (req, res, next) => {
 
     await conn.commit();
     txStarted = false;
+
+    // Best-effort email dispatch after commit — errors are logged but do not fail the response
+    const recipients = [
+      pembimbing1Email,
+      pembimbing2Email,
+      penguji1Email,
+      penguji2Email,
+      dataRow?.mahasiswa_email ?? null,
+    ].filter(Boolean);
+
+    if (recipients.length > 0) {
+      sendSuratUndangan({
+        recipients,
+        suratBuffer,
+        npm,
+        namaMahasiswa: dataRow?.nama_mahasiswa ?? "",
+        sidangDate,
+        sidangTime,
+        tempat: dataRow?.tempat_sidang ?? "",
+        judulSkripsi: dataRow?.judul_skripsi ?? "",
+      }).catch((err) => {
+        console.error("[generateSuratUndangan] email dispatch failed:", err?.message ?? err);
+      });
+    }
 
     return res.json({ ok: true, data: { status: "COMPLETED" } });
   } catch (err) {

@@ -1,0 +1,1 @@
+ALTER TABLE mahasiswa ADD COLUMN email VARCHAR(255) NULL AFTER nama;

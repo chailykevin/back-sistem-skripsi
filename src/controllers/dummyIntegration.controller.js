@@ -9,6 +9,7 @@ const PREDEFINED_MAHASISWA = [
     username: "22412890",
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "22412890@student.example.com",
   },
   {
     npm: "22421562",
@@ -16,6 +17,7 @@ const PREDEFINED_MAHASISWA = [
     username: "22421562",
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "chailykevin@gmail.com",
   },
   {
     npm: "22421495",
@@ -23,6 +25,7 @@ const PREDEFINED_MAHASISWA = [
     username: "22421495",
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "22421495@student.example.com",
   },
   {
     npm: "22421592",
@@ -30,6 +33,7 @@ const PREDEFINED_MAHASISWA = [
     username: "22421592",
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "22421592@student.example.com",
   },
   {
     npm: "22412858",
@@ -37,6 +41,7 @@ const PREDEFINED_MAHASISWA = [
     username: "22412858",
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "22412858@student.example.com",
   },
 ];
 const PREDEFINED_DOSEN = [
@@ -49,6 +54,7 @@ const PREDEFINED_DOSEN = [
     isDekan: false,
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "zeonives123@gmail.com",
   },
   {
     nidn: "00002",
@@ -58,6 +64,7 @@ const PREDEFINED_DOSEN = [
     isSekretariat: false,
     isDekan: false,
     password: DUMMY_PASSWORD_PLAIN,
+    email: "zeonives123@gmail.com",
   },
   {
     nidn: "00003",
@@ -68,6 +75,7 @@ const PREDEFINED_DOSEN = [
     isDekan: false,
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
+    email: "zeonives123@gmail.com",
   },
   {
     nidn: "00004",
@@ -77,6 +85,7 @@ const PREDEFINED_DOSEN = [
     isSekretariat: true,
     isDekan: false,
     password: DUMMY_PASSWORD_PLAIN,
+    email: "zeonives123@gmail.com",
   },
   {
     nidn: "00005",
@@ -86,6 +95,7 @@ const PREDEFINED_DOSEN = [
     isSekretariat: false,
     isDekan: false,
     password: DUMMY_PASSWORD_PLAIN,
+    email: "zeonives123@gmail.com",
   },
   {
     nidn: "00006",
@@ -95,6 +105,7 @@ const PREDEFINED_DOSEN = [
     isSekretariat: false,
     isDekan: true,
     password: DUMMY_PASSWORD_PLAIN,
+    email: "00006@example.com",
   },
 ];
 
@@ -140,23 +151,31 @@ async function getProgramStudiRows(conn) {
 
 async function upsertMahasiswa(conn, mahasiswa) {
   await conn.query(
-    `INSERT INTO mahasiswa (npm, nama, sks, program_studi_id)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO mahasiswa (npm, nama, email, sks, program_studi_id)
+     VALUES (?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
+       email = VALUES(email),
        sks = VALUES(sks),
        program_studi_id = VALUES(program_studi_id)`,
-    [mahasiswa.npm, mahasiswa.nama, mahasiswa.sks, mahasiswa.programStudiId],
+    [
+      mahasiswa.npm,
+      mahasiswa.nama,
+      mahasiswa.email ?? null,
+      mahasiswa.sks,
+      mahasiswa.programStudiId,
+    ],
   );
 }
 
 async function upsertDosen(conn, dosen) {
   await conn.query(
-    `INSERT INTO dosen (nidn, nama)
-     VALUES (?, ?)
+    `INSERT INTO dosen (nidn, nama, email)
+     VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE
-       nama = VALUES(nama)`,
-    [dosen.nidn, dosen.nama],
+       nama = VALUES(nama),
+       email = VALUES(email)`,
+    [dosen.nidn, dosen.nama, dosen.email ?? null],
   );
 }
 
@@ -250,6 +269,7 @@ function getPredefinedMahasiswa(programRows) {
   return PREDEFINED_MAHASISWA.map((item, index) => ({
     npm: item.npm,
     nama: item.nama,
+    email: item.email ?? null,
     sks: 140,
     username: item.username,
     programStudiNama: item.programStudiNama,
@@ -271,6 +291,7 @@ function getPredefinedDosen(programRows) {
   return PREDEFINED_DOSEN.map((item, index) => ({
     nidn: item.nidn,
     nama: item.nama,
+    email: item.email ?? null,
     username: item.username,
     isKaprodi: item.isKaprodi,
     isSekretariat: item.isSekretariat ?? false,
