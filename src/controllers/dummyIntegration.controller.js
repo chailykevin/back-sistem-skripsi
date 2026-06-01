@@ -1,5 +1,6 @@
 const bcrypt = require("bcrypt");
 const db = require("../db");
+const nodemailer = require("nodemailer");
 
 const DUMMY_PASSWORD_PLAIN = "123";
 const PREDEFINED_MAHASISWA = [
@@ -105,7 +106,7 @@ const PREDEFINED_DOSEN = [
     isSekretariat: false,
     isDekan: true,
     password: DUMMY_PASSWORD_PLAIN,
-    email: "00006@example.com",
+    email: "zeonives123@gmail.com",
   },
 ];
 
@@ -693,5 +694,33 @@ exports.seedDosenDummy = async (req, res, next) => {
     next(err);
   } finally {
     conn.release();
+  }
+};
+
+exports.testEmail = async (req, res, next) => {
+  try {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: process.env.SMTP_SECURE === "true",
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    await transporter.verify();
+
+    const to = req.body?.to || process.env.SMTP_USER;
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject: "Test Email - Sistem Skripsi",
+      text: "Konfigurasi SMTP berhasil. Email ini adalah tes koneksi dari Sistem Skripsi.",
+    });
+
+    return res.json({ ok: true, message: `Test email sent to ${to}` });
+  } catch (err) {
+    next(err);
   }
 };
