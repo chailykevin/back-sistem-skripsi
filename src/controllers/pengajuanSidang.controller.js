@@ -724,7 +724,7 @@ exports.uploadFiles = async (req, res, next) => {
     );
     const kaprodiNotYetValid = kaprodiRow && kaprodiRow.status !== "VALID";
     if (kaprodiNotYetValid) {
-      const forbidden = files.filter((f) => !KAPRODI_REQUIRED_FILE_TYPES.includes(f.fileType));
+      const forbidden = files.filter((f) => !KAPRODI_REQUIRED_FILE_TYPES.includes(f.fileType) && !KAPRODI_OPTIONAL_FILE_TYPES.includes(f.fileType));
       if (forbidden.length > 0) {
         return res.status(400).json({
           ok: false,
