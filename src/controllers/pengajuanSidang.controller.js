@@ -2442,6 +2442,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
          pj.npm,
          m.nama AS nama_mahasiswa,
          m.email AS mahasiswa_email,
+         ps.id AS program_studi_id,
          ps.nama AS prodi_nama,
          ps.kaprodi_nidn,
          f.nama AS fakultas_nama,
@@ -2451,7 +2452,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
          psk.nomor_surat, psk.verified_at AS sk_verified_at,
          psk_k.penguji1_nama, psk_k.penguji1_nidn,
          psk_k.penguji2_nama, psk_k.penguji2_nidn,
-         psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang
+         psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
+         psk_k.tanggal_disposisi, psk_k.ujian_ke
        FROM pengajuan_judul pj
        JOIN mahasiswa m ON m.npm = pj.npm
        JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -2553,6 +2555,75 @@ exports.generateSuratUndangan = async (req, res, next) => {
        WHERE pengajuan_judul_id = ?`,
       [pengajuanJudulId],
     );
+
+    // Auto-create sidang record now that pengajuan_sidang is COMPLETED
+    const [[existingSidang]] = await conn.query(
+      `SELECT id FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!existingSidang) {
+      const [sidangIns] = await conn.query(
+        `INSERT INTO sidang
+           (pengajuan_judul_id, pengajuan_sidang_id,
+            npm, nama_mahasiswa, program_studi_id, program_studi_nama, judul_skripsi, ujian_ke,
+            pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
+            penguji1_nidn, penguji1_nama, penguji2_nidn, penguji2_nama,
+            tanggal_sidang, waktu_sidang, tempat_sidang, tanggal_disposisi)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          pengajuanJudulId,
+          sidang.id,
+          dataRow?.npm ?? "",
+          dataRow?.nama_mahasiswa ?? "",
+          dataRow?.program_studi_id ?? null,
+          dataRow?.prodi_nama ?? "",
+          dataRow?.judul_skripsi ?? "",
+          dataRow?.ujian_ke ?? 1,
+          dataRow?.pembimbing1_nidn ?? "",
+          dataRow?.pembimbing1_nama ?? "",
+          dataRow?.pembimbing2_nidn ?? "",
+          dataRow?.pembimbing2_nama ?? "",
+          dataRow?.penguji1_nidn ?? "",
+          dataRow?.penguji1_nama ?? "",
+          dataRow?.penguji2_nidn ?? "",
+          dataRow?.penguji2_nama ?? "",
+          dataRow?.tanggal_sidang ?? null,
+          dataRow?.waktu_sidang ?? null,
+          dataRow?.tempat_sidang ?? "",
+          dataRow?.tanggal_disposisi ?? null,
+        ],
+      );
+      const newSidangId = sidangIns.insertId;
+
+      await conn.query(
+        `INSERT INTO sidang_penilaian (sidang_id, role, nidn, nama) VALUES
+           (?, 'PEMBIMBING_1', ?, ?),
+           (?, 'PEMBIMBING_2', ?, ?),
+           (?, 'PENGUJI_1', ?, ?),
+           (?, 'PENGUJI_2', ?, ?)`,
+        [
+          newSidangId, dataRow?.pembimbing1_nidn ?? "", dataRow?.pembimbing1_nama ?? "",
+          newSidangId, dataRow?.pembimbing2_nidn ?? "", dataRow?.pembimbing2_nama ?? "",
+          newSidangId, dataRow?.penguji1_nidn ?? "", dataRow?.penguji1_nama ?? "",
+          newSidangId, dataRow?.penguji2_nidn ?? "", dataRow?.penguji2_nama ?? "",
+        ],
+      );
+
+      await conn.query(
+        `INSERT INTO sidang_notulen (sidang_id, role, nidn, nama) VALUES
+           (?, 'PENGUJI_1', ?, ?),
+           (?, 'PENGUJI_2', ?, ?)`,
+        [
+          newSidangId, dataRow?.penguji1_nidn ?? "", dataRow?.penguji1_nama ?? "",
+          newSidangId, dataRow?.penguji2_nidn ?? "", dataRow?.penguji2_nama ?? "",
+        ],
+      );
+
+      await conn.query(
+        `INSERT INTO sidang_hasil_penilaian (sidang_id) VALUES (?)`,
+        [newSidangId],
+      );
+    }
 
     const [[studentRow]] = await conn.query(
       `SELECT u.id FROM users u

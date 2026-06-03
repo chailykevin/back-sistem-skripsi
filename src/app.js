@@ -58,6 +58,9 @@ app.use("/", skripsiRoutes);
 const pengajuanSidangRoutes = require("./routes/pengajuanSidang.routes");
 app.use("/", pengajuanSidangRoutes);
 
+const sidangRoutes = require("./routes/sidang.routes");
+app.use("/", sidangRoutes);
+
 const notificationRoutes = require("./routes/notification.routes");
 app.use("/notifications", notificationRoutes);
 
