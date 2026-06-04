@@ -42,6 +42,7 @@ function terbilang(n) {
 }
 
 const BULAN_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const BULAN_ROMAWI = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 function formatTanggalIndonesia(date) {
   return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
@@ -2444,8 +2445,10 @@ exports.generateSuratUndangan = async (req, res, next) => {
          m.email AS mahasiswa_email,
          ps.id AS program_studi_id,
          ps.nama AS prodi_nama,
+         ps.kode AS ps_kode,
          ps.kaprodi_nidn,
          f.nama AS fakultas_nama,
+         f.kode AS f_kode,
          sk.judul AS judul_skripsi,
          kko.pembimbing1_nama, kko.pembimbing1_nidn,
          kko.pembimbing2_nama, kko.pembimbing2_nidn,
@@ -2495,6 +2498,23 @@ exports.generateSuratUndangan = async (req, res, next) => {
       getDosenEmail(dataRow?.penguji2_nidn),
     ]);
 
+    // Generate nomor_surat for surat undangan (monthly sequence per prodi, resets each month)
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const [[{ seq }]] = await conn.query(
+      `SELECT COUNT(*) AS seq
+       FROM sidang s
+       JOIN pengajuan_judul pj ON pj.id = s.pengajuan_judul_id
+       JOIN mahasiswa m ON m.npm = pj.npm
+       WHERE m.program_studi_id = ?
+         AND s.nomor_surat IS NOT NULL
+         AND YEAR(s.created_at) = ?
+         AND MONTH(s.created_at) = ?`,
+      [dataRow?.program_studi_id, year, month],
+    );
+    const nomorSuratSidang = `${String(Number(seq) + 1).padStart(3, "0")}/${dataRow?.f_kode ?? ""}/${dataRow?.ps_kode ?? ""}/Sidang-Skripsi/${BULAN_ROMAWI[month - 1]}/${year}`;
+
     // Format dates
     const today = formatTanggalIndonesia(new Date());
     const tanggalSk = dataRow?.sk_verified_at
@@ -2508,7 +2528,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
       : "";
 
     const suratBuffer = await buildSuratUndanganBuffer({
-      nomorSurat:      dataRow?.nomor_surat ?? "",
+      nomorSurat:      nomorSuratSidang,
       lampiran:        "-",
       namaPembimbing1: dataRow?.pembimbing1_nama ?? "",
       namaPembimbing2: dataRow?.pembimbing2_nama ?? "",
@@ -2564,14 +2584,15 @@ exports.generateSuratUndangan = async (req, res, next) => {
     if (!existingSidang) {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
-           (pengajuan_judul_id, pengajuan_sidang_id,
+           (pengajuan_judul_id, nomor_surat, pengajuan_sidang_id,
             npm, nama_mahasiswa, program_studi_id, program_studi_nama, judul_skripsi, ujian_ke,
             pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
             penguji1_nidn, penguji1_nama, penguji2_nidn, penguji2_nama,
             tanggal_sidang, waktu_sidang, tempat_sidang, tanggal_disposisi)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pengajuanJudulId,
+          nomorSuratSidang,
           sidang.id,
           dataRow?.npm ?? "",
           dataRow?.nama_mahasiswa ?? "",

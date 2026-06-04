@@ -1056,24 +1056,37 @@ exports.getLecturerSidang = async (req, res, next) => {
   }
 };
 
+async function resolveSidangFileAccess(req, sidang) {
+  if (req.user.hasRole("SEKRETARIAT") || req.user.hasRole("KAPRODI")) return true;
+  const nidn = await getLecturerNidn(req.user.id);
+  return nidn ? resolveSidangRole(sidang, nidn) !== null : false;
+}
+
+function sendDocx(res, fileRow) {
+  const buffer = Buffer.from(fileRow.file_content, "base64");
+  res.setHeader("Content-Type", MIME_DOCX);
+  res.setHeader("Content-Disposition", `attachment; filename="${fileRow.file_name}"`);
+  return res.send(buffer);
+}
+
 // GET /sidang/:pengajuanJudulId/files/berita-acara
 exports.getBeritaAcara = async (req, res, next) => {
   try {
     const pengajuanJudulId = Number(req.params.pengajuanJudulId);
     if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT id, npm, status FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
       [pengajuanJudulId],
     );
     if (!sidang) {
-      return res
-        .status(404)
-        .json({ ok: false, message: "Sidang tidak ditemukan" });
+      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (!await resolveSidangFileAccess(req, sidang)) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [[fileRow]] = await db.query(
@@ -1081,18 +1094,174 @@ exports.getBeritaAcara = async (req, res, next) => {
       [sidang.id],
     );
     if (!fileRow) {
-      return res
-        .status(404)
-        .json({ ok: false, message: "Berita acara belum tersedia" });
+      return res.status(404).json({ ok: false, message: "Berita acara belum tersedia" });
     }
 
-    const buffer = Buffer.from(fileRow.file_content, "base64");
-    res.setHeader("Content-Type", MIME_DOCX);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${fileRow.file_name}"`,
+    return sendDocx(res, fileRow);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /sidang/:pengajuanJudulId/files/hasil-penilaian
+exports.getHasilPenilaianFile = async (req, res, next) => {
+  try {
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const [[sidang]] = await db.query(
+      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
     );
-    return res.send(buffer);
+    if (!sidang) {
+      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (!await resolveSidangFileAccess(req, sidang)) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const [[fileRow]] = await db.query(
+      `SELECT file_name, file_content FROM sidang_hasil_penilaian WHERE sidang_id = ? AND submitted_at IS NOT NULL LIMIT 1`,
+      [sidang.id],
+    );
+    if (!fileRow) {
+      return res.status(404).json({ ok: false, message: "Hasil penilaian belum tersedia" });
+    }
+
+    return sendDocx(res, fileRow);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const VALID_PENILAIAN_ROLES = ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"];
+const VALID_NOTULEN_ROLES = ["PENGUJI_1", "PENGUJI_2"];
+
+// GET /sidang/:pengajuanJudulId/files/penilaian/:role
+exports.getPenilaianFile = async (req, res, next) => {
+  try {
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const role = req.params.role;
+    if (!VALID_PENILAIAN_ROLES.includes(role)) {
+      return res.status(400).json({
+        ok: false,
+        message: `role harus salah satu dari: ${VALID_PENILAIAN_ROLES.join(", ")}`,
+      });
+    }
+
+    const [[sidang]] = await db.query(
+      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!sidang) {
+      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (!await resolveSidangFileAccess(req, sidang)) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const [[fileRow]] = await db.query(
+      `SELECT file_name, file_content FROM sidang_penilaian WHERE sidang_id = ? AND role = ? AND submitted_at IS NOT NULL LIMIT 1`,
+      [sidang.id, role],
+    );
+    if (!fileRow) {
+      return res.status(404).json({ ok: false, message: "Formulir penilaian belum tersedia" });
+    }
+
+    return sendDocx(res, fileRow);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /sidang/:pengajuanJudulId/files/notulen/:role
+exports.getNotulenFile = async (req, res, next) => {
+  try {
+    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
+    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    }
+
+    const role = req.params.role;
+    if (!VALID_NOTULEN_ROLES.includes(role)) {
+      return res.status(400).json({
+        ok: false,
+        message: `role harus salah satu dari: ${VALID_NOTULEN_ROLES.join(", ")}`,
+      });
+    }
+
+    const [[sidang]] = await db.query(
+      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!sidang) {
+      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (!await resolveSidangFileAccess(req, sidang)) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const [[fileRow]] = await db.query(
+      `SELECT file_name, file_content FROM sidang_notulen WHERE sidang_id = ? AND role = ? AND submitted_at IS NOT NULL LIMIT 1`,
+      [sidang.id, role],
+    );
+    if (!fileRow) {
+      return res.status(404).json({ ok: false, message: "Notulen belum tersedia" });
+    }
+
+    return sendDocx(res, fileRow);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /sekretariat/sidang
+exports.getSekretariatSidang = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("SEKRETARIAT")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const { status, programStudiId } = req.query;
+    if (status !== undefined && !VALID_SIDANG_STATUSES.includes(status)) {
+      return res.status(400).json({
+        ok: false,
+        message: `status harus salah satu dari: ${VALID_SIDANG_STATUSES.join(", ")}`,
+      });
+    }
+
+    const parsedProgramStudiId = programStudiId ? Number(programStudiId) : null;
+    if (programStudiId !== undefined && (!Number.isFinite(parsedProgramStudiId) || parsedProgramStudiId <= 0)) {
+      return res.status(400).json({ ok: false, message: "Invalid programStudiId" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         s.id, s.pengajuan_judul_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
+         s.program_studi_id, s.program_studi_nama, s.judul_skripsi, s.ujian_ke,
+         s.status, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
+         s.pembimbing1_nidn, s.pembimbing1_nama, s.pembimbing2_nidn, s.pembimbing2_nama,
+         s.penguji1_nidn, s.penguji1_nama, s.penguji2_nidn, s.penguji2_nama,
+         s.hasil_sidang, s.created_at,
+         shp.rata, shp.grade
+       FROM sidang s
+       LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
+       WHERE (? IS NULL OR s.status = ?)
+         AND (? IS NULL OR s.program_studi_id = ?)
+       ORDER BY s.created_at DESC`,
+      [status ?? null, status ?? null, parsedProgramStudiId, parsedProgramStudiId],
+    );
+
+    return res.json({ ok: true, data: rows });
   } catch (err) {
     next(err);
   }
