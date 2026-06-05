@@ -931,7 +931,7 @@ async function generateAndStoreBeritaAcara(
   async function getSig(nidn) {
     if (!nidn) return null;
     const [[row]] = await conn.query(
-      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id DESC LIMIT 1`,
+      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
       [nidn],
     );
     return row?.signature_image ?? null;

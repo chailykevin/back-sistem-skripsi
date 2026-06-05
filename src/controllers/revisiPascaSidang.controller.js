@@ -4,9 +4,6 @@ const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
 
-const MIME_DOCX =
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
 const BULAN_ID = [
   "Januari",
   "Februari",
@@ -95,7 +92,7 @@ async function getUserIdByNpm(conn, npm) {
 async function getSigByNidn(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id DESC LIMIT 1`,
+    `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
     [nidn],
   );
   return row?.signature_image ?? null;
@@ -909,12 +906,24 @@ exports.getLecturerRevisi = async (req, res, next) => {
   }
 };
 
+const MIME_BY_EXT = {
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".doc": "application/msword",
+  ".pdf": "application/pdf",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+function mimeFromFileName(fileName) {
+  const ext = fileName ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase() : "";
+  return MIME_BY_EXT[ext] ?? "application/octet-stream";
+}
+
 function sendDocx(res, fileRow) {
   return res.json({
     ok: true,
     data: {
       file_name: fileRow.file_name,
-      mime_type: MIME_DOCX,
+      mime_type: mimeFromFileName(fileRow.file_name),
       file_content: fileRow.file_content,
     },
   });
