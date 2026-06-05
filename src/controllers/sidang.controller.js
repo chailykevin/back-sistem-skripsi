@@ -873,6 +873,18 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       [sidang.id],
     );
 
+    // Auto-init revisi pasca sidang (existence-guarded)
+    const [[existingRevisi]] = await conn.query(
+      `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!existingRevisi) {
+      await conn.query(
+        `INSERT INTO revisi_pasca_sidang (sidang_id, pengajuan_judul_id, npm) VALUES (?, ?, ?)`,
+        [sidang.id, pengajuanJudulId, sidang.npm],
+      );
+    }
+
     await conn.commit();
     txStarted = false;
 

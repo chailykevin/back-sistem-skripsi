@@ -1,0 +1,14 @@
+ALTER TABLE revisi_pasca_sidang
+  MODIFY COLUMN status ENUM(
+    'DRAFT',
+    'WAITING_PENGUJI2',
+    'WAITING_PENGUJI1',
+    'WAITING_DOSPEM2',
+    'WAITING_DOSPEM1',
+    'NEED_REVISION',
+    'COMPLETED'
+  ) NOT NULL DEFAULT 'DRAFT';
+
+ALTER TABLE revisi_pasca_sidang
+  ADD COLUMN catatan_revisi TEXT NULL,
+  ADD COLUMN revision_requested_by ENUM('PENGUJI_2','PENGUJI_1','PEMBIMBING_2','PEMBIMBING_1') NULL;

@@ -61,6 +61,9 @@ app.use("/", pengajuanSidangRoutes);
 const sidangRoutes = require("./routes/sidang.routes");
 app.use("/", sidangRoutes);
 
+const revisiPascaSidangRoutes = require("./routes/revisiPascaSidang.routes");
+app.use("/", revisiPascaSidangRoutes);
+
 const notificationRoutes = require("./routes/notification.routes");
 app.use("/notifications", notificationRoutes);
 
