@@ -64,6 +64,9 @@ app.use("/", sidangRoutes);
 const revisiPascaSidangRoutes = require("./routes/revisiPascaSidang.routes");
 app.use("/", revisiPascaSidangRoutes);
 
+const pengumpulanBerkasFinalRoutes = require("./routes/pengumpulanBerkasFinal.routes");
+app.use("/", pengumpulanBerkasFinalRoutes);
+
 const notificationRoutes = require("./routes/notification.routes");
 app.use("/notifications", notificationRoutes);
 

@@ -53,6 +53,7 @@ const PREDEFINED_DOSEN = [
     isKaprodi: true,
     isSekretariat: false,
     isDekan: false,
+    isSekretariatProdi: false,
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
@@ -64,6 +65,8 @@ const PREDEFINED_DOSEN = [
     isKaprodi: false,
     isSekretariat: false,
     isDekan: false,
+    isSekretariatProdi: true,
+    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
   },
@@ -74,6 +77,7 @@ const PREDEFINED_DOSEN = [
     isKaprodi: true,
     isSekretariat: false,
     isDekan: false,
+    isSekretariatProdi: false,
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
@@ -85,6 +89,7 @@ const PREDEFINED_DOSEN = [
     isKaprodi: false,
     isSekretariat: true,
     isDekan: false,
+    isSekretariatProdi: false,
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
   },
@@ -95,6 +100,7 @@ const PREDEFINED_DOSEN = [
     isKaprodi: false,
     isSekretariat: false,
     isDekan: false,
+    isSekretariatProdi: false,
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
   },
@@ -105,6 +111,7 @@ const PREDEFINED_DOSEN = [
     isKaprodi: false,
     isSekretariat: false,
     isDekan: true,
+    isSekretariatProdi: false,
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
   },
@@ -131,7 +138,7 @@ async function getActiveRolesMap(conn) {
     `SELECT id, code
      FROM roles
      WHERE is_active = 1
-       AND code IN ('STUDENT', 'LECTURER', 'KAPRODI', 'PEMBIMBING', 'SEKRETARIAT', 'DEKAN')`,
+       AND code IN ('STUDENT', 'LECTURER', 'KAPRODI', 'PEMBIMBING', 'SEKRETARIAT', 'DEKAN', 'PERPUSTAKAAN_STAFF', 'LPPM', 'SEKPRODI')`,
   );
 
   const map = new Map();
@@ -297,11 +304,18 @@ function getPredefinedDosen(programRows) {
     isKaprodi: item.isKaprodi,
     isSekretariat: item.isSekretariat ?? false,
     isDekan: item.isDekan ?? false,
+    isSekretariatProdi: item.isSekretariatProdi ?? false,
     password: item.password,
     programStudiNama: item.isKaprodi
       ? String(item.programStudiNama ?? "").trim()
-      : null,
+      : item.isSekretariatProdi
+        ? String(item.programStudiNama ?? "").trim()
+        : null,
     kaprodiProgramStudiId: item.isKaprodi
+      ? (prodiByName.get(String(item.programStudiNama ?? "").toLowerCase())
+          ?.id ?? null)
+      : null,
+    sekretariatProdiProgramStudiId: item.isSekretariatProdi
       ? (prodiByName.get(String(item.programStudiNama ?? "").toLowerCase())
           ?.id ?? null)
       : null,
@@ -452,6 +466,9 @@ exports.seedDosenDummy = async (req, res, next) => {
     const pembimbingRoleId = rolesMap.get("PEMBIMBING");
     const sekretariatRoleId = rolesMap.get("SEKRETARIAT");
     const dekanRoleId = rolesMap.get("DEKAN");
+    const perpustakaanRoleId = rolesMap.get("PERPUSTAKAAN_STAFF");
+    const lppmRoleId = rolesMap.get("LPPM");
+    const sekretariatProdiRoleId = rolesMap.get("SEKPRODI");
     if (
       !lecturerRoleId ||
       !kaprodiRoleId ||
@@ -542,6 +559,34 @@ exports.seedDosenDummy = async (req, res, next) => {
     const password = DUMMY_PASSWORD_PLAIN;
     const passwordHash = await bcrypt.hash(password, 10);
     const assignedByUserId = Number(req.user?.id) || null;
+
+    // Seed PERPUSTAKAAN and LPPM institution-wide accounts
+    const institutionAccounts = [
+      {
+        username: "perpustakaan",
+        roleId: perpustakaanRoleId,
+        roleCode: "PERPUSTAKAAN_STAFF",
+      },
+      { username: "lppm", roleId: lppmRoleId, roleCode: "LPPM" },
+    ];
+    for (const acc of institutionAccounts) {
+      if (!acc.roleId) continue;
+      await upsertUserAccount(conn, {
+        username: acc.username,
+        passwordHash,
+        npm: null,
+        nidn: null,
+      });
+      const accUserId = await getUserIdByUsername(conn, acc.username);
+      if (accUserId) {
+        await upsertUserRole(conn, {
+          userId: accUserId,
+          roleId: acc.roleId,
+          programStudiId: null,
+          assignedByUserId,
+        });
+      }
+    }
 
     const result = [];
     for (const dsn of input) {
@@ -656,6 +701,48 @@ exports.seedDosenDummy = async (req, res, next) => {
         dekanAccount = { userId, username: dsn.username, roles: ["DEKAN"] };
       }
 
+      let sekretariatProdiAccount = null;
+      if (
+        dsn.isSekretariatProdi &&
+        sekretariatProdiRoleId &&
+        dsn.sekretariatProdiProgramStudiId
+      ) {
+        const sekprodiUsername = dsn.username + "_sekprodi";
+        await upsertUserAccount(conn, {
+          username: sekprodiUsername,
+          passwordHash,
+          npm: null,
+          nidn: dsn.nidn,
+        });
+        const sekprodiUserId = await getUserIdByUsername(
+          conn,
+          sekprodiUsername,
+        );
+        if (sekprodiUserId) {
+          await upsertUserRole(conn, {
+            userId: sekprodiUserId,
+            roleId: sekretariatProdiRoleId,
+            programStudiId: dsn.sekretariatProdiProgramStudiId,
+            assignedByUserId,
+          });
+          await conn.query(
+            `UPDATE program_studi SET sekprodi_nidn = ? WHERE id = ?`,
+            [dsn.nidn, dsn.sekretariatProdiProgramStudiId],
+          );
+          const sekprodiProdi =
+            programRows.find(
+              (p) => Number(p.id) === dsn.sekretariatProdiProgramStudiId,
+            ) ?? null;
+          sekretariatProdiAccount = {
+            userId: sekprodiUserId,
+            username: sekprodiUsername,
+            roles: ["SEKRETARIAT_PRODI"],
+            programStudiId: sekprodiProdi?.id ?? null,
+            programStudiNama: sekprodiProdi?.nama ?? null,
+          };
+        }
+      }
+
       result.push({
         userId,
         username: dsn.username,
@@ -668,6 +755,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         kaprodiAccount,
         sekretariatAccount,
         dekanAccount,
+        sekretariatProdiAccount,
       });
     }
 
@@ -684,6 +772,11 @@ exports.seedDosenDummy = async (req, res, next) => {
           kaprodi: kaprodiCount,
           nonKaprodi: result.length - kaprodiCount,
         },
+        institutionAccounts: institutionAccounts.map((a) => ({
+          username: a.username,
+          role: a.roleCode,
+          password,
+        })),
         dosen: result,
       },
     });
