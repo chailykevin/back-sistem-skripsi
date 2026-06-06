@@ -275,6 +275,16 @@ exports.initPengumpulan = async (req, res, next) => {
       return res.status(409).json({ ok: false, message: "Revisi pasca sidang belum selesai" });
     }
 
+    // Prerequisite: latest sidang must be LULUS (blocks TIDAK_LULUS students until re-exam passes)
+    const [[latestSidang]] = await conn.query(
+      `SELECT hasil_sidang FROM sidang WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
+      [pengajuanJudulId],
+    );
+    if (!latestSidang || latestSidang.hasil_sidang !== "LULUS") {
+      await conn.rollback(); txStarted = false;
+      return res.status(409).json({ ok: false, message: "Sidang terakhir belum dinyatakan lulus" });
+    }
+
     // Return existing if already exists
     const [[existing]] = await conn.query(
       `SELECT id, status, is_completed FROM pengumpulan_berkas_final WHERE pengajuan_judul_id = ? LIMIT 1`,

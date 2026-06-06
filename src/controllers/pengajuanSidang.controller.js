@@ -494,16 +494,34 @@ exports.initPengajuanSidang = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Konsultasi skripsi belum selesai" });
     }
 
-    // Prerequisite: Kaprodi form must be VALID
-    const [[kaprodiRow]] = await conn.query(
-      `SELECT id, status FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
+    // Determine if this is an ujian ulang (re-exam) or original sidang
+    const [[latestSidang]] = await conn.query(
+      `SELECT id, hasil_sidang FROM sidang WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
       [pengajuanJudulId],
     );
-    if (!kaprodiRow || kaprodiRow.status !== "VALID") {
-      return res.status(400).json({ ok: false, message: "Pengajuan ke Kaprodi belum disetujui" });
+    const isUjianUlang = !!(latestSidang && latestSidang.hasil_sidang === "TIDAK_LULUS");
+
+    if (isUjianUlang) {
+      // Ujian ulang: prerequisite is revisi_pasca_sidang completed
+      const [[revisiRow]] = await conn.query(
+        `SELECT id, is_completed FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (!revisiRow || !revisiRow.is_completed) {
+        return res.status(400).json({ ok: false, message: "Revisi pasca sidang belum selesai" });
+      }
+    } else {
+      // Original flow: Kaprodi form must be VALID
+      const [[kaprodiRow]] = await conn.query(
+        `SELECT id, status FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (!kaprodiRow || kaprodiRow.status !== "VALID") {
+        return res.status(400).json({ ok: false, message: "Pengajuan ke Kaprodi belum disetujui" });
+      }
     }
 
-    // Block if there is already an active (non-terminal) sidang
+    // Block if there is already an active (non-terminal) pengajuan_sidang
     const [[activeRow]] = await conn.query(
       `SELECT id, status, submitted_at FROM pengajuan_sidang
        WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
@@ -518,97 +536,105 @@ exports.initPengajuanSidang = async (req, res, next) => {
     let isNew = false;
 
     if (activeRow) {
-      // System auto-created a DRAFT when student submitted kaprodi form — reuse it
-      if (activeRow.status === "DRAFT" && !activeRow.submitted_at) {
+      // System auto-created a DRAFT (original flow) — reuse it if not yet submitted
+      if (activeRow.status === "DRAFT" && !activeRow.submitted_at && !isUjianUlang) {
         sidangId = activeRow.id;
       } else {
         await conn.rollback(); txStarted = false;
         return res.status(409).json({ ok: false, message: "Masih ada Pengajuan Sidang yang aktif" });
       }
     } else {
-      const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
+      // Count existing sidang rows to determine ujian_ke
+      const [[{ sidangCount }]] = await conn.query(
+        `SELECT COUNT(*) AS sidangCount FROM sidang WHERE pengajuan_judul_id = ?`,
         [pengajuanJudulId],
+      );
+      const ujianKe = Number(sidangCount) + 1;
+
+      const [ins] = await conn.query(
+        `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status, ujian_ke) VALUES (?, 'DRAFT', ?)`,
+        [pengajuanJudulId, ujianKe],
       );
       sidangId = ins.insertId;
       isNew = true;
     }
 
-    // Auto-pull KARTU_KONSULTASI_SKRIPSI
-    const [[kartuSkripsi]] = await conn.query(
-      `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (!kartuSkripsi) {
-      await conn.rollback(); txStarted = false;
-      return res.status(400).json({ ok: false, message: "Kartu konsultasi skripsi tidak ditemukan" });
-    }
-    const [[kartuSkripsiFile]] = await conn.query(
-      `SELECT file_content, file_name FROM kartu_konsultasi_skripsi_file
-       WHERE kartu_konsultasi_skripsi_id = ? AND is_active = 1 AND file_type = 'FINAL_DOCX'
-       ORDER BY generated_at DESC LIMIT 1`,
-      [kartuSkripsi.id],
-    );
-    if (!kartuSkripsiFile) {
-      await conn.rollback(); txStarted = false;
-      return res.status(400).json({ ok: false, message: "File kartu konsultasi skripsi belum digenerate" });
-    }
-    await conn.query(
-      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'KARTU_KONSULTASI_SKRIPSI'`,
-      [sidangId],
-    );
-    await conn.query(
-      `INSERT INTO pengajuan_sidang_files
-         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-      [sidangId, kartuSkripsiFile.file_name, MIME_DOCX, kartuSkripsiFile.file_content],
-    );
-
-    // Auto-pull SK_PENUNJUKAN_PEMBIMBING
-    const [[skPembimbingRow]] = await conn.query(
-      `SELECT f.file_content, f.file_name, f.mime_type
-       FROM pengajuan_sk_penelitian_files f
-       INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
-       ORDER BY f.created_at DESC LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (!skPembimbingRow) {
-      await conn.rollback(); txStarted = false;
-      return res.status(400).json({ ok: false, message: "File SK Pembimbing tidak ditemukan" });
-    }
-    await conn.query(
-      `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
-      [sidangId],
-    );
-    await conn.query(
-      `INSERT INTO pengajuan_sidang_files
-         (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-      [sidangId, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
-    );
-
-    // Auto-pull SURAT_PERNYATAAN_PENYELESAIAN
-    const [[suratPenyelesaianRow]] = await conn.query(
-      `SELECT f.file_content, f.file_name, f.mime_type
-       FROM pengajuan_sk_penelitian_files f
-       INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
-       ORDER BY f.created_at DESC LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (suratPenyelesaianRow) {
+    if (!isUjianUlang) {
+      // Original flow: auto-pull system files
+      const [[kartuSkripsi]] = await conn.query(
+        `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.pengajuan_judul_id = ? LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (!kartuSkripsi) {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({ ok: false, message: "Kartu konsultasi skripsi tidak ditemukan" });
+      }
+      const [[kartuSkripsiFile]] = await conn.query(
+        `SELECT file_content, file_name FROM kartu_konsultasi_skripsi_file
+         WHERE kartu_konsultasi_skripsi_id = ? AND is_active = 1 AND file_type = 'FINAL_DOCX'
+         ORDER BY generated_at DESC LIMIT 1`,
+        [kartuSkripsi.id],
+      );
+      if (!kartuSkripsiFile) {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({ ok: false, message: "File kartu konsultasi skripsi belum digenerate" });
+      }
       await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'KARTU_KONSULTASI_SKRIPSI'`,
         [sidangId],
       );
       await conn.query(
         `INSERT INTO pengajuan_sidang_files
            (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [sidangId, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
+         VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+        [sidangId, kartuSkripsiFile.file_name, MIME_DOCX, kartuSkripsiFile.file_content],
       );
+
+      const [[skPembimbingRow]] = await conn.query(
+        `SELECT f.file_content, f.file_name, f.mime_type
+         FROM pengajuan_sk_penelitian_files f
+         INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
+         WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         ORDER BY f.created_at DESC LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (!skPembimbingRow) {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({ ok: false, message: "File SK Pembimbing tidak ditemukan" });
+      }
+      await conn.query(
+        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
+        [sidangId],
+      );
+      await conn.query(
+        `INSERT INTO pengajuan_sidang_files
+           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+         VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+        [sidangId, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
+      );
+
+      const [[suratPenyelesaianRow]] = await conn.query(
+        `SELECT f.file_content, f.file_name, f.mime_type
+         FROM pengajuan_sk_penelitian_files f
+         INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
+         WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+         ORDER BY f.created_at DESC LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (suratPenyelesaianRow) {
+        await conn.query(
+          `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+          [sidangId],
+        );
+        await conn.query(
+          `INSERT INTO pengajuan_sidang_files
+             (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+           VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+          [sidangId, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
+        );
+      }
     }
+    // Ujian ulang: no system files auto-pulled; student uploads only BUKTI_PEMBAYARAN + BAB_1_5
 
     await conn.commit();
     txStarted = false;
@@ -821,30 +847,33 @@ exports.submitPengajuanSidang = async (req, res, next) => {
     );
     const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
 
-    // Validate all required files are present (uploaded by student)
+    // Validate required files are present
     const [existingFiles] = await conn.query(
       `SELECT file_type FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
       [sidang.id],
     );
     const existingTypes = new Set(existingFiles.map((f) => f.file_type));
 
-    // Required files that must be uploaded by mahasiswa (excluding system-pulled ones)
-    const requiredUploads = REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
-    const missingUploads = requiredUploads.filter((t) => !existingTypes.has(t));
-    if (missingUploads.length > 0) {
-      await conn.rollback(); txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message: `File berikut belum diunggah: ${missingUploads.join(", ")}`,
-      });
-    }
-
-    if (perluSuratKeterangan && !existingTypes.has("SURAT_KETERANGAN")) {
-      await conn.rollback(); txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message: "File SURAT_KETERANGAN belum diunggah",
-      });
+    if (sidang.ujian_ke > 1) {
+      // Ujian ulang: only BUKTI_PEMBAYARAN and BAB_1_5 required
+      const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BAB_1_5"];
+      const missing = ujianUlangRequired.filter((t) => !existingTypes.has(t));
+      if (missing.length > 0) {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({ ok: false, message: `File berikut belum diunggah: ${missing.join(", ")}` });
+      }
+    } else {
+      // Original flow: all required uploads must be present
+      const requiredUploads = REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
+      const missingUploads = requiredUploads.filter((t) => !existingTypes.has(t));
+      if (missingUploads.length > 0) {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({ ok: false, message: `File berikut belum diunggah: ${missingUploads.join(", ")}` });
+      }
+      if (perluSuratKeterangan && !existingTypes.has("SURAT_KETERANGAN")) {
+        await conn.rollback(); txStarted = false;
+        return res.status(400).json({ ok: false, message: "File SURAT_KETERANGAN belum diunggah" });
+      }
     }
 
     await conn.query(
@@ -1030,12 +1059,6 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
     }
 
     if (action === "VERIFY") {
-      const [[pjRow]] = await conn.query(
-        `SELECT perlu_surat_pengantar FROM pengajuan_judul WHERE id = ? LIMIT 1`,
-        [pengajuanJudulId],
-      );
-      const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
-
       // All required files must be VERIFIED
       const [fileRows] = await conn.query(
         `SELECT file_type, status FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
@@ -1043,24 +1066,32 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       );
       const fileMap = Object.fromEntries(fileRows.map((f) => [f.file_type, f.status]));
 
-      const unverified = REQUIRED_FILE_TYPES.filter(
-        (t) => !SYSTEM_FILE_TYPES.includes(t) && fileMap[t] !== "VERIFIED",
-      );
+      if (sidang.ujian_ke > 1) {
+        // Ujian ulang: only check BUKTI_PEMBAYARAN and BAB_1_5
+        const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BAB_1_5"];
+        const unverified = ujianUlangRequired.filter((t) => fileMap[t] !== "VERIFIED");
+        if (unverified.length > 0) {
+          await conn.rollback(); txStarted = false;
+          return res.status(400).json({ ok: false, message: `File berikut belum diverifikasi: ${unverified.join(", ")}` });
+        }
+      } else {
+        const [[pjRow]] = await conn.query(
+          `SELECT perlu_surat_pengantar FROM pengajuan_judul WHERE id = ? LIMIT 1`,
+          [pengajuanJudulId],
+        );
+        const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
 
-      if (unverified.length > 0) {
-        await conn.rollback(); txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
-        });
-      }
-
-      if (perluSuratKeterangan && fileMap["SURAT_KETERANGAN"] !== "VERIFIED") {
-        await conn.rollback(); txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: "File SURAT_KETERANGAN belum diverifikasi",
-        });
+        const unverified = REQUIRED_FILE_TYPES.filter(
+          (t) => !SYSTEM_FILE_TYPES.includes(t) && fileMap[t] !== "VERIFIED",
+        );
+        if (unverified.length > 0) {
+          await conn.rollback(); txStarted = false;
+          return res.status(400).json({ ok: false, message: `File berikut belum diverifikasi: ${unverified.join(", ")}` });
+        }
+        if (perluSuratKeterangan && fileMap["SURAT_KETERANGAN"] !== "VERIFIED") {
+          await conn.rollback(); txStarted = false;
+          return res.status(400).json({ ok: false, message: "File SURAT_KETERANGAN belum diverifikasi" });
+        }
       }
 
       await conn.query(
@@ -1252,106 +1283,115 @@ exports.initKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Konsultasi skripsi belum selesai" });
     }
 
-    const [[existing]] = await conn.query(
-      `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
+    // Find the current active pengajuan_sidang for this student
+    const [[activeSidang]] = await conn.query(
+      `SELECT id, ujian_ke FROM pengajuan_sidang
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+       ORDER BY id DESC LIMIT 1`,
       [pengajuanJudulId],
     );
-    if (existing) {
-      return res.status(409).json({ ok: false, message: "Pengajuan Sidang Kaprodi sudah dibuat" });
+
+    // Check if a kaprodi row already exists for this specific pengajuan_sidang
+    if (activeSidang) {
+      const [[existingForSidang]] = await conn.query(
+        `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+        [activeSidang.id],
+      );
+      if (existingForSidang) {
+        return res.status(200).json({ ok: true, message: "Pengajuan Sidang Kaprodi sudah ada", data: { id: existingForSidang.id } });
+      }
     }
 
     await conn.beginTransaction();
     txStarted = true;
 
+    const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
+
     const [ins] = await conn.query(
-      `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
-      [pengajuanJudulId],
+      `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_judul_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
+      [pengajuanJudulId, activeSidang?.id ?? null],
     );
 
-    // Auto-create DRAFT pengajuan_sidang and attach system files immediately
-    let [[existingSidang]] = await conn.query(
-      `SELECT id FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
-       LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (!existingSidang) {
-      const [sidangIns] = await conn.query(
-        `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
+    if (!isUjianUlang) {
+      // Original flow: auto-create DRAFT pengajuan_sidang if needed and attach system files
+      let targetSidangId = activeSidang?.id;
+      if (!targetSidangId) {
+        const [sidangIns] = await conn.query(
+          `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
+          [pengajuanJudulId],
+        );
+        targetSidangId = sidangIns.insertId;
+      }
+
+      // Auto-pull KARTU_KONSULTASI_SKRIPSI
+      const [[kartuSkripsi]] = await conn.query(
+        `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.pengajuan_judul_id = ? LIMIT 1`,
         [pengajuanJudulId],
       );
-      existingSidang = { id: sidangIns.insertId };
-    }
+      if (kartuSkripsi) {
+        const [[kartuSkripsiFile]] = await conn.query(
+          `SELECT file_content, file_name FROM kartu_konsultasi_skripsi_file
+           WHERE kartu_konsultasi_skripsi_id = ? AND is_active = 1 AND file_type = 'FINAL_DOCX'
+           ORDER BY generated_at DESC LIMIT 1`,
+          [kartuSkripsi.id],
+        );
+        if (kartuSkripsiFile) {
+          await conn.query(
+            `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'KARTU_KONSULTASI_SKRIPSI'`,
+            [targetSidangId],
+          );
+          await conn.query(
+            `INSERT INTO pengajuan_sidang_files
+               (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+             VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+            [targetSidangId, kartuSkripsiFile.file_name, MIME_DOCX, kartuSkripsiFile.file_content],
+          );
+        }
+      }
 
-    // Auto-pull KARTU_KONSULTASI_SKRIPSI
-    const [[kartuSkripsi]] = await conn.query(
-      `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (kartuSkripsi) {
-      const [[kartuSkripsiFile]] = await conn.query(
-        `SELECT file_content, file_name FROM kartu_konsultasi_skripsi_file
-         WHERE kartu_konsultasi_skripsi_id = ? AND is_active = 1 AND file_type = 'FINAL_DOCX'
-         ORDER BY generated_at DESC LIMIT 1`,
-        [kartuSkripsi.id],
+      const [[skPembimbingRow]] = await conn.query(
+        `SELECT f.file_content, f.file_name, f.mime_type
+         FROM pengajuan_sk_penelitian_files f
+         INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
+         WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         ORDER BY f.created_at DESC LIMIT 1`,
+        [pengajuanJudulId],
       );
-      if (kartuSkripsiFile) {
+      if (skPembimbingRow) {
         await conn.query(
-          `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'KARTU_KONSULTASI_SKRIPSI'`,
-          [existingSidang.id],
+          `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
+          [targetSidangId],
         );
         await conn.query(
           `INSERT INTO pengajuan_sidang_files
              (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-           VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-          [existingSidang.id, kartuSkripsiFile.file_name, MIME_DOCX, kartuSkripsiFile.file_content],
+           VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+          [targetSidangId, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
+        );
+      }
+
+      const [[suratPenyelesaianRow]] = await conn.query(
+        `SELECT f.file_content, f.file_name, f.mime_type
+         FROM pengajuan_sk_penelitian_files f
+         INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
+         WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+         ORDER BY f.created_at DESC LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (suratPenyelesaianRow) {
+        await conn.query(
+          `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+          [targetSidangId],
+        );
+        await conn.query(
+          `INSERT INTO pengajuan_sidang_files
+             (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+           VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
+          [targetSidangId, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
         );
       }
     }
-
-    // Auto-pull SK_PENUNJUKAN_PEMBIMBING
-    const [[skPembimbingRow]] = await conn.query(
-      `SELECT f.file_content, f.file_name, f.mime_type
-       FROM pengajuan_sk_penelitian_files f
-       INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
-       ORDER BY f.created_at DESC LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (skPembimbingRow) {
-      await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
-        [existingSidang.id],
-      );
-      await conn.query(
-        `INSERT INTO pengajuan_sidang_files
-           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [existingSidang.id, skPembimbingRow.file_name, skPembimbingRow.mime_type ?? null, skPembimbingRow.file_content],
-      );
-    }
-
-    // Auto-pull SURAT_PERNYATAAN_PENYELESAIAN
-    const [[suratPenyelesaianRow]] = await conn.query(
-      `SELECT f.file_content, f.file_name, f.mime_type
-       FROM pengajuan_sk_penelitian_files f
-       INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-       WHERE psk.pengajuan_judul_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
-       ORDER BY f.created_at DESC LIMIT 1`,
-      [pengajuanJudulId],
-    );
-    if (suratPenyelesaianRow) {
-      await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
-        [existingSidang.id],
-      );
-      await conn.query(
-        `INSERT INTO pengajuan_sidang_files
-           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SURAT_PERNYATAAN_PENYELESAIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [existingSidang.id, suratPenyelesaianRow.file_name, suratPenyelesaianRow.mime_type ?? null, suratPenyelesaianRow.file_content],
-      );
-    }
+    // Ujian ulang: no system files; student has already uploaded BUKTI_PEMBAYARAN + BAB_1_5
 
     await conn.commit();
     txStarted = false;
@@ -1372,9 +1412,12 @@ exports.getKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
+    const activeSidangForGet = await getActiveSidang(db, pengajuanJudulId);
     const [[kaprodi]] = await db.query(
-      `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      activeSidangForGet
+        ? `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`
+        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
+      [activeSidangForGet ? activeSidangForGet.id : pengajuanJudulId],
     );
     if (!kaprodi) {
       return res.status(404).json({ ok: false, message: "Pengajuan Sidang Kaprodi tidak ditemukan" });
@@ -1454,9 +1497,12 @@ exports.updateKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
     }
 
+    const activeSidangForUpdate = await getActiveSidang(db, pengajuanJudulId);
     const [[kaprodi]] = await db.query(
-      `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      activeSidangForUpdate
+        ? `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`
+        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
+      [activeSidangForUpdate ? activeSidangForUpdate.id : pengajuanJudulId],
     );
     if (!kaprodi) {
       return res.status(404).json({ ok: false, message: "Pengajuan Sidang Kaprodi tidak ditemukan" });
@@ -1537,9 +1583,12 @@ exports.submitKaprodi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    const activeSidangForSubmit = await getActiveSidang(conn, pengajuanJudulId);
     const [[kaprodi]] = await conn.query(
-      `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
-      [pengajuanJudulId],
+      activeSidangForSubmit
+        ? `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`
+        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+      [activeSidangForSubmit ? activeSidangForSubmit.id : pengajuanJudulId],
     );
     if (!kaprodi) {
       await conn.rollback(); txStarted = false;
@@ -1820,13 +1869,14 @@ exports.reviewFileKaprodi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    const sidang = await getActiveSidang(conn, pengajuanJudulId);
     const [[kaprodi]] = await conn.query(
       `SELECT psk.*, m.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
        INNER JOIN pengajuan_judul pj ON pj.id = psk.pengajuan_judul_id
        INNER JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE psk.pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
-      [pengajuanJudulId],
+       WHERE psk.pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
+      [sidang?.id],
     );
     if (!kaprodi) {
       await conn.rollback(); txStarted = false;
@@ -1845,8 +1895,6 @@ exports.reviewFileKaprodi = async (req, res, next) => {
         message: "Review file hanya bisa dilakukan saat Pengajuan Sidang Kaprodi berstatus SUBMITTED",
       });
     }
-
-    const sidang = await getActiveSidang(conn, pengajuanJudulId);
     if (!sidang) {
       await conn.rollback(); txStarted = false;
       return res.status(404).json({ ok: false, message: "Pengajuan Sidang tidak ditemukan" });
@@ -1908,13 +1956,14 @@ exports.reviewKaprodi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    const activeSidangForReview = await getActiveSidang(conn, pengajuanJudulId);
     const [[kaprodi]] = await conn.query(
       `SELECT psk.*, m.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
        INNER JOIN pengajuan_judul pj ON pj.id = psk.pengajuan_judul_id
        INNER JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE psk.pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
-      [pengajuanJudulId],
+       WHERE psk.pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
+      [activeSidangForReview?.id],
     );
     if (!kaprodi) {
       await conn.rollback(); txStarted = false;
@@ -1935,7 +1984,7 @@ exports.reviewKaprodi = async (req, res, next) => {
     }
 
     if (action === "VALID") {
-      const sidang = await getActiveSidang(conn, pengajuanJudulId);
+      const sidang = activeSidangForReview;
       if (!sidang) {
         await conn.rollback(); txStarted = false;
         return res.status(409).json({ ok: false, message: "Belum ada Pengajuan Sidang terkait" });
@@ -2078,13 +2127,15 @@ exports.updateDisposisi = async (req, res, next) => {
     }
     const kaprodiProgramStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
 
+    const activeSidangForUpdate = await getActiveSidang(db, pengajuanJudulId);
     const [[kaprodi]] = await db.query(
       `SELECT psk.*, m.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
        INNER JOIN pengajuan_judul pj ON pj.id = psk.pengajuan_judul_id
        INNER JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE psk.pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+       WHERE psk.pengajuan_sidang_id = ?
+       LIMIT 1`,
+      [activeSidangForUpdate?.id],
     );
     if (!kaprodi) {
       return res.status(404).json({ ok: false, message: "Pengajuan Sidang Kaprodi tidak ditemukan" });
@@ -2154,13 +2205,15 @@ exports.submitDisposisi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    const activeSidangForDisposisi = await getActiveSidang(conn, pengajuanJudulId);
     const [[kaprodi]] = await conn.query(
       `SELECT psk.*, m.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
        INNER JOIN pengajuan_judul pj ON pj.id = psk.pengajuan_judul_id
        INNER JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE psk.pengajuan_judul_id = ? LIMIT 1 FOR UPDATE`,
-      [pengajuanJudulId],
+       WHERE psk.pengajuan_sidang_id = ?
+       LIMIT 1 FOR UPDATE`,
+      [activeSidangForDisposisi?.id],
     );
     if (!kaprodi) {
       await conn.rollback(); txStarted = false;
@@ -2438,6 +2491,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
     }
 
     // Gather all data needed for the surat undangan template
+    // Join pengajuan_sidang_kaprodi via pengajuan_sidang_id to handle ujian ulang (multiple rows per student)
     const [[dataRow]] = await conn.query(
       `SELECT
          pj.npm,
@@ -2464,10 +2518,10 @@ exports.generateSuratUndangan = async (req, res, next) => {
        LEFT JOIN skripsi sk ON sk.pengajuan_judul_id = pj.id
        LEFT JOIN kartu_konsultasi_outline kko ON kko.pengajuan_judul_id = pj.id
        LEFT JOIN pengajuan_sk_penelitian psk ON psk.pengajuan_judul_id = pj.id
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_judul_id = pj.id
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = ?
        WHERE pj.id = ?
        LIMIT 1`,
-      [pengajuanJudulId],
+      [sidang.id, pengajuanJudulId],
     );
 
     const npm = dataRow?.npm ?? "";
@@ -2572,14 +2626,14 @@ exports.generateSuratUndangan = async (req, res, next) => {
     await conn.query(
       `UPDATE pengajuan_sidang_kaprodi
        SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP
-       WHERE pengajuan_judul_id = ?`,
-      [pengajuanJudulId],
+       WHERE pengajuan_sidang_id = ?`,
+      [sidang.id],
     );
 
-    // Auto-create sidang record now that pengajuan_sidang is COMPLETED
+    // Auto-create sidang record for this specific pengajuan_sidang (existence guard per pengajuan_sidang_id)
     const [[existingSidang]] = await conn.query(
-      `SELECT id FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT id FROM sidang WHERE pengajuan_sidang_id = ? LIMIT 1`,
+      [sidang.id],
     );
     if (!existingSidang) {
       const [sidangIns] = await conn.query(

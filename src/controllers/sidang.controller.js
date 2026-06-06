@@ -121,7 +121,7 @@ const NOTULEN_ROLE_LABEL = {
 
 async function getSidangByPengajuanJudulId(conn, pengajuanJudulId) {
   const [[sidang]] = await conn.query(
-    `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+    `SELECT * FROM sidang WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
     [pengajuanJudulId],
   );
   return sidang ?? null;
@@ -873,16 +873,67 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       [sidang.id],
     );
 
-    // Auto-init revisi pasca sidang (existence-guarded)
-    const [[existingRevisi]] = await conn.query(
-      `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+    // Detect re-exam: a prior sidang exists for this student (ujian_ke >= 2)
+    const [[priorSidang]] = await conn.query(
+      `SELECT id FROM sidang WHERE pengajuan_judul_id = ? AND id != ? LIMIT 1`,
+      [pengajuanJudulId, sidang.id],
     );
-    if (!existingRevisi) {
-      await conn.query(
-        `INSERT INTO revisi_pasca_sidang (sidang_id, pengajuan_judul_id, npm) VALUES (?, ?, ?)`,
-        [sidang.id, pengajuanJudulId, sidang.npm],
+    const isUjianUlang = !!priorSidang;
+
+    if (isUjianUlang && hasilSidang === "LULUS") {
+      // Re-exam passed: reset revisi_pasca_sidang so student goes through revisi again
+      const [[existingRevisi]] = await conn.query(
+        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+        [pengajuanJudulId],
       );
+      if (existingRevisi) {
+        const [stageRows] = await conn.query(
+          `SELECT id FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
+          [existingRevisi.id],
+        );
+        const stageIds = stageRows.map((r) => r.id);
+        if (stageIds.length > 0) {
+          await conn.query(
+            `DELETE FROM revisi_pasca_sidang_reviews WHERE stage_id IN (?)`,
+            [stageIds],
+          );
+          await conn.query(
+            `DELETE FROM revisi_pasca_sidang_submissions WHERE stage_id IN (?)`,
+            [stageIds],
+          );
+          await conn.query(
+            `DELETE FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
+            [existingRevisi.id],
+          );
+        }
+        await conn.query(
+          `DELETE FROM revisi_pasca_sidang_files WHERE revisi_id = ?`,
+          [existingRevisi.id],
+        );
+        await conn.query(
+          `UPDATE revisi_pasca_sidang SET sidang_id = ?, is_completed = 0, updated_at = NOW() WHERE id = ?`,
+          [sidang.id, existingRevisi.id],
+        );
+        await conn.query(
+          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, nidn, nama)
+           VALUES (?, 'PENGUJI_2', ?, ?)`,
+          [existingRevisi.id, sidang.penguji2_nidn, sidang.penguji2_nama],
+        );
+      }
+    }
+
+    // Auto-init revisi pasca sidang for original sidang (existence-guarded; re-exam resets above handle it)
+    if (!isUjianUlang) {
+      const [[existingRevisi]] = await conn.query(
+        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
+        [pengajuanJudulId],
+      );
+      if (!existingRevisi) {
+        await conn.query(
+          `INSERT INTO revisi_pasca_sidang (sidang_id, pengajuan_judul_id, npm) VALUES (?, ?, ?)`,
+          [sidang.id, pengajuanJudulId, sidang.npm],
+        );
+      }
     }
 
     await conn.commit();

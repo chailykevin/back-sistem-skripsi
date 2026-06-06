@@ -511,7 +511,8 @@ exports.reviewRevisi = async (req, res, next) => {
       `SELECT rps.*, s.nama_mahasiswa, s.npm AS mahasiswa_npm,
               s.judul_skripsi, s.program_studi_id, s.program_studi_nama, s.tanggal_sidang,
               s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn,
-              s.pembimbing1_nama, s.pembimbing2_nama, s.penguji1_nama, s.penguji2_nama
+              s.pembimbing1_nama, s.pembimbing2_nama, s.penguji1_nama, s.penguji2_nama,
+              s.hasil_sidang
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
        WHERE rps.pengajuan_judul_id = ? LIMIT 1`,
@@ -631,53 +632,55 @@ exports.reviewRevisi = async (req, res, next) => {
           `/revisi-pasca-sidang/${pengajuanJudulId}`,
         );
       } else {
-        // PEMBIMBING_1 approved — last stage, generate documents
-        const sidangForDoc = {
-          judul_skripsi: revisi.judul_skripsi,
-          nama_mahasiswa: revisi.nama_mahasiswa,
-          npm: revisi.mahasiswa_npm,
-          tanggal_sidang: revisi.tanggal_sidang,
-          program_studi_id: revisi.program_studi_id,
-          program_studi_nama: revisi.program_studi_nama,
-          pembimbing1_nidn: revisi.pembimbing1_nidn,
-          pembimbing1_nama: revisi.pembimbing1_nama,
-          pembimbing2_nidn: revisi.pembimbing2_nidn,
-          pembimbing2_nama: revisi.pembimbing2_nama,
-          penguji1_nidn: revisi.penguji1_nidn,
-          penguji1_nama: revisi.penguji1_nama,
-          penguji2_nidn: revisi.penguji2_nidn,
-          penguji2_nama: revisi.penguji2_nama,
-        };
+        // PEMBIMBING_1 approved — last stage
+        if (revisi.hasil_sidang === "LULUS") {
+          const sidangForDoc = {
+            judul_skripsi: revisi.judul_skripsi,
+            nama_mahasiswa: revisi.nama_mahasiswa,
+            npm: revisi.mahasiswa_npm,
+            tanggal_sidang: revisi.tanggal_sidang,
+            program_studi_id: revisi.program_studi_id,
+            program_studi_nama: revisi.program_studi_nama,
+            pembimbing1_nidn: revisi.pembimbing1_nidn,
+            pembimbing1_nama: revisi.pembimbing1_nama,
+            pembimbing2_nidn: revisi.pembimbing2_nidn,
+            pembimbing2_nama: revisi.pembimbing2_nama,
+            penguji1_nidn: revisi.penguji1_nidn,
+            penguji1_nama: revisi.penguji1_nama,
+            penguji2_nidn: revisi.penguji2_nidn,
+            penguji2_nama: revisi.penguji2_nama,
+          };
 
-        const majelisBuffer = await generateHalamanPengesahanMajelisDoc(
-          conn,
-          sidangForDoc,
-        );
-        await conn.query(
-          `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
-           VALUES (?, 'HALAMAN_PENGESAHAN_MAJELIS_PENGUJI', ?, ?)
-           ON DUPLICATE KEY UPDATE file_name = VALUES(file_name), file_content = VALUES(file_content)`,
-          [
-            revisi.id,
-            `Halaman_Pengesahan_Majelis_Penguji_${revisi.mahasiswa_npm}.docx`,
-            majelisBuffer.toString("base64"),
-          ],
-        );
+          const majelisBuffer = await generateHalamanPengesahanMajelisDoc(
+            conn,
+            sidangForDoc,
+          );
+          await conn.query(
+            `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
+             VALUES (?, 'HALAMAN_PENGESAHAN_MAJELIS_PENGUJI', ?, ?)
+             ON DUPLICATE KEY UPDATE file_name = VALUES(file_name), file_content = VALUES(file_content)`,
+            [
+              revisi.id,
+              `Halaman_Pengesahan_Majelis_Penguji_${revisi.mahasiswa_npm}.docx`,
+              majelisBuffer.toString("base64"),
+            ],
+          );
 
-        const dekanBuffer = await generateHalamanPengesahanDekanDoc(
-          conn,
-          sidangForDoc,
-        );
-        await conn.query(
-          `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
-           VALUES (?, 'HALAMAN_PENGESAHAN_DEKAN', ?, ?)
-           ON DUPLICATE KEY UPDATE file_name = VALUES(file_name), file_content = VALUES(file_content)`,
-          [
-            revisi.id,
-            `Halaman_Pengesahan_Dekan_${revisi.mahasiswa_npm}.docx`,
-            dekanBuffer.toString("base64"),
-          ],
-        );
+          const dekanBuffer = await generateHalamanPengesahanDekanDoc(
+            conn,
+            sidangForDoc,
+          );
+          await conn.query(
+            `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
+             VALUES (?, 'HALAMAN_PENGESAHAN_DEKAN', ?, ?)
+             ON DUPLICATE KEY UPDATE file_name = VALUES(file_name), file_content = VALUES(file_content)`,
+            [
+              revisi.id,
+              `Halaman_Pengesahan_Dekan_${revisi.mahasiswa_npm}.docx`,
+              dekanBuffer.toString("base64"),
+            ],
+          );
+        }
 
         await conn.query(
           `UPDATE revisi_pasca_sidang SET is_completed = 1, updated_at = NOW() WHERE id = ?`,
@@ -685,11 +688,15 @@ exports.reviewRevisi = async (req, res, next) => {
         );
 
         const studentUserId = await getUserIdByNpm(conn, revisi.mahasiswa_npm);
+        const completionMessage =
+          revisi.hasil_sidang === "LULUS"
+            ? "Revisi pasca sidang Anda telah selesai. Halaman pengesahan telah digenerate."
+            : "Revisi pasca sidang Anda telah selesai. Silakan daftar ujian ulang.";
         await insertNotification(
           conn,
           studentUserId,
           "REVISI_PASCA_SIDANG",
-          "Revisi pasca sidang Anda telah selesai. Halaman pengesahan telah digenerate.",
+          completionMessage,
           `/revisi-pasca-sidang/${pengajuanJudulId}`,
         );
       }
