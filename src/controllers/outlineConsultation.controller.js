@@ -1027,6 +1027,7 @@ exports.getMyReviewHistory = async (req, res, next) => {
          st.stage,
          r.submission_no,
          r.decision_status,
+         r.catatan_kartu,
          r.reviewed_at,
          rf.id AS review_file_id,
          rf.file_name AS review_file_name,
