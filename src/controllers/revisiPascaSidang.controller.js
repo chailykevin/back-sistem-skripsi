@@ -292,6 +292,17 @@ exports.initRevisi = async (req, res, next) => {
       [pengajuanJudulId],
     );
     if (existing) {
+      const [[existingStage]] = await db.query(
+        `SELECT id FROM revisi_pasca_sidang_stages WHERE revisi_id = ? AND signer_role = 'PENGUJI_2' LIMIT 1`,
+        [existing.id],
+      );
+      if (!existingStage && !existing.is_completed) {
+        await db.query(
+          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, nidn, nama)
+           VALUES (?, 'PENGUJI_2', ?, ?)`,
+          [existing.id, sidang.penguji2_nidn, sidang.penguji2_nama],
+        );
+      }
       return res.json({
         ok: true,
         data: { id: existing.id, isCompleted: !!existing.is_completed },
@@ -699,6 +710,18 @@ exports.reviewRevisi = async (req, res, next) => {
           completionMessage,
           `/revisi-pasca-sidang/${pengajuanJudulId}`,
         );
+
+        if (revisi.hasil_sidang === "TIDAK_LULUS") {
+          const [[{ sidangCount }]] = await conn.query(
+            `SELECT COUNT(*) AS sidangCount FROM sidang WHERE pengajuan_judul_id = ?`,
+            [pengajuanJudulId],
+          );
+          const ujianKe = Number(sidangCount) + 1;
+          await conn.query(
+            `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status, ujian_ke) VALUES (?, 'DRAFT', ?)`,
+            [pengajuanJudulId, ujianKe],
+          );
+        }
       }
     }
 

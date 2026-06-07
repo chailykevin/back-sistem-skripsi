@@ -1,7 +1,116 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const path = require("path");
+const { readFile } = require("fs/promises");
+const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
+
+const BULAN_ID = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+
+function formatDateId(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function checkbox(value) {
+  return value ? "☑" : "☐";
+}
+
+function textPatch(value) {
+  return {
+    type: PatchType.PARAGRAPH,
+    children: [new TextRun(String(value ?? ""))],
+  };
+}
+
+function decodeSignatureToBuffer(signatureValue) {
+  if (signatureValue == null) return null;
+  const raw = String(signatureValue).trim();
+  if (!raw) return null;
+  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  if (dataUrlMatch) {
+    try {
+      const mimeType = dataUrlMatch[1].toLowerCase();
+      const type = mimeType === "jpeg" ? "jpg" : mimeType;
+      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
+    } catch (_) { return null; }
+  }
+  const normalized = raw.replace(/\s+/g, "");
+  const looksLikeBase64 = /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
+  if (looksLikeBase64) {
+    try {
+      const buffer = Buffer.from(normalized, "base64");
+      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
+      return { buffer, type };
+    } catch (_) { return null; }
+  }
+  return null;
+}
+
+function signatureImagePatch(signatureValue) {
+  const decoded = decodeSignatureToBuffer(signatureValue);
+  if (!decoded || decoded.buffer.length === 0) return textPatch("");
+  try {
+    return {
+      type: PatchType.PARAGRAPH,
+      children: [new ImageRun({ type: decoded.type, data: decoded.buffer, transformation: { width: 160, height: 60 } })],
+    };
+  } catch (_) { return textPatch(""); }
+}
+
+async function generateFormulirDoc(data) {
+  const {
+    npm, namaMahasiswa, programStudiNama, noHp, sks, judulSkripsi,
+    pembimbing1DiajukanNama, pembimbing2DiajukanNama,
+    perluSuratPengantar, namaPerusahaan, studentSignature, submittedAt,
+    programStudiNamaUpper, disposisiDate, keputusan,
+    dosenPembimbing1, dosenPembimbing2, catatan,
+    syaratTranskrip, syaratKrs, syaratMetodologi,
+    namaKaprodi, kaprodiSignature,
+  } = data;
+
+  const templateBuffer = await readFile(
+    path.join(__dirname, "../templates/template_formulir_pengajuan_judul_skripsi.docx"),
+  );
+
+  const patches = {
+    npm: textPatch(npm ?? ""),
+    nama_mahasiswa: textPatch(namaMahasiswa ?? ""),
+    nama: textPatch(namaMahasiswa ?? ""),
+    program_studi: textPatch(programStudiNama ?? ""),
+    no_hp: textPatch(noHp ?? ""),
+    sks: textPatch(String(sks ?? "")),
+    judul: textPatch(judulSkripsi ?? ""),
+    calon_dosen_pembimbing_1: textPatch(pembimbing1DiajukanNama ?? ""),
+    calon_dosen_pembimbing_2: textPatch(pembimbing2DiajukanNama ?? ""),
+    perlu_surat_pengantar: textPatch(
+      perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak"
+    ),
+    nama_perusahaan: textPatch(namaPerusahaan || "-"),
+    today_date: textPatch(formatDateId(submittedAt ?? new Date())),
+    signature: signatureImagePatch(studentSignature),
+    nama_program_studi: textPatch(
+      programStudiNamaUpper ?? (programStudiNama ? String(programStudiNama).toUpperCase() : "")
+    ),
+    disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
+    keputusan: textPatch(keputusan ?? ""),
+    dosen_pembimbing_1: textPatch(dosenPembimbing1 ?? ""),
+    dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
+    catatan: textPatch(catatan || "-"),
+    syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
+    syarat_krs: textPatch(checkbox(syaratKrs)),
+    syarat_metodologi: textPatch(checkbox(syaratMetodologi)),
+    nama_kaprodi: textPatch(namaKaprodi ?? ""),
+    kaprodi_signature: signatureImagePatch(kaprodiSignature),
+  };
+
+  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return outputBuffer.toString("base64");
+}
 
 async function upsertSyarat(conn, pengajuanJudulId, syarat) {
   const [existing] = await conn.query(
@@ -154,8 +263,6 @@ exports.review = async (req, res, next) => {
       pembimbing1DitapkanNidn,
       pembimbing2DitapkanNidn,
       catatanKaprodi,
-      filePengajuanJudul,
-      filePengajuanJudulName,
       syaratTranskrip,
       syaratKrs,
       syaratMetodologi,
@@ -422,17 +529,77 @@ exports.review = async (req, res, next) => {
       });
     }
 
-    if (filePengajuanJudul !== undefined && filePengajuanJudul !== null) {
-      await upsertFileByType(
-        conn,
-        id,
-        "PENGAJUAN_JUDUL",
-        String(filePengajuanJudul),
-        filePengajuanJudulName !== undefined && filePengajuanJudulName !== null
-          ? String(filePengajuanJudulName).trim()
-          : null,
-      );
-    }
+    const [reviewDocRows] = await conn.query(
+      `SELECT
+         pj.npm, pj.no_hp, pj.sks_diperoleh, pj.perlu_surat_pengantar, pj.nama_perusahaan,
+         pj.submitted_at,
+         m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
+         ps.nama AS program_studi_nama, ps.kaprodi_nidn,
+         o.judul AS judul_skripsi,
+         d1.nama AS pembimbing1_diajukan_nama,
+         d2.nama AS pembimbing2_diajukan_nama,
+         d3.nama AS pembimbing1_ditetapkan_nama,
+         d4.nama AS pembimbing2_ditetapkan_nama,
+         u_student.signature_image AS student_signature,
+         dkap.nama AS kaprodi_nama,
+         u_kaprodi.signature_image AS kaprodi_signature
+       FROM pengajuan_judul pj
+       JOIN mahasiswa m ON m.npm = pj.npm
+       JOIN program_studi ps ON ps.id = pj.program_studi_id
+       JOIN outline o ON o.id = pj.outline_id
+       LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
+       LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
+       LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
+       LEFT JOIN users u_student ON u_student.npm = pj.npm AND u_student.is_active = 1
+       LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
+       LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn AND u_kaprodi.is_active = 1
+       WHERE pj.id = ?
+       LIMIT 1`,
+      [id],
+    );
+    const rd = reviewDocRows[0] ?? {};
+
+    const keputusanMap = { APPROVED: "Diterima", NEED_REVISION: "Perlu Revisi", REJECTED: "Ditolak" };
+    const [currentSyaratForDoc] = await conn.query(
+      `SELECT syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
+       FROM pengajuan_judul_syarat WHERE pengajuan_judul_id = ? LIMIT 1`,
+      [id],
+    );
+    const syaratDoc = currentSyaratForDoc[0] ?? {};
+
+    const reviewFormulirBase64 = await generateFormulirDoc({
+      npm: rd.npm,
+      namaMahasiswa: rd.nama_mahasiswa,
+      programStudiNama: rd.program_studi_nama,
+      noHp: rd.no_hp,
+      sks: rd.sks_diperoleh ?? rd.mahasiswa_sks,
+      judulSkripsi: rd.judul_skripsi,
+      pembimbing1DiajukanNama: rd.pembimbing1_diajukan_nama ?? "",
+      pembimbing2DiajukanNama: rd.pembimbing2_diajukan_nama ?? "",
+      perluSuratPengantar: Boolean(rd.perlu_surat_pengantar),
+      namaPerusahaan: rd.nama_perusahaan ?? null,
+      studentSignature: rd.student_signature,
+      submittedAt: rd.submitted_at ? new Date(rd.submitted_at) : new Date(),
+      programStudiNamaUpper: rd.program_studi_nama ? String(rd.program_studi_nama).toUpperCase() : "",
+      disposisiDate: new Date(),
+      keputusan: keputusanMap[status] ?? status,
+      dosenPembimbing1: rd.pembimbing1_ditetapkan_nama ?? "",
+      dosenPembimbing2: rd.pembimbing2_ditetapkan_nama ?? "",
+      catatan: catatanKaprodi ?? null,
+      syaratTranskrip: Boolean(syaratDoc.syarat_transkrip),
+      syaratKrs: Boolean(syaratDoc.syarat_krs),
+      syaratMetodologi: Boolean(syaratDoc.syarat_metodologi_nilai_min_c),
+      namaKaprodi: rd.kaprodi_nama ?? "",
+      kaprodiSignature: rd.kaprodi_signature,
+    });
+    await upsertFileByType(
+      conn,
+      id,
+      "PENGAJUAN_JUDUL",
+      reviewFormulirBase64,
+      "formulir_pengajuan_judul_skripsi.docx",
+    );
 
     const [reviewedRows] = await conn.query(
       `SELECT pj.npm, m.nama AS nama_mahasiswa,
