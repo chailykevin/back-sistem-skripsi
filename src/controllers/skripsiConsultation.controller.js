@@ -1093,28 +1093,31 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           generatedByUserId: req.user.id,
         });
 
-        // Auto-init pengajuan_sidang_kaprodi + pengajuan_sidang DRAFT
-        const [[existingKaprodi]] = await conn.query(
-          `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_judul_id = ? LIMIT 1`,
+        // Auto-init pengajuan_sidang DRAFT first, then pengajuan_sidang_kaprodi linked to it
+        let [[existingSidang]] = await conn.query(
+          `SELECT id FROM pengajuan_sidang
+           WHERE pengajuan_judul_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+           ORDER BY id DESC LIMIT 1`,
           [stage.pengajuan_judul_id],
+        );
+        let autoSidangId = existingSidang?.id ?? null;
+        if (!autoSidangId) {
+          const [sidangIns] = await conn.query(
+            `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
+            [stage.pengajuan_judul_id],
+          );
+          autoSidangId = sidangIns.insertId;
+        }
+
+        const [[existingKaprodi]] = await conn.query(
+          `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+          [autoSidangId],
         );
         if (!existingKaprodi) {
           await conn.query(
-            `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
-            [stage.pengajuan_judul_id],
+            `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_judul_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
+            [stage.pengajuan_judul_id, autoSidangId],
           );
-          const [[existingSidang]] = await conn.query(
-            `SELECT id FROM pengajuan_sidang
-             WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','REJECTED')
-             LIMIT 1`,
-            [stage.pengajuan_judul_id],
-          );
-          if (!existingSidang) {
-            await conn.query(
-              `INSERT INTO pengajuan_sidang (pengajuan_judul_id, status) VALUES (?, 'DRAFT')`,
-              [stage.pengajuan_judul_id],
-            );
-          }
         }
       }
     }

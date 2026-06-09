@@ -750,10 +750,15 @@ exports.initPengajuanSidang = async (req, res, next) => {
       }
     }
 
-    // Block if there is already an active (non-terminal) pengajuan_sidang
+    // Block if there is already an active (non-terminal) pengajuan_sidang.
+    // WAITING_FOR_DISPOSISI and WAITING_FOR_SURAT are in-progress, not terminal,
+    // so they must also prevent creating a new row.
     const [[activeRow]] = await conn.query(
       `SELECT id, status, submitted_at FROM pengajuan_sidang
-       WHERE pengajuan_judul_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
+       WHERE pengajuan_judul_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+       ORDER BY
+         CASE WHEN status = 'DRAFT' AND submitted_at IS NULL THEN 0 ELSE 1 END ASC,
+         created_at DESC
        LIMIT 1`,
       [pengajuanJudulId],
     );
@@ -773,11 +778,13 @@ exports.initPengajuanSidang = async (req, res, next) => {
       ) {
         sidangId = activeRow.id;
       } else {
+        // Row exists and is in-progress (SUBMITTED, WAITING_FOR_DISPOSISI, etc.) — return idempotently
         await conn.rollback();
         txStarted = false;
-        return res.status(409).json({
-          ok: false,
-          message: "Masih ada Pengajuan Sidang yang aktif",
+        return res.status(200).json({
+          ok: true,
+          message: "Pengajuan Sidang sudah ada",
+          data: { id: activeRow.id },
         });
       }
     } else {
