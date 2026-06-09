@@ -363,17 +363,11 @@ exports.submitNotulen = async (req, res, next) => {
         .json({ ok: false, message: "Hanya dosen yang dapat mengisi notulen" });
     }
 
-    const { note, hasilSidang } = req.body;
-    if (!note || !hasilSidang) {
+    const { note } = req.body;
+    if (!note) {
       return res
         .status(400)
-        .json({ ok: false, message: "note dan hasilSidang wajib diisi" });
-    }
-    if (!["LULUS", "TIDAK_LULUS"].includes(hasilSidang)) {
-      return res.status(400).json({
-        ok: false,
-        message: "hasilSidang harus LULUS atau TIDAK_LULUS",
-      });
+        .json({ ok: false, message: "note wajib diisi" });
     }
 
     await conn.beginTransaction();
@@ -412,43 +406,11 @@ exports.submitNotulen = async (req, res, next) => {
       });
     }
 
-    const tanggalFormatted = sidang.tanggal_sidang
-      ? formatTanggal(new Date(sidang.tanggal_sidang))
-      : "";
-
-    const templatePath = path.join(
-      __dirname,
-      "../templates/template_notulen_penguji.docx",
-    );
-    const templateBuffer = await readFile(templatePath);
-    const outputBuffer = await patchDocument({
-      outputType: "nodebuffer",
-      data: templateBuffer,
-      patches: {
-        npm: textPatch(sidang.npm),
-        nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-        prodi: textPatch(sidang.program_studi_nama),
-        judul_skripsi: textPatch(sidang.judul_skripsi),
-        nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-        nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-        tanggal_sidang: textPatch(tanggalFormatted),
-        hasil_sidang: textPatch(hasilSidang),
-        role: textPatch(NOTULEN_ROLE_LABEL[role]),
-        note: textPatch(note),
-        nama_penguji: textPatch(
-          role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-        ),
-        ttd_penguji: signaturePatch(null),
-      },
-    });
-    const fileBase64 = outputBuffer.toString("base64");
-    const fileName = `Notulen_${role}_${sidang.npm}.docx`;
-
     await conn.query(
       `UPDATE sidang_notulen
-       SET note = ?, hasil_sidang = ?, file_content = ?, file_name = ?, submitted_at = NOW(), updated_at = NOW()
+       SET note = ?, submitted_at = NOW(), updated_at = NOW()
        WHERE sidang_id = ? AND role = ?`,
-      [note, hasilSidang, fileBase64, fileName, sidang.id, role],
+      [note, sidang.id, role],
     );
 
     await conn.commit();
@@ -854,6 +816,9 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       [hasilSidang, catatanPenguji ?? null, sidang.id],
     );
 
+    // Generate notulen DOCXs now that hasil_sidang is authoritative
+    await generateAndStoreNotulen(conn, sidang, hasilSidang);
+
     // Generate Berita Acara
     await generateAndStoreBeritaAcara(conn, sidang, {
       hasilSidang,
@@ -947,6 +912,58 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     conn.release();
   }
 };
+
+async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
+  try {
+    const [notulenRows] = await conn.query(
+      `SELECT role, note, nidn FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
+      [sidang.id],
+    );
+    if (notulenRows.length === 0) return;
+
+    const templatePath = path.join(
+      __dirname,
+      "../templates/template_notulen_penguji.docx",
+    );
+    const templateBuffer = await readFile(templatePath);
+    const tanggalFormatted = sidang.tanggal_sidang
+      ? formatTanggal(new Date(sidang.tanggal_sidang))
+      : "";
+
+    for (const row of notulenRows) {
+      const role = row.role;
+      const outputBuffer = await patchDocument({
+        outputType: "nodebuffer",
+        data: templateBuffer,
+        patches: {
+          npm: textPatch(sidang.npm),
+          nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
+          prodi: textPatch(sidang.program_studi_nama),
+          judul_skripsi: textPatch(sidang.judul_skripsi),
+          nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
+          nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
+          tanggal_sidang: textPatch(tanggalFormatted),
+          hasil_sidang: textPatch(hasilSidang),
+          role: textPatch(NOTULEN_ROLE_LABEL[role]),
+          note: textPatch(row.note),
+          nama_penguji: textPatch(
+            role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
+          ),
+          ttd_penguji: signaturePatch(null),
+        },
+      });
+      const fileBase64 = outputBuffer.toString("base64");
+      await conn.query(
+        `UPDATE sidang_notulen
+         SET hasil_sidang = ?, file_content = ?, file_name = ?, updated_at = NOW()
+         WHERE sidang_id = ? AND role = ?`,
+        [hasilSidang, fileBase64, `Notulen_${role}_${sidang.npm}.docx`, sidang.id, role],
+      );
+    }
+  } catch (err) {
+    console.error("generateAndStoreNotulen error (non-fatal):", err);
+  }
+}
 
 async function generateAndStoreBeritaAcara(
   conn,
@@ -1116,6 +1133,10 @@ exports.getLecturerSidang = async (req, res, next) => {
 
 async function resolveSidangFileAccess(req, sidang) {
   if (req.user.hasRole("SEKRETARIAT") || req.user.hasRole("KAPRODI")) return true;
+  if (req.user.hasRole("STUDENT")) {
+    const npm = await getStudentNpm(req.user.id);
+    return npm === sidang.npm;
+  }
   const nidn = await getLecturerNidn(req.user.id);
   return nidn ? resolveSidangRole(sidang, nidn) !== null : false;
 }
