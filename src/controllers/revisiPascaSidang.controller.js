@@ -21,6 +21,11 @@ const BULAN_ID = [
 
 const STAGE_ORDER = ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"];
 
+const NOTULEN_ROLE_LABEL = {
+  PENGUJI_1: "Penguji Utama",
+  PENGUJI_2: "Anggota Penguji",
+};
+
 function formatTanggal(date) {
   return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
 }
@@ -615,6 +620,62 @@ exports.reviewRevisi = async (req, res, next) => {
       const currentRoleIndex = STAGE_ORDER.indexOf(activeStage.signer_role);
       const nextRole = STAGE_ORDER[currentRoleIndex + 1] ?? null;
 
+      if (["PENGUJI_2", "PENGUJI_1"].includes(activeStage.signer_role)) {
+        try {
+          const [[notulenRow]] = await conn.query(
+            `SELECT sn.*, s.npm, s.nama_mahasiswa, s.program_studi_nama,
+                    s.judul_skripsi, s.pembimbing1_nama, s.pembimbing2_nama,
+                    s.penguji1_nama, s.penguji2_nama, s.tanggal_sidang
+             FROM sidang_notulen sn
+             JOIN sidang s ON s.id = sn.sidang_id
+             WHERE sn.sidang_id = ? AND sn.role = ?`,
+            [revisi.sidang_id, activeStage.signer_role],
+          );
+          if (notulenRow && notulenRow.submitted_at) {
+            const sigImage = await getSigByNidn(conn, activeStage.nidn);
+            const templateBuffer = await readFile(
+              path.join(__dirname, "../templates/template_notulen_penguji.docx"),
+            );
+            const outputBuffer = await patchDocument({
+              outputType: "nodebuffer",
+              data: templateBuffer,
+              patches: {
+                npm: textPatch(notulenRow.npm),
+                nama_mahasiswa: textPatch(notulenRow.nama_mahasiswa),
+                prodi: textPatch(notulenRow.program_studi_nama),
+                judul_skripsi: textPatch(notulenRow.judul_skripsi),
+                nama_pembimbing1: textPatch(notulenRow.pembimbing1_nama),
+                nama_pembimbing2: textPatch(notulenRow.pembimbing2_nama),
+                tanggal_sidang: textPatch(
+                  notulenRow.tanggal_sidang
+                    ? formatTanggal(new Date(notulenRow.tanggal_sidang))
+                    : "",
+                ),
+                hasil_sidang: textPatch(notulenRow.hasil_sidang),
+                role: textPatch(NOTULEN_ROLE_LABEL[activeStage.signer_role]),
+                note: textPatch(notulenRow.note),
+                nama_penguji: textPatch(
+                  activeStage.signer_role === "PENGUJI_1"
+                    ? notulenRow.penguji1_nama
+                    : notulenRow.penguji2_nama,
+                ),
+                ttd_penguji: signaturePatch(sigImage),
+              },
+            });
+            await conn.query(
+              `UPDATE sidang_notulen SET file_content = ?, updated_at = NOW() WHERE sidang_id = ? AND role = ?`,
+              [
+                outputBuffer.toString("base64"),
+                revisi.sidang_id,
+                activeStage.signer_role,
+              ],
+            );
+          }
+        } catch (_) {
+          // non-fatal: notulen regeneration failure must not block revisi approval
+        }
+      }
+
       if (nextRole) {
         const nextNidn = getNidnForRole(revisi, nextRole);
         const nextNama = getNamaForRole(revisi, nextRole);
@@ -755,7 +816,8 @@ exports.getRevisi = async (req, res, next) => {
 
     const [[revisi]] = await db.query(
       `SELECT rps.*, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn,
-              s.nama_mahasiswa, s.npm AS mahasiswa_npm, s.judul_skripsi, s.status AS sidang_status
+              s.nama_mahasiswa, s.npm AS mahasiswa_npm, s.judul_skripsi, s.status AS sidang_status,
+              s.hasil_sidang
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
        WHERE rps.pengajuan_judul_id = ? LIMIT 1`,

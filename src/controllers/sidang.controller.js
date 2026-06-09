@@ -412,11 +412,6 @@ exports.submitNotulen = async (req, res, next) => {
       });
     }
 
-    const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
-    );
-
     const tanggalFormatted = sidang.tanggal_sidang
       ? formatTanggal(new Date(sidang.tanggal_sidang))
       : "";
@@ -443,7 +438,7 @@ exports.submitNotulen = async (req, res, next) => {
         nama_penguji: textPatch(
           role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
         ),
-        ttd_penguji: signaturePatch(sigRow?.signature_image),
+        ttd_penguji: signaturePatch(null),
       },
     });
     const fileBase64 = outputBuffer.toString("base64");
