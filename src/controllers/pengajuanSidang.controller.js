@@ -1,6 +1,7 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const { sendSuratUndangan } = require("../utils/email");
+const { getOpenPeriod: getSidangOpenPeriod } = require("../services/sidangSubmissionPeriod.service");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -785,9 +786,24 @@ exports.initPengajuanSidang = async (req, res, next) => {
       );
       const ujianKe = Number(sidangCount) + 1;
 
+      // Gate by period for original flow only (ujian ulang is exempt)
+      let sidangPeriodId = null;
+      if (!isUjianUlang) {
+        const openPeriod = await getSidangOpenPeriod();
+        if (!openPeriod) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message: "Tidak ada periode pengajuan sidang yang sedang dibuka.",
+          });
+        }
+        sidangPeriodId = openPeriod.id;
+      }
+
       const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', ?)`,
-        [skripsiId, ujianKe],
+        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', ?, ?)`,
+        [skripsiId, ujianKe, sidangPeriodId],
       );
       sidangId = ins.insertId;
       isNew = true;
@@ -1158,6 +1174,19 @@ exports.submitPengajuanSidang = async (req, res, next) => {
         message:
           "Pengajuan Sidang hanya bisa disubmit saat status DRAFT atau NEED_REVISION",
       });
+    }
+
+    // Gate by period: only on first-time submit (original flow, DRAFT status)
+    if (sidang.ujian_ke === 1 && sidang.status === "DRAFT") {
+      const openPeriod = await getSidangOpenPeriod();
+      if (!openPeriod) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Tidak ada periode pengajuan sidang yang sedang dibuka.",
+        });
+      }
     }
 
     const [[skripsiForSubmit]] = await conn.query(
@@ -1736,10 +1765,21 @@ exports.initKaprodi = async (req, res, next) => {
       }
     }
 
+    const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
+
+    // Gate by period for original flow only (ujian ulang is exempt)
+    if (!isUjianUlang) {
+      const openPeriod = await getSidangOpenPeriod();
+      if (!openPeriod) {
+        return res.status(409).json({
+          ok: false,
+          message: "Tidak ada periode pengajuan sidang yang sedang dibuka.",
+        });
+      }
+    }
+
     await conn.beginTransaction();
     txStarted = true;
-
-    const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
 
     const [ins] = await conn.query(
       `INSERT INTO pengajuan_sidang_kaprodi (skripsi_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
