@@ -1,32 +1,32 @@
-const router = require("express").Router();
+﻿const router = require("express").Router();
 const auth = require("../middlewares/auth");
 const c = require("../controllers/outlineConsultation.controller");
 
 router.post(
-  "/internal/pengajuan-judul/:pengajuanJudulId/kartu-konsultasi-outline/init",
+  "/internal/pengajuan-judul/:pengajuanDisposisiPembimbingId/kartu-konsultasi-outline/init",
   auth,
   c.initFromApprovedPengajuan,
 );
 
 router.get("/outline-consultations/me", auth, c.listMine);
-router.get("/outline-consultations/me/:pengajuanJudulId", auth, c.getMyDetail);
+router.get("/outline-consultations/me/:pengajuanDisposisiPembimbingId", auth, c.getMyDetail);
 router.post(
-  "/outline-consultations/me/:pengajuanJudulId/submissions",
+  "/outline-consultations/me/:pengajuanDisposisiPembimbingId/submissions",
   auth,
   c.submitMyOutline,
 );
 router.get(
-  "/outline-consultations/me/:pengajuanJudulId/reviews",
+  "/outline-consultations/me/:pengajuanDisposisiPembimbingId/reviews",
   auth,
   c.getMyReviewHistory,
 );
 router.get(
-  "/outline-consultations/me/:pengajuanJudulId/kartu",
+  "/outline-consultations/me/:pengajuanDisposisiPembimbingId/kartu",
   auth,
   c.getMyKartu,
 );
 router.get(
-  "/outline-consultations/:pengajuanJudulId/kartu/final",
+  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/final",
   auth,
   c.getMyFinalKartuFile,
 );
@@ -39,7 +39,7 @@ router.get(
 );
 router.get("/kaprodi/outline-consultations", auth, c.listForKaprodi);
 router.get(
-  "/kaprodi/outline-consultations/:pengajuanJudulId",
+  "/kaprodi/outline-consultations/:pengajuanDisposisiPembimbingId",
   auth,
   c.getDetailForKaprodi,
 );
@@ -60,17 +60,17 @@ router.post(
 );
 
 router.post(
-  "/outline-consultations/:pengajuanJudulId/kartu/finalize",
+  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/finalize",
   auth,
   c.finalizeKartu,
 );
 router.get(
-  "/outline-consultations/:pengajuanJudulId/kartu/preview-docx",
+  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/preview-docx",
   auth,
   c.previewKartuDocx,
 );
 router.get(
-  "/outline-consultations/:pengajuanJudulId/kartu/files",
+  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/files",
   auth,
   c.getKartuFiles,
 );

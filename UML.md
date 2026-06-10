@@ -1,4 +1,4 @@
-# UML Documentation: Sistem Skripsi
+﻿# UML Documentation: Sistem Skripsi
 
 ## Style Guide
 
@@ -43,11 +43,11 @@ This section defines how Use Cases, Activity Diagrams, and Sequence Diagrams sho
   - Always include `Database` as the last lifeline
 - **Message conventions:**
   - Actor → Page: plain Bahasa Indonesia action description, e.g. `Membuka halaman SK Penelitian`
-  - Page → Database: method call with parameters, e.g. `getSKPenelitian(pengajuanJudulId)`
+  - Page → Database: method call with parameters, e.g. `getSKPenelitian(pengajuanDisposisiPembimbingId)`
   - Database → Page: specific return properties, e.g. `statusSKPenelitian, catatanRevisi, berkasYangPerluDilengkapi` — never use vague terms like "Return data" or "berkas"
   - Page → Actor: display or feedback calls, e.g. `viewHalamanSKPenelitian()`, `showSuccessMessage()`, `showErrorMessage()`
   - Page → Page (self-call): used for validation, e.g. `validateData()`
-  - Navigation between pages: `navigateTo[NamaHalaman](params)` — always include route parameters needed by the target page, e.g. `navigateToHalamanDetailSKPenelitian(pengajuanJudulId)`, `navigateToHalamanDetailKonsultasiSkripsi(stageId)`
+  - Navigation between pages: `navigateTo[NamaHalaman](params)` — always include route parameters needed by the target page, e.g. `navigateToHalamanDetailSKPenelitian(pengajuanDisposisiPembimbingId)`, `navigateToHalamanDetailKonsultasiSkripsi(stageId)`
 - **Alt frames:**
   - Used for branching conditions, written as `alt [Condition]`
   - Failed preconditions branch to `showErrorMessage()` then `END`
@@ -657,20 +657,20 @@ END
 **Lifelines:** Mahasiswa | Halaman Pengajuan Sidang | Database
 
 Mahasiswa → Halaman Pengajuan Sidang: Membuka halaman Pengajuan Sidang
-Halaman Pengajuan Sidang → Database: getStatusKonsultasiSkripsi(pengajuanJudulId)
+Halaman Pengajuan Sidang → Database: getStatusKonsultasiSkripsi(pengajuanDisposisiPembimbingId)
 Database → Halaman Pengajuan Sidang: statusSkripsi
 
 alt [Konsultasi skripsi belum COMPLETED]
 Halaman Pengajuan Sidang → Mahasiswa: showErrorMessage() → END
 
 alt [Konsultasi skripsi COMPLETED]
-Halaman Pengajuan Sidang → Database: getPengajuanSidangKaprodi(pengajuanJudulId)
+Halaman Pengajuan Sidang → Database: getPengajuanSidangKaprodi(pengajuanDisposisiPembimbingId)
 Database → Halaman Pengajuan Sidang: kaprodiId, statusKaprodi, catatanKaprodi, dataDiri, dataPenguji, berkas | null
 
 alt [Belum ada pengajuan]
 Halaman Pengajuan Sidang → Mahasiswa: viewHalamanPengajuanSidang(statusKaprodi: null)
 Mahasiswa → Halaman Pengajuan Sidang: Menekan tombol Mulai Pengajuan Sidang
-Halaman Pengajuan Sidang → Database: initPengajuanSidangKaprodi(pengajuanJudulId)
+Halaman Pengajuan Sidang → Database: initPengajuanSidangKaprodi(pengajuanDisposisiPembimbingId)
 Database → Halaman Pengajuan Sidang: kaprodiId, sidangId
 Halaman Pengajuan Sidang → Database: getSystemFiles(sidangId)
 Database → Halaman Pengajuan Sidang: kartuKonsultasiSkripsi, skPenunjukanPembimbing, suratPernyataanPenyelesaian
@@ -767,14 +767,14 @@ END
 **Lifelines:** Mahasiswa | Halaman Pengajuan Sidang | Database
 
 Mahasiswa → Halaman Pengajuan Sidang: Membuka halaman Pengajuan Sidang
-Halaman Pengajuan Sidang → Database: getPengajuanSidangKaprodi(pengajuanJudulId)
+Halaman Pengajuan Sidang → Database: getPengajuanSidangKaprodi(pengajuanDisposisiPembimbingId)
 Database → Halaman Pengajuan Sidang: statusKaprodi
 
 alt [Kaprodi belum VALID]
 Halaman Pengajuan Sidang → Mahasiswa: showErrorMessage() → END
 
 alt [Kaprodi sudah VALID]
-Halaman Pengajuan Sidang → Database: initAndGetPengajuanSidang(pengajuanJudulId)
+Halaman Pengajuan Sidang → Database: initAndGetPengajuanSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Pengajuan Sidang: sidangId, statusSidang, catatanSekretariat, daftarBerkas, statusVerifikasiPerBerkas
 Halaman Pengajuan Sidang → Mahasiswa: viewHalamanPengajuanSidang(statusSidang, catatanSekretariat, daftarBerkas, statusVerifikasiPerBerkas)
 
@@ -895,7 +895,7 @@ Database → Halaman Disposisi Sidang: daftarPengajuan, statusKaprodi, jadwalSid
 Halaman Disposisi Sidang → Sekretariat: viewHalamanDisposisiSidang()
 
 Sekretariat → Halaman Disposisi Sidang: Menekan tombol Buat Surat Undangan pada pengajuan yang sudah DISPOSISI_SENT
-Halaman Disposisi Sidang → Database: generateSuratUndanganSidang(pengajuanJudulId)
+Halaman Disposisi Sidang → Database: generateSuratUndanganSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Disposisi Sidang: statusSidang, fileSuratUndangan
 
 Halaman Disposisi Sidang → Sekretariat: showSuccessMessage()
@@ -960,14 +960,14 @@ END
 **Lifelines:** Mahasiswa | Halaman Konsultasi Skripsi | Database
 
 Mahasiswa → Halaman Konsultasi Skripsi: Membuka halaman Konsultasi Skripsi
-Halaman Konsultasi Skripsi → Database: getStatusSKPenelitian(pengajuanJudulId)
+Halaman Konsultasi Skripsi → Database: getStatusSKPenelitian(pengajuanDisposisiPembimbingId)
 Database → Halaman Konsultasi Skripsi: statusSKPenelitian
 
 alt [SK Penelitian belum COMPLETED]
 Halaman Konsultasi Skripsi → Mahasiswa: showErrorMessage() → END
 
 alt [SK Penelitian COMPLETED]
-Halaman Konsultasi Skripsi → Database: getKartuKonsultasiSkripsi(pengajuanJudulId)
+Halaman Konsultasi Skripsi → Database: getKartuKonsultasiSkripsi(pengajuanDisposisiPembimbingId)
 Database → Halaman Konsultasi Skripsi: kartuData | null
 
 alt [Kartu sudah dibuat]
@@ -976,11 +976,11 @@ Halaman Konsultasi Skripsi → Mahasiswa: showErrorMessage() → END
 alt [Kartu belum dibuat]
 Halaman Konsultasi Skripsi → Mahasiswa: viewHalamanKonsultasiSkripsi()
 Mahasiswa → Halaman Konsultasi Skripsi: Menekan tombol Mulai Konsultasi Skripsi
-Halaman Konsultasi Skripsi → Database: getPengajuanJudulData(pengajuanJudulId)
+Halaman Konsultasi Skripsi → Database: getPengajuanJudulData(pengajuanDisposisiPembimbingId)
 Database → Halaman Konsultasi Skripsi: namaMahasiswa, judulSkripsi, programStudiId, programStudiNama, pembimbing1Nidn, pembimbing1Nama, pembimbing2Nidn, pembimbing2Nama
-Halaman Konsultasi Skripsi → Database: saveKartuKonsultasiSkripsi(pengajuanJudulId, namaMahasiswa, judulSkripsi, programStudiId, programStudiNama, pembimbing1Nidn, pembimbing1Nama, pembimbing2Nidn, pembimbing2Nama)
+Halaman Konsultasi Skripsi → Database: saveKartuKonsultasiSkripsi(pengajuanDisposisiPembimbingId, namaMahasiswa, judulSkripsi, programStudiId, programStudiNama, pembimbing1Nidn, pembimbing1Nama, pembimbing2Nidn, pembimbing2Nama)
 Database → Halaman Konsultasi Skripsi: kartuId
-Halaman Konsultasi Skripsi → Database: saveStageAwal(kartuId, pengajuanJudulId, pembimbing2Nidn)
+Halaman Konsultasi Skripsi → Database: saveStageAwal(kartuId, pengajuanDisposisiPembimbingId, pembimbing2Nidn)
 Database → Halaman Konsultasi Skripsi: stageId
 Halaman Konsultasi Skripsi → Mahasiswa: showSuccessMessage()
 
@@ -990,7 +990,7 @@ END
 **Lifelines:** Mahasiswa | Halaman Konsultasi Skripsi | Database
 
 Mahasiswa → Halaman Konsultasi Skripsi: Membuka halaman Konsultasi Skripsi
-Halaman Konsultasi Skripsi → Database: getKartuKonsultasiSkripsi(pengajuanJudulId)
+Halaman Konsultasi Skripsi → Database: getKartuKonsultasiSkripsi(pengajuanDisposisiPembimbingId)
 Database → Halaman Konsultasi Skripsi: kartuId, isCompleted, stageAktif (untuk ditampilkan ke pengguna)
 Halaman Konsultasi Skripsi → Mahasiswa: viewHalamanKonsultasiSkripsi()
 
@@ -1065,19 +1065,19 @@ Halaman Detail Konsultasi Skripsi → Database: updateSignatureDospem(kartuId, s
 Database → Halaman Detail Konsultasi Skripsi: ok
 
 alt [Keputusan CONTINUE — Pembimbing 2]
-Halaman Detail Konsultasi Skripsi → Database: saveStageBaruPembimbing1(kartuId, pengajuanJudulId, chapterGroup, pembimbing1Nidn)
+Halaman Detail Konsultasi Skripsi → Database: saveStageBaruPembimbing1(kartuId, pengajuanDisposisiPembimbingId, chapterGroup, pembimbing1Nidn)
 Database → Halaman Detail Konsultasi Skripsi: stageId
 Halaman Detail Konsultasi Skripsi → Dospem: showSuccessMessage() → END
 
 alt [Keputusan ACCEPTED — Pembimbing 1, masih ada bab berikutnya]
-Halaman Detail Konsultasi Skripsi → Database: saveStageBaruPembimbing2(kartuId, pengajuanJudulId, nextChapterGroup, pembimbing2Nidn)
+Halaman Detail Konsultasi Skripsi → Database: saveStageBaruPembimbing2(kartuId, pengajuanDisposisiPembimbingId, nextChapterGroup, pembimbing2Nidn)
 Database → Halaman Detail Konsultasi Skripsi: stageId
 Halaman Detail Konsultasi Skripsi → Dospem: showSuccessMessage() → END
 
 alt [Keputusan ACCEPTED — Pembimbing 1, Bab 5 selesai]
 Halaman Detail Konsultasi Skripsi → Database: updateKartuSelesai(kartuId)
 Database → Halaman Detail Konsultasi Skripsi: ok
-Halaman Detail Konsultasi Skripsi → Database: generateAndSaveKartuDocx(kartuId, pengajuanJudulId)
+Halaman Detail Konsultasi Skripsi → Database: generateAndSaveKartuDocx(kartuId, pengajuanDisposisiPembimbingId)
 Database → Halaman Detail Konsultasi Skripsi: fileName
 Halaman Detail Konsultasi Skripsi → Database: updateSkripsiCompleted(npm)
 Database → Halaman Detail Konsultasi Skripsi: ok
@@ -1089,12 +1089,12 @@ END
 **Lifelines:** Mahasiswa / Dospem / Kaprodi | Halaman Konsultasi Skripsi | Database
 
 Mahasiswa / Dospem / Kaprodi → Halaman Konsultasi Skripsi: Membuka halaman Konsultasi Skripsi
-Halaman Konsultasi Skripsi → Database: getKartuKonsultasiSkripsi(pengajuanJudulId)
+Halaman Konsultasi Skripsi → Database: getKartuKonsultasiSkripsi(pengajuanDisposisiPembimbingId)
 Database → Halaman Konsultasi Skripsi: kartuId, isCompleted, stageAktif
 Halaman Konsultasi Skripsi → Mahasiswa / Dospem / Kaprodi: viewHalamanKonsultasiSkripsi()
 
 Mahasiswa / Dospem / Kaprodi → Halaman Konsultasi Skripsi: Menekan tombol unduh kartu
-Halaman Konsultasi Skripsi → Database: getKartuDocx(kartuId, pengajuanJudulId)
+Halaman Konsultasi Skripsi → Database: getKartuDocx(kartuId, pengajuanDisposisiPembimbingId)
 Database → Halaman Konsultasi Skripsi: fileContent, fileName | null
 
 alt [Dokumen tidak ditemukan]
@@ -1115,8 +1115,8 @@ Database → Halaman Daftar Konsultasi Skripsi: daftarKartu, activeChapterGroup,
 Halaman Daftar Konsultasi Skripsi → Kaprodi: viewDaftarKonsultasiSkripsi()
 
 Kaprodi → Halaman Daftar Konsultasi Skripsi: Memilih mahasiswa untuk melihat detail
-Halaman Daftar Konsultasi Skripsi → Halaman Detail Konsultasi Skripsi: navigateToHalamanDetailKonsultasiSkripsi(pengajuanJudulId)
-Halaman Detail Konsultasi Skripsi → Database: getDetailKonsultasiSkripsi(pengajuanJudulId)
+Halaman Daftar Konsultasi Skripsi → Halaman Detail Konsultasi Skripsi: navigateToHalamanDetailKonsultasiSkripsi(pengajuanDisposisiPembimbingId)
+Halaman Detail Konsultasi Skripsi → Database: getDetailKonsultasiSkripsi(pengajuanDisposisiPembimbingId)
 Database → Halaman Detail Konsultasi Skripsi: kartu, stages, submissions, reviews, activeStageResolution
 Halaman Detail Konsultasi Skripsi → Kaprodi: viewDetailKonsultasiSkripsi()
 
@@ -1130,7 +1130,7 @@ END
 **Lifelines:** Mahasiswa | Halaman SK Penelitian | Database
 
 Mahasiswa → Halaman SK Penelitian: Membuka halaman SK Penelitian
-Halaman SK Penelitian → Database: getStatusPrasyarat(pengajuanJudulId)
+Halaman SK Penelitian → Database: getStatusPrasyarat(pengajuanDisposisiPembimbingId)
 Database → Halaman SK Penelitian: statusHalamanPersetujuan
 
 alt [Prasyarat belum terpenuhi]
@@ -1139,7 +1139,7 @@ Halaman SK Penelitian → Mahasiswa: showErrorMessage() → END
 alt [Prasyarat terpenuhi]
 Halaman SK Penelitian → Mahasiswa: viewHalamanSKPenelitian()
 Mahasiswa → Halaman SK Penelitian: Menekan tombol Ajukan SK Penelitian
-Halaman SK Penelitian → Database: getBerkasPengajuan(pengajuanJudulId)
+Halaman SK Penelitian → Database: getBerkasPengajuan(pengajuanDisposisiPembimbingId)
 Database → Halaman SK Penelitian: krs, rekapNilai, kartuKonsultasiOutline, fileOutline, halamanPersetujuan
 Halaman SK Penelitian → Database: saveSKPenelitian(berkasSkPenelitian)
 Database → Halaman SK Penelitian: statusSKPenelitian
@@ -1159,21 +1159,21 @@ Halaman Daftar SK Penelitian → Sekretariat: viewDaftarSKPenelitian()
 
 Sekretariat → Halaman Daftar SK Penelitian: Memilih pengajuan milik Mahasiswa
 Halaman Daftar SK Penelitian → Halaman Detail SK Penelitian: navigateToHalamanDetailSKPenelitian()
-Halaman Detail SK Penelitian → Database: getDetailSKPenelitian(pengajuanJudulId)
+Halaman Detail SK Penelitian → Database: getDetailSKPenelitian(pengajuanDisposisiPembimbingId)
 Database → Halaman Detail SK Penelitian: namaMahasiswa, npm, statusSKPenelitian, krs, rekapNilai, kartuKonsultasiOutline, fileOutline, halamanPersetujuan
 Halaman Detail SK Penelitian → Sekretariat: viewDetailSKPenelitian()
 
 Sekretariat → Halaman Detail SK Penelitian: Memeriksa berkas dan mengambil keputusan
 
 alt [VERIFY]
-Halaman Detail SK Penelitian → Database: verifySKPenelitian(pengajuanJudulId)
+Halaman Detail SK Penelitian → Database: verifySKPenelitian(pengajuanDisposisiPembimbingId)
 Database → Halaman Detail SK Penelitian: statusSKPenelitian
-Halaman Detail SK Penelitian → Database: generateSKPenelitian(pengajuanJudulId)
+Halaman Detail SK Penelitian → Database: generateSKPenelitian(pengajuanDisposisiPembimbingId)
 Database → Halaman Detail SK Penelitian: statusSKPenelitian, fileSKPenelitian
 Halaman Detail SK Penelitian → Sekretariat: showSuccessMessage()
 
 alt [NEED_REVISION]
-Halaman Detail SK Penelitian → Database: updateSKPenelitian(pengajuanJudulId, catatan)
+Halaman Detail SK Penelitian → Database: updateSKPenelitian(pengajuanDisposisiPembimbingId, catatan)
 Database → Halaman Detail SK Penelitian: statusSKPenelitian
 Halaman Detail SK Penelitian → Sekretariat: showSuccessMessage()
 
@@ -1185,7 +1185,7 @@ END
 **Lifelines:** Mahasiswa | Halaman SK Penelitian | Database
 
 Mahasiswa → Halaman SK Penelitian: Membuka halaman SK Penelitian
-Halaman SK Penelitian → Database: getSKPenelitian(pengajuanJudulId)
+Halaman SK Penelitian → Database: getSKPenelitian(pengajuanDisposisiPembimbingId)
 Database → Halaman SK Penelitian: statusSKPenelitian, catatanRevisi, berkasYangPerluDilengkapi
 Halaman SK Penelitian → Mahasiswa: viewHalamanSKPenelitian()
 
@@ -1197,7 +1197,7 @@ alt [Tidak Valid]
 Halaman SK Penelitian → Mahasiswa: showErrorMessage()
 
 alt [Valid]
-Halaman SK Penelitian → Database: resubmitSKPenelitian(pengajuanJudulId, berkas)
+Halaman SK Penelitian → Database: resubmitSKPenelitian(pengajuanDisposisiPembimbingId, berkas)
 Database → Halaman SK Penelitian: statusSKPenelitian
 Halaman SK Penelitian → Mahasiswa: showSuccessMessage()
 
@@ -1216,8 +1216,8 @@ Database → Halaman Daftar Sidang: daftarSidang, callerRole, statusPenilaian, s
 Halaman Daftar Sidang → Pembimbing 1: viewHalamanDaftarSidang()
 
 Pembimbing 1 → Halaman Daftar Sidang: Memilih sidang dan membuka detail
-Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanJudulId)
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanDisposisiPembimbingId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, tanggalSidang, waktuSidang, tempatSidang, namaMahasiswa, npm, judulSkripsi, pembimbing1Nama, pembimbing2Nama, penguji1Nama, penguji1Nidn, penguji2Nama, penguji2Nidn, penilaian[], notulen[]
 
 alt [Sidang tidak ditemukan]
@@ -1227,9 +1227,9 @@ alt [Sidang ditemukan]
 Halaman Sidang → Pembimbing 1: viewHalamanSidang(status, infoSidang, statusPenilaianPeserta)
 
 Pembimbing 1 → Halaman Sidang: Menekan tombol Mulai Sidang
-Halaman Sidang → Database: startSidang(pengajuanJudulId)
+Halaman Sidang → Database: startSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: ok
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, penilaian[], notulen[]
 Halaman Sidang → Pembimbing 1: viewHalamanSidang(status, formulirPenilaian, formulirNotulen)
 
@@ -1246,8 +1246,8 @@ Database → Halaman Daftar Sidang: daftarSidang, callerRole, statusPenilaian, s
 Halaman Daftar Sidang → Dosen Peserta Sidang: viewHalamanDaftarSidang()
 
 Dosen Peserta Sidang → Halaman Daftar Sidang: Memilih sidang dan membuka detail
-Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanJudulId)
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanDisposisiPembimbingId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, penilaian[], notulen[]
 Halaman Sidang → Dosen Peserta Sidang: viewHalamanSidang(status, formulirPenilaian, formulirNotulen)
 
@@ -1258,9 +1258,9 @@ alt [Tidak valid — nilai di luar rentang atau tidak lengkap]
 Halaman Sidang → Dosen Peserta Sidang: showErrorMessage() → END
 
 alt [Valid]
-Halaman Sidang → Database: savePenilaian(pengajuanJudulId, nilaiIsi, keteranganIsi, nilaiBahasa, keteranganBahasa, nilaiTsp, keteranganTsp, nilaiPenguasaan, keteranganPenguasaan, nilaiPenunjang, keteranganPenunjang)
+Halaman Sidang → Database: savePenilaian(pengajuanDisposisiPembimbingId, nilaiIsi, keteranganIsi, nilaiBahasa, keteranganBahasa, nilaiTsp, keteranganTsp, nilaiPenguasaan, keteranganPenguasaan, nilaiPenunjang, keteranganPenunjang)
 Database → Halaman Sidang: ok
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, penilaian[], notulen[]
 Halaman Sidang → Dosen Peserta Sidang: showSuccessMessage()
 
@@ -1275,9 +1275,9 @@ alt [Tidak valid — catatan kosong]
 Halaman Sidang → Dosen Peserta Sidang: showErrorMessage() → END
 
 alt [Valid]
-Halaman Sidang → Database: saveNotulen(pengajuanJudulId, note)
+Halaman Sidang → Database: saveNotulen(pengajuanDisposisiPembimbingId, note)
 Database → Halaman Sidang: ok
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, penilaian[], notulen[]
 Halaman Sidang → Dosen Peserta Sidang: showSuccessMessage()
 
@@ -1294,8 +1294,8 @@ Database → Halaman Daftar Sidang: daftarSidang, callerRole, statusPenilaian, s
 Halaman Daftar Sidang → Pembimbing 1: viewHalamanDaftarSidang()
 
 Pembimbing 1 → Halaman Daftar Sidang: Memilih sidang dan membuka detail
-Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanJudulId)
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanDisposisiPembimbingId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, penilaian[], notulen[], hasilPenilaian
 Halaman Sidang → Pembimbing 1: viewHalamanSidang(status, statusPenilaianPeserta, formulirHasilPenilaianAkhir)
 
@@ -1306,9 +1306,9 @@ alt [Tidak valid — hasil akhir belum dipilih]
 Halaman Sidang → Pembimbing 1: showErrorMessage() → END
 
 alt [Valid]
-Halaman Sidang → Database: saveHasilPenilaian(pengajuanJudulId, hasilSidang, catatanPenguji)
+Halaman Sidang → Database: saveHasilPenilaian(pengajuanDisposisiPembimbingId, hasilSidang, catatanPenguji)
 Database → Halaman Sidang: ok
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status: COMPLETED, hasilPenilaian
 Halaman Sidang → Pembimbing 1: showSuccessMessage()
 
@@ -1325,13 +1325,13 @@ Database → Halaman Daftar Sidang: daftarSidang, callerRole, statusPenilaian, s
 Halaman Daftar Sidang → Aktor: viewHalamanDaftarSidang()
 
 Aktor → Halaman Daftar Sidang: Memilih sidang dan membuka detail
-Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanJudulId)
-Halaman Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Daftar Sidang → Halaman Sidang: navigateToHalamanSidang(pengajuanDisposisiPembimbingId)
+Halaman Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Sidang: sidangId, status, penilaian[], notulen[], hasilPenilaian, files[]
 Halaman Sidang → Aktor: viewHalamanSidang(status, daftarDokumen)
 
 Aktor → Halaman Sidang: Menekan tombol unduh dokumen
-Halaman Sidang → Database: getFileSidang(pengajuanJudulId, fileType, role?)
+Halaman Sidang → Database: getFileSidang(pengajuanDisposisiPembimbingId, fileType, role?)
 Database → Halaman Sidang: fileName, fileContent
 
 alt [Dokumen belum tersedia atau aktor tidak memiliki hak akses]
@@ -1353,8 +1353,8 @@ Database → Halaman Daftar Sidang: daftarSidang, statusSidang, rata, grade
 Halaman Daftar Sidang → Sekretariat / Kaprodi: viewHalamanDaftarSidang()
 
 Sekretariat / Kaprodi → Halaman Daftar Sidang: Memilih sidang dan membuka detail
-Halaman Daftar Sidang → Halaman Detail Sidang: navigateToHalamanDetailSidang(pengajuanJudulId)
-Halaman Detail Sidang → Database: getSidang(pengajuanJudulId)
+Halaman Daftar Sidang → Halaman Detail Sidang: navigateToHalamanDetailSidang(pengajuanDisposisiPembimbingId)
+Halaman Detail Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Detail Sidang: sidangId, status, infoSidang, penilaian[], notulen[], hasilPenilaian
 Halaman Detail Sidang → Sekretariat / Kaprodi: viewHalamanDetailSidang(status, infoSidang, nilaiPeserta, hasilPenilaian)
 

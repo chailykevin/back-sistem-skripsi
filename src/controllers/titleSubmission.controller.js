@@ -1,4 +1,4 @@
-const db = require("../db");
+﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
@@ -73,7 +73,7 @@ async function generateFormulirDoc(data) {
   } = data;
 
   const templateBuffer = await readFile(
-    path.join(__dirname, "../templates/template_formulir_pengajuan_judul_skripsi.docx"),
+    path.join(__dirname, "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx"),
   );
 
   const patches = {
@@ -127,8 +127,8 @@ const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
 function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
   const mapped = {
-    file_pengajuan_judul: null,
-    file_pengajuan_judul_name: null,
+    file_pengajuan_disposisi_pembimbing: null,
+    file_pengajuan_disposisi_pembimbing_name: null,
     file_transkrip: null,
     file_transkrip_name: null,
     file_krs: null,
@@ -138,7 +138,7 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
   };
 
   const byType = {
-    PENGAJUAN_JUDUL: ["file_pengajuan_judul", "file_pengajuan_judul_name"],
+    PENGAJUAN_JUDUL: ["file_pengajuan_disposisi_pembimbing", "file_pengajuan_disposisi_pembimbing_name"],
     TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
     KRS: ["file_krs", "file_krs_name"],
     METODOLOGI: ["file_metodologi", "file_metodologi_name"],
@@ -155,43 +155,43 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
   return mapped;
 }
 
-async function upsertSyarat(conn, pengajuanJudulId, syarat) {
+async function upsertSyarat(conn, pengajuanDisposisiPembimbingId, syarat) {
   const [existing] = await conn.query(
-    `SELECT pengajuan_judul_id
-     FROM pengajuan_judul_syarat
-     WHERE pengajuan_judul_id = ?
+    `SELECT pengajuan_disposisi_pembimbing_id
+     FROM pengajuan_disposisi_pembimbing_syarat
+     WHERE pengajuan_disposisi_pembimbing_id = ?
      LIMIT 1`,
-    [pengajuanJudulId],
+    [pengajuanDisposisiPembimbingId],
   );
 
   if (existing.length > 0) {
     await conn.query(
-      `UPDATE pengajuan_judul_syarat
+      `UPDATE pengajuan_disposisi_pembimbing_syarat
        SET
          syarat_transkrip = ?,
          syarat_krs = ?,
          syarat_metodologi_nilai_min_c = ?,
          updated_at = CURRENT_TIMESTAMP
-       WHERE pengajuan_judul_id = ?`,
+       WHERE pengajuan_disposisi_pembimbing_id = ?`,
       [
         syarat.syarat_transkrip,
         syarat.syarat_krs,
         syarat.syarat_metodologi_nilai_min_c,
-        pengajuanJudulId,
+        pengajuanDisposisiPembimbingId,
       ],
     );
     return;
   }
 
   await conn.query(
-    `INSERT INTO pengajuan_judul_syarat (
-       pengajuan_judul_id,
+    `INSERT INTO pengajuan_disposisi_pembimbing_syarat (
+       pengajuan_disposisi_pembimbing_id,
        syarat_transkrip,
        syarat_krs,
        syarat_metodologi_nilai_min_c
      ) VALUES (?, ?, ?, ?)`,
     [
-      pengajuanJudulId,
+      pengajuanDisposisiPembimbingId,
       syarat.syarat_transkrip,
       syarat.syarat_krs,
       syarat.syarat_metodologi_nilai_min_c,
@@ -201,22 +201,22 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
 
 async function upsertFileByType(
   conn,
-  pengajuanJudulId,
+  pengajuanDisposisiPembimbingId,
   fileType,
   fileContent,
   fileName,
 ) {
   await conn.query(
-    `DELETE FROM pengajuan_judul_file
-     WHERE pengajuan_judul_id = ? AND file_type = ?`,
-    [pengajuanJudulId, fileType],
+    `DELETE FROM pengajuan_disposisi_pembimbing_file
+     WHERE pengajuan_disposisi_pembimbing_id = ? AND file_type = ?`,
+    [pengajuanDisposisiPembimbingId, fileType],
   );
 
   await conn.query(
-    `INSERT INTO pengajuan_judul_file (
-       pengajuan_judul_id, file_type, file_content, file_name
+    `INSERT INTO pengajuan_disposisi_pembimbing_file (
+       pengajuan_disposisi_pembimbing_id, file_type, file_content, file_name
      ) VALUES (?, ?, ?, ?)`,
-    [pengajuanJudulId, fileType, fileContent, fileName],
+    [pengajuanDisposisiPembimbingId, fileType, fileContent, fileName],
   );
 }
 
@@ -228,16 +228,16 @@ async function hydrateTitleSubmissionReadData(baseRow) {
        syarat_transkrip,
        syarat_krs,
        syarat_metodologi_nilai_min_c
-     FROM pengajuan_judul_syarat
-     WHERE pengajuan_judul_id = ?
+     FROM pengajuan_disposisi_pembimbing_syarat
+     WHERE pengajuan_disposisi_pembimbing_id = ?
      LIMIT 1`,
     [baseRow.id],
   );
 
   const [fileRows] = await db.query(
     `SELECT file_type, file_content, file_name
-     FROM pengajuan_judul_file
-     WHERE pengajuan_judul_id = ?`,
+     FROM pengajuan_disposisi_pembimbing_file
+     WHERE pengajuan_disposisi_pembimbing_id = ?`,
     [baseRow.id],
   );
 
@@ -299,7 +299,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     // Cegah duplikasi pengajuan untuk outline yang sama
     const [existing] = await db.query(
       `SELECT id, status
-       FROM pengajuan_judul
+       FROM pengajuan_disposisi_pembimbing
        WHERE outline_id = ? AND npm = ?
        LIMIT 1`,
       [outlineId, npm],
@@ -335,7 +335,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     txStarted = true;
 
     const [result] = await conn.query(
-      `INSERT INTO pengajuan_judul (
+      `INSERT INTO pengajuan_disposisi_pembimbing (
          outline_id, npm, program_studi_id,
          no_hp, sks_diperoleh,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
@@ -355,9 +355,9 @@ exports.createTitleSubmission = async (req, res, next) => {
       ],
     );
 
-    const pengajuanJudulId = result.insertId;
+    const pengajuanDisposisiPembimbingId = result.insertId;
 
-    await upsertSyarat(conn, pengajuanJudulId, {
+    await upsertSyarat(conn, pengajuanDisposisiPembimbingId, {
       syarat_transkrip: toBit(syaratTranskrip, 0),
       syarat_krs: toBit(syaratKrs, 0),
       syarat_metodologi_nilai_min_c: toBit(syaratMetodologi, 0),
@@ -371,7 +371,7 @@ exports.createTitleSubmission = async (req, res, next) => {
          d1.nama AS pembimbing1_nama,
          d2.nama AS pembimbing2_nama,
          u.signature_image
-       FROM pengajuan_judul pj
+       FROM pengajuan_disposisi_pembimbing pj
        JOIN mahasiswa m ON m.npm = pj.npm
        JOIN program_studi ps ON ps.id = pj.program_studi_id
        JOIN outline o ON o.id = pj.outline_id
@@ -380,7 +380,7 @@ exports.createTitleSubmission = async (req, res, next) => {
        LEFT JOIN users u ON u.npm = pj.npm AND u.is_active = 1
        WHERE pj.id = ?
        LIMIT 1`,
-      [pengajuanJudulId],
+      [pengajuanDisposisiPembimbingId],
     );
     const docData = docDataRows[0] ?? {};
     const formulirBase64 = await generateFormulirDoc({
@@ -399,16 +399,16 @@ exports.createTitleSubmission = async (req, res, next) => {
     });
     await upsertFileByType(
       conn,
-      pengajuanJudulId,
+      pengajuanDisposisiPembimbingId,
       "PENGAJUAN_JUDUL",
       formulirBase64,
-      "formulir_pengajuan_judul_skripsi.docx",
+      "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
 
     if (fileTranskrip !== undefined && fileTranskrip !== null) {
       await upsertFileByType(
         conn,
-        pengajuanJudulId,
+        pengajuanDisposisiPembimbingId,
         "TRANSKRIP",
         String(fileTranskrip),
         fileTranskripName !== undefined && fileTranskripName !== null
@@ -419,7 +419,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     if (fileKrs !== undefined && fileKrs !== null) {
       await upsertFileByType(
         conn,
-        pengajuanJudulId,
+        pengajuanDisposisiPembimbingId,
         "KRS",
         String(fileKrs),
         fileKrsName !== undefined && fileKrsName !== null
@@ -430,7 +430,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     if (fileMetodologi !== undefined && fileMetodologi !== null) {
       await upsertFileByType(
         conn,
-        pengajuanJudulId,
+        pengajuanDisposisiPembimbingId,
         "METODOLOGI",
         String(fileMetodologi),
         fileMetodologiName !== undefined && fileMetodologiName !== null
@@ -470,7 +470,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     return res.status(201).json({
       ok: true,
       message: "Created",
-      data: { id: pengajuanJudulId },
+      data: { id: pengajuanDisposisiPembimbingId },
     });
   } catch (err) {
     try {
@@ -509,7 +509,7 @@ exports.listMine = async (req, res, next) => {
          pj.created_at,
          pj.updated_at,
          o.judul AS outline_judul
-       FROM pengajuan_judul pj
+       FROM pengajuan_disposisi_pembimbing pj
        INNER JOIN outline o ON o.id = pj.outline_id
        WHERE pj.npm = ?
        ORDER BY pj.created_at DESC`,
@@ -550,7 +550,7 @@ exports.getLatestMine = async (req, res, next) => {
          d2.nama AS pembimbing2_diajukan_nama,
          d3.nama AS pembimbing1_ditetapkan_nama,
          d4.nama AS pembimbing2_ditetapkan_nama
-       FROM pengajuan_judul pj
+       FROM pengajuan_disposisi_pembimbing pj
        INNER JOIN outline o ON o.id = pj.outline_id
        INNER JOIN mahasiswa m ON m.npm = pj.npm
        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -634,7 +634,7 @@ exports.getById = async (req, res, next) => {
           d3.nama AS pembimbing1_ditetapkan_nama,
           d4.nama AS pembimbing2_ditetapkan_nama
 
-        FROM pengajuan_judul pj
+        FROM pengajuan_disposisi_pembimbing pj
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -707,7 +707,7 @@ exports.getById = async (req, res, next) => {
           d3.nama AS pembimbing1_ditetapkan_nama,
           d4.nama AS pembimbing2_ditetapkan_nama
 
-        FROM pengajuan_judul pj
+        FROM pengajuan_disposisi_pembimbing pj
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -885,7 +885,7 @@ exports.resubmit = async (req, res, next) => {
 
     const [rows] = await conn.query(
       `SELECT id, status
-       FROM pengajuan_judul
+       FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
        FOR UPDATE`,
@@ -954,7 +954,7 @@ exports.resubmit = async (req, res, next) => {
     sets.push("pembimbing2_ditetapkan_nidn = NULL");
     sets.push("updated_at = CURRENT_TIMESTAMP");
 
-    const sql = `UPDATE pengajuan_judul SET ${sets.join(", ")} WHERE id = ?`;
+    const sql = `UPDATE pengajuan_disposisi_pembimbing SET ${sets.join(", ")} WHERE id = ?`;
     params.push(id);
     await conn.query(sql, params);
 
@@ -968,8 +968,8 @@ exports.resubmit = async (req, res, next) => {
            syarat_transkrip,
            syarat_krs,
            syarat_metodologi_nilai_min_c
-         FROM pengajuan_judul_syarat
-         WHERE pengajuan_judul_id = ?
+         FROM pengajuan_disposisi_pembimbing_syarat
+         WHERE pengajuan_disposisi_pembimbing_id = ?
          LIMIT 1`,
         [id],
       );
@@ -997,7 +997,7 @@ exports.resubmit = async (req, res, next) => {
          d1.nama AS pembimbing1_nama,
          d2.nama AS pembimbing2_nama,
          u.signature_image
-       FROM pengajuan_judul pj
+       FROM pengajuan_disposisi_pembimbing pj
        JOIN mahasiswa m ON m.npm = pj.npm
        JOIN program_studi ps ON ps.id = pj.program_studi_id
        JOIN outline o ON o.id = pj.outline_id
@@ -1028,7 +1028,7 @@ exports.resubmit = async (req, res, next) => {
       id,
       "PENGAJUAN_JUDUL",
       resubFormulirBase64,
-      "formulir_pengajuan_judul_skripsi.docx",
+      "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
 
     if (fileTranskripVal !== null && fileTranskripVal.length > 0) {

@@ -1,4 +1,4 @@
-const db = require("../db");
+﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
@@ -38,13 +38,13 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
-async function getKartuByPengajuanAndStudent(pengajuanJudulId, npm) {
+async function getKartuByPengajuanAndStudent(pengajuanDisposisiPembimbingId, npm) {
   const [rows] = await db.query(
     `SELECT *
      FROM kartu_konsultasi_outline
-     WHERE pengajuan_judul_id = ? AND npm = ?
+     WHERE pengajuan_disposisi_pembimbing_id = ? AND npm = ?
      LIMIT 1`,
-    [pengajuanJudulId, npm],
+    [pengajuanDisposisiPembimbingId, npm],
   );
   return rows[0] ?? null;
 }
@@ -261,7 +261,7 @@ async function getKartuLogs(queryable, kartuId) {
 
 async function generateAndStoreFinalKartuDocx(
   queryable,
-  { kartuId, pengajuanJudulId, generatedByUserId },
+  { kartuId, pengajuanDisposisiPembimbingId, generatedByUserId },
 ) {
   const [kartuRows] = await queryable.query(
     `SELECT *
@@ -281,7 +281,7 @@ async function generateAndStoreFinalKartuDocx(
   const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(kartu, logs);
   const mimeType =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const fileName = `kartu-konsultasi-outline-${pengajuanJudulId}-${Date.now()}.docx`;
+  const fileName = `kartu-konsultasi-outline-${pengajuanDisposisiPembimbingId}-${Date.now()}.docx`;
 
   await queryable.query(
     `UPDATE kartu_konsultasi_outline_file
@@ -369,7 +369,7 @@ async function generateAndStoreHalamanDocx(
   queryable,
   {
     halamanId,
-    pengajuanJudulId,
+    pengajuanDisposisiPembimbingId,
     kartu,
     signatures,
     programStudiNama,
@@ -386,7 +386,7 @@ async function generateAndStoreHalamanDocx(
 
   const mimeType =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const fileName = `halaman-persetujuan-judul-${pengajuanJudulId}-${Date.now()}.docx`;
+  const fileName = `halaman-persetujuan-judul-${pengajuanDisposisiPembimbingId}-${Date.now()}.docx`;
 
   const [ins] = await queryable.query(
     `INSERT INTO halaman_persetujuan_judul_file (
@@ -411,13 +411,13 @@ async function generateAndStoreHalamanDocx(
 
 async function autoSubmitSkPenelitian(
   conn,
-  { pengajuanJudulId, kartuId, halamanPersetujuanJudulId },
+  { pengajuanDisposisiPembimbingId, kartuId, halamanPersetujuanJudulId },
 ) {
-  console.log("[autoSubmitSkPenelitian] start", { pengajuanJudulId, kartuId, halamanPersetujuanJudulId });
+  console.log("[autoSubmitSkPenelitian] start", { pengajuanDisposisiPembimbingId, kartuId, halamanPersetujuanJudulId });
 
   const [existingRows] = await conn.query(
-    `SELECT id FROM pengajuan_sk_penelitian WHERE pengajuan_judul_id = ? LIMIT 1`,
-    [pengajuanJudulId],
+    `SELECT id FROM pengajuan_sk_penelitian WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+    [pengajuanDisposisiPembimbingId],
   );
   if (existingRows.length > 0) {
     console.log("[autoSubmitSkPenelitian] skip: already_exists", existingRows[0].id);
@@ -425,12 +425,12 @@ async function autoSubmitSkPenelitian(
   }
 
   const [krsRows] = await conn.query(
-    `SELECT file_content, file_name FROM pengajuan_judul_file WHERE pengajuan_judul_id = ? AND file_type = 'KRS' LIMIT 1`,
-    [pengajuanJudulId],
+    `SELECT file_content, file_name FROM pengajuan_disposisi_pembimbing_file WHERE pengajuan_disposisi_pembimbing_id = ? AND file_type = 'KRS' LIMIT 1`,
+    [pengajuanDisposisiPembimbingId],
   );
   const [rekapRows] = await conn.query(
-    `SELECT file_content, file_name FROM pengajuan_judul_file WHERE pengajuan_judul_id = ? AND file_type = 'TRANSKRIP' LIMIT 1`,
-    [pengajuanJudulId],
+    `SELECT file_content, file_name FROM pengajuan_disposisi_pembimbing_file WHERE pengajuan_disposisi_pembimbing_id = ? AND file_type = 'TRANSKRIP' LIMIT 1`,
+    [pengajuanDisposisiPembimbingId],
   );
   const [kartuFileRows] = await conn.query(
     `SELECT file_content, file_name, mime_type FROM kartu_konsultasi_outline_file WHERE kartu_konsultasi_outline_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1 ORDER BY generated_at DESC LIMIT 1`,
@@ -465,8 +465,8 @@ async function autoSubmitSkPenelitian(
   }
 
   const [ins] = await conn.query(
-    `INSERT INTO pengajuan_sk_penelitian (pengajuan_judul_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
-    [pengajuanJudulId],
+    `INSERT INTO pengajuan_sk_penelitian (pengajuan_disposisi_pembimbing_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+    [pengajuanDisposisiPembimbingId],
   );
   const skId = ins.insertId;
 
@@ -490,22 +490,22 @@ async function autoSubmitSkPenelitian(
 
 async function autoGenerateHalamanPersetujuan(
   conn,
-  { pengajuanJudulId, kartu, generatedByUserId },
+  { pengajuanDisposisiPembimbingId, kartu, generatedByUserId },
 ) {
-  console.log("[autoGenerateHalamanPersetujuan] start", { pengajuanJudulId, kartuId: kartu?.id, npm: kartu?.npm });
+  console.log("[autoGenerateHalamanPersetujuan] start", { pengajuanDisposisiPembimbingId, kartuId: kartu?.id, npm: kartu?.npm });
 
   const [pjRows] = await conn.query(
-    `SELECT id FROM pengajuan_judul WHERE id = ? AND status = 'APPROVED' LIMIT 1`,
-    [pengajuanJudulId],
+    `SELECT id FROM pengajuan_disposisi_pembimbing WHERE id = ? AND status = 'APPROVED' LIMIT 1`,
+    [pengajuanDisposisiPembimbingId],
   );
   if (pjRows.length === 0) {
-    console.log("[autoGenerateHalamanPersetujuan] skip: pengajuan_judul not APPROVED for id", pengajuanJudulId);
-    return { file: null, skippedReason: "pengajuan_judul_not_approved" };
+    console.log("[autoGenerateHalamanPersetujuan] skip: pengajuan_disposisi_pembimbing not APPROVED for id", pengajuanDisposisiPembimbingId);
+    return { file: null, skippedReason: "pengajuan_disposisi_pembimbing_not_approved" };
   }
 
   const [existingRows] = await conn.query(
-    `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_judul_id = ? LIMIT 1`,
-    [pengajuanJudulId],
+    `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+    [pengajuanDisposisiPembimbingId],
   );
   if (existingRows.length > 0) {
     console.log("[autoGenerateHalamanPersetujuan] skip: halaman already exists", existingRows[0].id);
@@ -571,8 +571,8 @@ async function autoGenerateHalamanPersetujuan(
   );
 
   const [ins] = await conn.query(
-    `INSERT INTO halaman_persetujuan_judul (pengajuan_judul_id, status) VALUES (?, 'PENDING')`,
-    [pengajuanJudulId],
+    `INSERT INTO halaman_persetujuan_judul (pengajuan_disposisi_pembimbing_id, status) VALUES (?, 'PENDING')`,
+    [pengajuanDisposisiPembimbingId],
   );
   const halamanId = ins.insertId;
 
@@ -594,7 +594,7 @@ async function autoGenerateHalamanPersetujuan(
 
   const generatedFile = await generateAndStoreHalamanDocx(conn, {
     halamanId,
-    pengajuanJudulId,
+    pengajuanDisposisiPembimbingId,
     kartu,
     signatures,
     programStudiNama: psRow?.program_studi_nama ?? "",
@@ -611,13 +611,13 @@ async function autoGenerateHalamanPersetujuan(
   return { file: generatedFile, skippedReason: null, halamanId };
 }
 
-async function getAuthorizedKartuForDocument(queryable, req, pengajuanJudulId) {
+async function getAuthorizedKartuForDocument(queryable, req, pengajuanDisposisiPembimbingId) {
   const [rows] = await queryable.query(
     `SELECT *
      FROM kartu_konsultasi_outline
-     WHERE pengajuan_judul_id = ?
+     WHERE pengajuan_disposisi_pembimbing_id = ?
      LIMIT 1`,
-    [pengajuanJudulId],
+    [pengajuanDisposisiPembimbingId],
   );
   const kartu = rows[0] ?? null;
   if (!kartu) {
@@ -675,7 +675,7 @@ exports.listMine = async (req, res, next) => {
     const [kartuRows] = await db.query(
       `SELECT
          k.id AS kartu_id,
-         k.pengajuan_judul_id,
+         k.pengajuan_disposisi_pembimbing_id,
          k.judul_skripsi,
          k.is_completed,
          k.completed_at,
@@ -728,11 +728,11 @@ exports.getMyDetail = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Only students" });
     }
 
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -742,7 +742,7 @@ exports.getMyDetail = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const kartu = await getKartuByPengajuanAndStudent(pengajuanJudulId, npm);
+    const kartu = await getKartuByPengajuanAndStudent(pengajuanDisposisiPembimbingId, npm);
     if (!kartu) {
       return res
         .status(404)
@@ -824,11 +824,11 @@ exports.submitMyOutline = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Only students" });
     }
 
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const { fileOutline, fileOutlineName } = req.body || {};
@@ -857,10 +857,10 @@ exports.submitMyOutline = async (req, res, next) => {
     const [kartuRows] = await conn.query(
       `SELECT *
        FROM kartu_konsultasi_outline
-       WHERE pengajuan_judul_id = ? AND npm = ?
+       WHERE pengajuan_disposisi_pembimbing_id = ? AND npm = ?
        LIMIT 1
        FOR UPDATE`,
-      [pengajuanJudulId, npm],
+      [pengajuanDisposisiPembimbingId, npm],
     );
     const kartu = kartuRows[0] ?? null;
     if (!kartu) {
@@ -1000,11 +1000,11 @@ exports.getMyReviewHistory = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Only students" });
     }
 
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1014,7 +1014,7 @@ exports.getMyReviewHistory = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const kartu = await getKartuByPengajuanAndStudent(pengajuanJudulId, npm);
+    const kartu = await getKartuByPengajuanAndStudent(pengajuanDisposisiPembimbingId, npm);
     if (!kartu) {
       return res
         .status(404)
@@ -1054,11 +1054,11 @@ exports.getMyKartu = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Only students" });
     }
 
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1068,7 +1068,7 @@ exports.getMyKartu = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const kartu = await getKartuByPengajuanAndStudent(pengajuanJudulId, npm);
+    const kartu = await getKartuByPengajuanAndStudent(pengajuanDisposisiPembimbingId, npm);
     if (!kartu) {
       return res
         .status(404)
@@ -1099,19 +1099,19 @@ exports.getMyKartu = async (req, res, next) => {
 
 exports.getMyFinalKartuFile = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const [kartuRows] = await db.query(
       `SELECT *
        FROM kartu_konsultasi_outline
-       WHERE pengajuan_judul_id = ?
+       WHERE pengajuan_disposisi_pembimbing_id = ?
        LIMIT 1`,
-      [pengajuanJudulId],
+      [pengajuanDisposisiPembimbingId],
     );
     const kartu = kartuRows[0] ?? null;
     if (!kartu) {
@@ -1183,17 +1183,17 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
 
 exports.previewKartuDocx = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const { kartu, error } = await getAuthorizedKartuForDocument(
       db,
       req,
-      pengajuanJudulId,
+      pengajuanDisposisiPembimbingId,
     );
     if (error) {
       return res
@@ -1206,7 +1206,7 @@ exports.previewKartuDocx = async (req, res, next) => {
       kartu,
       logs,
     );
-    const fileName = `kartu-konsultasi-outline-${pengajuanJudulId}-preview.docx`;
+    const fileName = `kartu-konsultasi-outline-${pengajuanDisposisiPembimbingId}-preview.docx`;
 
     res.setHeader(
       "Content-Type",
@@ -1231,11 +1231,11 @@ exports.finalizeKartu = async (req, res, next) => {
         .json({ ok: false, message: "Only PEMBIMBING_1 can finalize" });
     }
 
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const outputType = req.body?.outputType ?? "FINAL_DOCX";
@@ -1252,7 +1252,7 @@ exports.finalizeKartu = async (req, res, next) => {
     const { kartu, error } = await getAuthorizedKartuForDocument(
       conn,
       req,
-      pengajuanJudulId,
+      pengajuanDisposisiPembimbingId,
     );
     if (error) {
       await conn.rollback();
@@ -1282,7 +1282,7 @@ exports.finalizeKartu = async (req, res, next) => {
 
     const finalizedFile = await generateAndStoreFinalKartuDocx(conn, {
       kartuId: kartu.id,
-      pengajuanJudulId,
+      pengajuanDisposisiPembimbingId,
       generatedByUserId: req.user.id,
     });
 
@@ -1347,7 +1347,7 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          s.finished_at,
          latest_submission.latest_submitted_at,
          k.id AS kartu_id,
-         k.pengajuan_judul_id,
+         k.pengajuan_disposisi_pembimbing_id,
          k.nama_mahasiswa,
          k.npm,
          k.program_studi_nama,
@@ -1390,7 +1390,7 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
     const [kartuRows] = await db.query(
       `SELECT
          k.id AS kartu_id,
-         k.pengajuan_judul_id,
+         k.pengajuan_disposisi_pembimbing_id,
          k.nama_mahasiswa,
          k.npm,
          k.program_studi_nama,
@@ -1418,7 +1418,7 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
       `SELECT
          id,
          kartu_konsultasi_outline_id,
-         pengajuan_judul_id,
+         pengajuan_disposisi_pembimbing_id,
          stage,
          pembimbing_nidn,
          current_status,
@@ -1543,7 +1543,7 @@ exports.listForKaprodi = async (req, res, next) => {
     const [kartuRows] = await db.query(
       `SELECT
          k.id AS kartu_id,
-         k.pengajuan_judul_id,
+         k.pengajuan_disposisi_pembimbing_id,
          k.nama_mahasiswa,
          k.npm,
          k.program_studi_id,
@@ -1648,11 +1648,11 @@ exports.getDetailForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can access this endpoint" });
     }
 
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -1670,10 +1670,10 @@ exports.getDetailForKaprodi = async (req, res, next) => {
     const [kartuRows] = await db.query(
       `SELECT *
        FROM kartu_konsultasi_outline
-       WHERE pengajuan_judul_id = ?
+       WHERE pengajuan_disposisi_pembimbing_id = ?
          AND program_studi_id IN (?)
        LIMIT 1`,
-      [pengajuanJudulId, programStudiIds],
+      [pengajuanDisposisiPembimbingId, programStudiIds],
     );
     const kartu = kartuRows[0] ?? null;
     if (!kartu) {
@@ -1798,7 +1798,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
       `SELECT
          s.id AS stage_id,
          s.kartu_konsultasi_outline_id AS stage_kartu_konsultasi_outline_id,
-         s.pengajuan_judul_id AS stage_pengajuan_judul_id,
+         s.pengajuan_disposisi_pembimbing_id AS stage_pengajuan_disposisi_pembimbing_id,
          s.stage AS stage_name,
          s.pembimbing_nidn AS stage_pembimbing_nidn,
          d.nama AS stage_dosen_name,
@@ -1880,7 +1880,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
         stage: {
           id: row.stage_id,
           kartuKonsultasiOutlineId: row.stage_kartu_konsultasi_outline_id,
-          pengajuanJudulId: row.stage_pengajuan_judul_id,
+          pengajuanDisposisiPembimbingId: row.stage_pengajuan_disposisi_pembimbing_id,
           stage: row.stage_name,
           pembimbingNidn: row.stage_pembimbing_nidn,
           dosenName: row.stage_dosen_name,
@@ -2170,14 +2170,14 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
              kartu_konsultasi_outline_id,
-             pengajuan_judul_id,
+             pengajuan_disposisi_pembimbing_id,
              stage,
              pembimbing_nidn,
              current_status,
              current_submission_no,
              started_at
            ) VALUES (?, ?, 'PEMBIMBING_1', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-          [stage.kartu_id, stage.pengajuan_judul_id, pembimbing1Nidn],
+          [stage.kartu_id, stage.pengajuan_disposisi_pembimbing_id, pembimbing1Nidn],
         );
       }
     }
@@ -2204,13 +2204,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
       autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
         kartuId: stage.kartu_id,
-        pengajuanJudulId: stage.pengajuan_judul_id,
+        pengajuanDisposisiPembimbingId: stage.pengajuan_disposisi_pembimbing_id,
         generatedByUserId: req.user.id,
       });
 
       if (kartuInfo) {
         autoHalamanResult = await autoGenerateHalamanPersetujuan(conn, {
-          pengajuanJudulId: stage.pengajuan_judul_id,
+          pengajuanDisposisiPembimbingId: stage.pengajuan_disposisi_pembimbing_id,
           kartu: kartuInfo,
           generatedByUserId: req.user.id,
         });
@@ -2222,14 +2222,14 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       let halamanId = autoHalamanResult?.halamanId ?? null;
       if (!halamanId) {
         const [[hRow]] = await conn.query(
-          `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_judul_id = ? LIMIT 1`,
-          [stage.pengajuan_judul_id],
+          `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+          [stage.pengajuan_disposisi_pembimbing_id],
         );
         halamanId = hRow?.id ?? null;
       }
       if (halamanId) {
         autoSkResult = await autoSubmitSkPenelitian(conn, {
-          pengajuanJudulId: stage.pengajuan_judul_id,
+          pengajuanDisposisiPembimbingId: stage.pengajuan_disposisi_pembimbing_id,
           kartuId: stage.kartu_id,
           halamanPersetujuanJudulId: halamanId,
         });

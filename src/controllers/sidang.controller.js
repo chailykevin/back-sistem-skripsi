@@ -1,4 +1,4 @@
-const db = require("../db");
+﻿const db = require("../db");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -119,27 +119,27 @@ const NOTULEN_ROLE_LABEL = {
   PENGUJI_2: "Anggota Penguji",
 };
 
-async function getSidangByPengajuanJudulId(conn, pengajuanJudulId) {
+async function getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId) {
   const [[sidang]] = await conn.query(
-    `SELECT * FROM sidang WHERE pengajuan_judul_id = ? ORDER BY id DESC LIMIT 1`,
-    [pengajuanJudulId],
+    `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
+    [pengajuanDisposisiPembimbingId],
   );
   return sidang ?? null;
 }
 
-// GET /sidang/:pengajuanJudulId
+// GET /sidang/:pengajuanDisposisiPembimbingId
 exports.getSidang = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId],
     );
     if (!sidang) {
       return res
@@ -147,7 +147,7 @@ exports.getSidang = async (req, res, next) => {
         .json({ ok: false, message: "Sidang tidak ditemukan" });
     }
 
-    // Authorization: student must own this pengajuan_judul; dosen must be one of the 4 participants
+    // Authorization: student must own this pengajuan_disposisi_pembimbing; dosen must be one of the 4 participants
     const isStudent = req.user.hasRole("STUDENT");
     const isSekretatariat = req.user.hasRole("SEKRETARIAT");
     const isKaprodi = req.user.hasRole("KAPRODI");
@@ -286,14 +286,14 @@ exports.getSidang = async (req, res, next) => {
   }
 };
 
-// PATCH /sidang/:pengajuanJudulId/start
+// PATCH /sidang/:pengajuanDisposisiPembimbingId/start
 exports.startSidang = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -304,8 +304,8 @@ exports.startSidang = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId],
     );
     if (!sidang) {
       return res
@@ -344,16 +344,16 @@ exports.startSidang = async (req, res, next) => {
   }
 };
 
-// POST /sidang/:pengajuanJudulId/notulen
+// POST /sidang/:pengajuanDisposisiPembimbingId/notulen
 exports.submitNotulen = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -373,7 +373,7 @@ exports.submitNotulen = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanJudulId);
+    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -427,16 +427,16 @@ exports.submitNotulen = async (req, res, next) => {
   }
 };
 
-// POST /sidang/:pengajuanJudulId/penilaian
+// POST /sidang/:pengajuanDisposisiPembimbingId/penilaian
 exports.submitPenilaian = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -487,7 +487,7 @@ exports.submitPenilaian = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanJudulId);
+    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -638,16 +638,16 @@ exports.submitPenilaian = async (req, res, next) => {
   }
 };
 
-// POST /sidang/:pengajuanJudulId/hasil-penilaian
+// POST /sidang/:pengajuanDisposisiPembimbingId/hasil-penilaian
 exports.submitHasilPenilaian = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanJudulId" });
+        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -674,7 +674,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanJudulId);
+    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -835,16 +835,16 @@ exports.submitHasilPenilaian = async (req, res, next) => {
 
     // Detect re-exam: a prior sidang exists for this student (ujian_ke >= 2)
     const [[priorSidang]] = await conn.query(
-      `SELECT id FROM sidang WHERE pengajuan_judul_id = ? AND id != ? LIMIT 1`,
-      [pengajuanJudulId, sidang.id],
+      `SELECT id FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? AND id != ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId, sidang.id],
     );
     const isUjianUlang = !!priorSidang;
 
     if (isUjianUlang && hasilSidang === "LULUS") {
       // Re-exam passed: reset revisi_pasca_sidang so student goes through revisi again
       const [[existingRevisi]] = await conn.query(
-        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-        [pengajuanJudulId],
+        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+        [pengajuanDisposisiPembimbingId],
       );
       if (existingRevisi) {
         const [stageRows] = await conn.query(
@@ -885,13 +885,13 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     // Auto-init revisi pasca sidang for original sidang (existence-guarded; re-exam resets above handle it)
     if (!isUjianUlang) {
       const [[existingRevisi]] = await conn.query(
-        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-        [pengajuanJudulId],
+        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+        [pengajuanDisposisiPembimbingId],
       );
       if (!existingRevisi) {
         await conn.query(
-          `INSERT INTO revisi_pasca_sidang (sidang_id, pengajuan_judul_id, npm) VALUES (?, ?, ?)`,
-          [sidang.id, pengajuanJudulId, sidang.npm],
+          `INSERT INTO revisi_pasca_sidang (sidang_id, pengajuan_disposisi_pembimbing_id, npm) VALUES (?, ?, ?)`,
+          [sidang.id, pengajuanDisposisiPembimbingId, sidang.npm],
         );
       }
     }
@@ -1080,7 +1080,7 @@ exports.getLecturerSidang = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
         s.id,
-        s.pengajuan_judul_id,
+        s.pengajuan_disposisi_pembimbing_id,
         s.npm,
         s.nama_mahasiswa,
         s.judul_skripsi,
@@ -1148,20 +1148,24 @@ function sendDocx(res, fileRow) {
   return res.send(buffer);
 }
 
-// GET /sidang/:pengajuanJudulId/files/berita-acara
+// GET /sidang/:pengajuanDisposisiPembimbingId/files/berita-acara
 exports.getBeritaAcara = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (req.user.hasRole("STUDENT")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     if (!await resolveSidangFileAccess(req, sidang)) {
@@ -1182,20 +1186,24 @@ exports.getBeritaAcara = async (req, res, next) => {
   }
 };
 
-// GET /sidang/:pengajuanJudulId/files/hasil-penilaian
+// GET /sidang/:pengajuanDisposisiPembimbingId/files/hasil-penilaian
 exports.getHasilPenilaianFile = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (req.user.hasRole("STUDENT")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     if (!await resolveSidangFileAccess(req, sidang)) {
@@ -1219,12 +1227,12 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
 const VALID_PENILAIAN_ROLES = ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"];
 const VALID_NOTULEN_ROLES = ["PENGUJI_1", "PENGUJI_2"];
 
-// GET /sidang/:pengajuanJudulId/files/penilaian/:role
+// GET /sidang/:pengajuanDisposisiPembimbingId/files/penilaian/:role
 exports.getPenilaianFile = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const role = req.params.role;
@@ -1236,11 +1244,15 @@ exports.getPenilaianFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+    }
+
+    if (req.user.hasRole("STUDENT")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     if (!await resolveSidangFileAccess(req, sidang)) {
@@ -1261,12 +1273,12 @@ exports.getPenilaianFile = async (req, res, next) => {
   }
 };
 
-// GET /sidang/:pengajuanJudulId/files/notulen/:role
+// GET /sidang/:pengajuanDisposisiPembimbingId/files/notulen/:role
 exports.getNotulenFile = async (req, res, next) => {
   try {
-    const pengajuanJudulId = Number(req.params.pengajuanJudulId);
-    if (!Number.isFinite(pengajuanJudulId) || pengajuanJudulId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanJudulId" });
+    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
+    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
     }
 
     const role = req.params.role;
@@ -1278,8 +1290,8 @@ exports.getNotulenFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_judul_id = ? LIMIT 1`,
-      [pengajuanJudulId],
+      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+      [pengajuanDisposisiPembimbingId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
@@ -1325,7 +1337,7 @@ exports.getSekretariatSidang = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         s.id, s.pengajuan_judul_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
+         s.id, s.pengajuan_disposisi_pembimbing_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
          s.program_studi_id, s.program_studi_nama, s.judul_skripsi, s.ujian_ke,
          s.status, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
          s.pembimbing1_nidn, s.pembimbing1_nama, s.pembimbing2_nidn, s.pembimbing2_nama,

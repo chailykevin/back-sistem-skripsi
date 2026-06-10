@@ -1,4 +1,4 @@
-# Back Sistem Skripsi (Backend)
+﻿# Back Sistem Skripsi (Backend)
 
 Single-source context file for this backend so a new Codex session can understand the project quickly.
 
@@ -157,9 +157,9 @@ Core tables used by code:
 - `program_studi`
 - `outline`
 - `outline_details`
-- `pengajuan_judul`
-- `pengajuan_judul_syarat`
-- `pengajuan_judul_file`
+- `pengajuan_disposisi_pembimbing`
+- `pengajuan_disposisi_pembimbing_syarat`
+- `pengajuan_disposisi_pembimbing_file`
 
 Important relationships:
 - `users.npm -> mahasiswa.npm` for students
@@ -169,16 +169,16 @@ Important relationships:
 - `outline.npm -> mahasiswa.npm`
 - `outline.program_studi_id -> program_studi.id`
 - `outline_details.outline_id -> outline.id`
-- `pengajuan_judul.outline_id -> outline.id`
-- `pengajuan_judul.npm -> mahasiswa.npm`
-- `pengajuan_judul.program_studi_id -> program_studi.id`
-- `pengajuan_judul_syarat.pengajuan_judul_id -> pengajuan_judul.id`
-- `pengajuan_judul_file.pengajuan_judul_id -> pengajuan_judul.id`
+- `pengajuan_disposisi_pembimbing.outline_id -> outline.id`
+- `pengajuan_disposisi_pembimbing.npm -> mahasiswa.npm`
+- `pengajuan_disposisi_pembimbing.program_studi_id -> program_studi.id`
+- `pengajuan_disposisi_pembimbing_syarat.pengajuan_disposisi_pembimbing_id -> pengajuan_disposisi_pembimbing.id`
+- `pengajuan_disposisi_pembimbing_file.pengajuan_disposisi_pembimbing_id -> pengajuan_disposisi_pembimbing.id`
 
 Title submission split model:
-- `pengajuan_judul` stores header/workflow + core form fields.
-- `pengajuan_judul_syarat` stores checklist fields (`syarat_*`) in 1:1 relation.
-- `pengajuan_judul_file` stores attachments by `file_type` in 1:N relation.
+- `pengajuan_disposisi_pembimbing` stores header/workflow + core form fields.
+- `pengajuan_disposisi_pembimbing_syarat` stores checklist fields (`syarat_*`) in 1:1 relation.
+- `pengajuan_disposisi_pembimbing_file` stores attachments by `file_type` in 1:N relation.
 
 ## 9. Business Rules
 
@@ -226,8 +226,8 @@ Enforced title submission statuses (DB ENUM):
   - `409` conflict (duplicate/not eligible state)
 - SQL is written inline in controllers (no repository/service layer yet).
 - File uploads are currently handled as payload fields (e.g., base64/string), not multipart middleware.
-- For title submission responses, controller maps new `pengajuan_judul_file` rows back to legacy response keys:
-  - `file_pengajuan_judul`, `file_pengajuan_judul_name`
+- For title submission responses, controller maps new `pengajuan_disposisi_pembimbing_file` rows back to legacy response keys:
+  - `file_pengajuan_disposisi_pembimbing`, `file_pengajuan_disposisi_pembimbing_name`
   - `file_transkrip`, `file_transkrip_name`
   - `file_krs`, `file_krs_name`
   - `file_metodologi`, `file_metodologi_name`
@@ -237,14 +237,14 @@ Enforced title submission statuses (DB ENUM):
 Completed refactors:
 1. Strict status constraints added via DB ENUM:
    - `outline.status`
-   - `pengajuan_judul.status`
+   - `pengajuan_disposisi_pembimbing.status`
 2. Added `program_studi_id` FK integrity:
    - `outline.program_studi_id -> program_studi.id`
-   - `pengajuan_judul.program_studi_id -> program_studi.id`
+   - `pengajuan_disposisi_pembimbing.program_studi_id -> program_studi.id`
 3. Split title submission storage:
-   - checklist moved to `pengajuan_judul_syarat`
-   - files moved to `pengajuan_judul_file`
-   - old checklist/file columns in `pengajuan_judul` removed
+   - checklist moved to `pengajuan_disposisi_pembimbing_syarat`
+   - files moved to `pengajuan_disposisi_pembimbing_file`
+   - old checklist/file columns in `pengajuan_disposisi_pembimbing` removed
 4. Backend controllers updated for new read/write paths and currently working with frontend.
 
 ## 13. Expansion Guide (when resuming improvements)

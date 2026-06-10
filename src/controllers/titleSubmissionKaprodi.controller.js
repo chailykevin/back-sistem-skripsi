@@ -1,4 +1,4 @@
-const db = require("../db");
+﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
@@ -74,7 +74,7 @@ async function generateFormulirDoc(data) {
   } = data;
 
   const templateBuffer = await readFile(
-    path.join(__dirname, "../templates/template_formulir_pengajuan_judul_skripsi.docx"),
+    path.join(__dirname, "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx"),
   );
 
   const patches = {
@@ -112,43 +112,43 @@ async function generateFormulirDoc(data) {
   return outputBuffer.toString("base64");
 }
 
-async function upsertSyarat(conn, pengajuanJudulId, syarat) {
+async function upsertSyarat(conn, pengajuanDisposisiPembimbingId, syarat) {
   const [existing] = await conn.query(
-    `SELECT pengajuan_judul_id
-     FROM pengajuan_judul_syarat
-     WHERE pengajuan_judul_id = ?
+    `SELECT pengajuan_disposisi_pembimbing_id
+     FROM pengajuan_disposisi_pembimbing_syarat
+     WHERE pengajuan_disposisi_pembimbing_id = ?
      LIMIT 1`,
-    [pengajuanJudulId],
+    [pengajuanDisposisiPembimbingId],
   );
 
   if (existing.length > 0) {
     await conn.query(
-      `UPDATE pengajuan_judul_syarat
+      `UPDATE pengajuan_disposisi_pembimbing_syarat
        SET
          syarat_transkrip = ?,
          syarat_krs = ?,
          syarat_metodologi_nilai_min_c = ?,
          updated_at = CURRENT_TIMESTAMP
-       WHERE pengajuan_judul_id = ?`,
+       WHERE pengajuan_disposisi_pembimbing_id = ?`,
       [
         syarat.syarat_transkrip,
         syarat.syarat_krs,
         syarat.syarat_metodologi_nilai_min_c,
-        pengajuanJudulId,
+        pengajuanDisposisiPembimbingId,
       ],
     );
     return;
   }
 
   await conn.query(
-    `INSERT INTO pengajuan_judul_syarat (
-       pengajuan_judul_id,
+    `INSERT INTO pengajuan_disposisi_pembimbing_syarat (
+       pengajuan_disposisi_pembimbing_id,
        syarat_transkrip,
        syarat_krs,
        syarat_metodologi_nilai_min_c
      ) VALUES (?, ?, ?, ?)`,
     [
-      pengajuanJudulId,
+      pengajuanDisposisiPembimbingId,
       syarat.syarat_transkrip,
       syarat.syarat_krs,
       syarat.syarat_metodologi_nilai_min_c,
@@ -158,22 +158,22 @@ async function upsertSyarat(conn, pengajuanJudulId, syarat) {
 
 async function upsertFileByType(
   conn,
-  pengajuanJudulId,
+  pengajuanDisposisiPembimbingId,
   fileType,
   fileContent,
   fileName,
 ) {
   await conn.query(
-    `DELETE FROM pengajuan_judul_file
-     WHERE pengajuan_judul_id = ? AND file_type = ?`,
-    [pengajuanJudulId, fileType],
+    `DELETE FROM pengajuan_disposisi_pembimbing_file
+     WHERE pengajuan_disposisi_pembimbing_id = ? AND file_type = ?`,
+    [pengajuanDisposisiPembimbingId, fileType],
   );
 
   await conn.query(
-    `INSERT INTO pengajuan_judul_file (
-       pengajuan_judul_id, file_type, file_content, file_name
+    `INSERT INTO pengajuan_disposisi_pembimbing_file (
+       pengajuan_disposisi_pembimbing_id, file_type, file_content, file_name
      ) VALUES (?, ?, ?, ?)`,
-    [pengajuanJudulId, fileType, fileContent, fileName],
+    [pengajuanDisposisiPembimbingId, fileType, fileContent, fileName],
   );
 }
 
@@ -205,7 +205,7 @@ exports.listForKaprodi = async (req, res, next) => {
         m.nama AS nama_mahasiswa,
         m.sks AS mahasiswa_sks,
         ps.nama AS program_studi
-      FROM pengajuan_judul pj
+      FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN outline o ON o.id = pj.outline_id
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -218,24 +218,24 @@ exports.listForKaprodi = async (req, res, next) => {
     if (rows.length > 0) {
       const ids = rows.map((row) => row.id);
       const [fileRows] = await db.query(
-        `SELECT pengajuan_judul_id, file_content, file_name
-         FROM pengajuan_judul_file
+        `SELECT pengajuan_disposisi_pembimbing_id, file_content, file_name
+         FROM pengajuan_disposisi_pembimbing_file
          WHERE file_type = 'PENGAJUAN_JUDUL'
-           AND pengajuan_judul_id IN (?)`,
+           AND pengajuan_disposisi_pembimbing_id IN (?)`,
         [ids],
       );
       const fileMap = new Map();
       for (const fr of fileRows) {
-        fileMap.set(fr.pengajuan_judul_id, {
-          file_pengajuan_judul: fr.file_content ?? null,
-          file_pengajuan_judul_name: fr.file_name ?? null,
+        fileMap.set(fr.pengajuan_disposisi_pembimbing_id, {
+          file_pengajuan_disposisi_pembimbing: fr.file_content ?? null,
+          file_pengajuan_disposisi_pembimbing_name: fr.file_name ?? null,
         });
       }
       for (const row of rows) {
         const fileData = fileMap.get(row.id) || {};
-        row.file_pengajuan_judul = fileData.file_pengajuan_judul ?? null;
-        row.file_pengajuan_judul_name =
-          fileData.file_pengajuan_judul_name ?? null;
+        row.file_pengajuan_disposisi_pembimbing = fileData.file_pengajuan_disposisi_pembimbing ?? null;
+        row.file_pengajuan_disposisi_pembimbing_name =
+          fileData.file_pengajuan_disposisi_pembimbing_name ?? null;
       }
     }
 
@@ -307,7 +307,7 @@ exports.review = async (req, res, next) => {
     const [check] = await db.query(
       `
       SELECT pj.id
-      FROM pengajuan_judul pj
+      FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
       WHERE pj.id = ?
@@ -333,7 +333,7 @@ exports.review = async (req, res, next) => {
 
     await conn.query(
       `
-      UPDATE pengajuan_judul
+      UPDATE pengajuan_disposisi_pembimbing
       SET
         status = ?,
         pembimbing1_ditetapkan_nidn = ?,
@@ -357,7 +357,7 @@ exports.review = async (req, res, next) => {
       const [kartuRows] = await conn.query(
         `SELECT id
          FROM kartu_konsultasi_outline
-         WHERE pengajuan_judul_id = ?
+         WHERE pengajuan_disposisi_pembimbing_id = ?
          LIMIT 1
          FOR UPDATE`,
         [id],
@@ -366,7 +366,7 @@ exports.review = async (req, res, next) => {
       if (kartuRows.length === 0) {
         const [snapshotRows] = await conn.query(
           `SELECT
-             pj.id AS pengajuan_judul_id,
+             pj.id AS pengajuan_disposisi_pembimbing_id,
              pj.npm,
              pj.program_studi_id,
              pj.pembimbing1_ditetapkan_nidn,
@@ -376,7 +376,7 @@ exports.review = async (req, res, next) => {
              ps.nama AS program_studi_nama,
              d1.nama AS pembimbing1_nama,
              d2.nama AS pembimbing2_nama
-           FROM pengajuan_judul pj
+           FROM pengajuan_disposisi_pembimbing pj
            INNER JOIN outline o ON o.id = pj.outline_id
            INNER JOIN mahasiswa m ON m.npm = pj.npm
            LEFT JOIN program_studi ps ON ps.id = pj.program_studi_id
@@ -453,7 +453,7 @@ exports.review = async (req, res, next) => {
 
         const [insKartu] = await conn.query(
           `INSERT INTO kartu_konsultasi_outline (
-             pengajuan_judul_id,
+             pengajuan_disposisi_pembimbing_id,
              nama_mahasiswa,
              npm,
              program_studi_id,
@@ -466,7 +466,7 @@ exports.review = async (req, res, next) => {
              is_completed
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           [
-            snap.pengajuan_judul_id,
+            snap.pengajuan_disposisi_pembimbing_id,
             String(snap.nama_mahasiswa).trim(),
             snap.npm,
             snap.program_studi_id,
@@ -482,7 +482,7 @@ exports.review = async (req, res, next) => {
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
              kartu_konsultasi_outline_id,
-             pengajuan_judul_id,
+             pengajuan_disposisi_pembimbing_id,
              stage,
              pembimbing_nidn,
              current_status,
@@ -491,7 +491,7 @@ exports.review = async (req, res, next) => {
            ) VALUES (?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
           [
             insKartu.insertId,
-            snap.pengajuan_judul_id,
+            snap.pengajuan_disposisi_pembimbing_id,
             String(snap.pembimbing2_ditetapkan_nidn).trim(),
           ],
         );
@@ -510,8 +510,8 @@ exports.review = async (req, res, next) => {
            syarat_transkrip,
            syarat_krs,
            syarat_metodologi_nilai_min_c
-         FROM pengajuan_judul_syarat
-         WHERE pengajuan_judul_id = ?
+         FROM pengajuan_disposisi_pembimbing_syarat
+         WHERE pengajuan_disposisi_pembimbing_id = ?
          LIMIT 1`,
         [id],
       );
@@ -543,7 +543,7 @@ exports.review = async (req, res, next) => {
          u_student.signature_image AS student_signature,
          dkap.nama AS kaprodi_nama,
          u_kaprodi.signature_image AS kaprodi_signature
-       FROM pengajuan_judul pj
+       FROM pengajuan_disposisi_pembimbing pj
        JOIN mahasiswa m ON m.npm = pj.npm
        JOIN program_studi ps ON ps.id = pj.program_studi_id
        JOIN outline o ON o.id = pj.outline_id
@@ -563,7 +563,7 @@ exports.review = async (req, res, next) => {
     const keputusanMap = { APPROVED: "Diterima", NEED_REVISION: "Perlu Revisi", REJECTED: "Ditolak" };
     const [currentSyaratForDoc] = await conn.query(
       `SELECT syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
-       FROM pengajuan_judul_syarat WHERE pengajuan_judul_id = ? LIMIT 1`,
+       FROM pengajuan_disposisi_pembimbing_syarat WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
       [id],
     );
     const syaratDoc = currentSyaratForDoc[0] ?? {};
@@ -598,13 +598,13 @@ exports.review = async (req, res, next) => {
       id,
       "PENGAJUAN_JUDUL",
       reviewFormulirBase64,
-      "formulir_pengajuan_judul_skripsi.docx",
+      "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
 
     const [reviewedRows] = await conn.query(
       `SELECT pj.npm, m.nama AS nama_mahasiswa,
               pj.pembimbing1_ditetapkan_nidn, pj.pembimbing2_ditetapkan_nidn
-       FROM pengajuan_judul pj
+       FROM pengajuan_disposisi_pembimbing pj
        JOIN mahasiswa m ON m.npm = pj.npm
        WHERE pj.id = ? LIMIT 1`,
       [id],

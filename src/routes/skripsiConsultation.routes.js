@@ -1,13 +1,13 @@
-const router = require("express").Router();
+﻿const router = require("express").Router();
 const auth = require("../middlewares/auth");
 const c = require("../controllers/skripsiConsultation.controller");
 
 // Student routes
-router.post("/skripsi-consultations/:pengajuanJudulId/init", auth, c.initKartu);
-router.get("/skripsi-consultations/:pengajuanJudulId", auth, c.getMyDetail);
-router.post("/skripsi-consultations/:pengajuanJudulId/submissions", auth, c.submitMyChapter);
-router.get("/skripsi-consultations/:pengajuanJudulId/kartu/final", auth, c.getFinalKartuFile);
-router.get("/skripsi-consultations/:pengajuanJudulId/kartu/preview-docx", auth, c.previewKartuDocx);
+router.post("/skripsi-consultations/:pengajuanDisposisiPembimbingId/init", auth, c.initKartu);
+router.get("/skripsi-consultations/:pengajuanDisposisiPembimbingId", auth, c.getMyDetail);
+router.post("/skripsi-consultations/:pengajuanDisposisiPembimbingId/submissions", auth, c.submitMyChapter);
+router.get("/skripsi-consultations/:pengajuanDisposisiPembimbingId/kartu/final", auth, c.getFinalKartuFile);
+router.get("/skripsi-consultations/:pengajuanDisposisiPembimbingId/kartu/preview-docx", auth, c.previewKartuDocx);
 
 // File download routes
 router.get("/skripsi-consultations/submissions/:submissionId/file", auth, c.getSubmissionFile);
@@ -20,6 +20,6 @@ router.post("/lecturer/skripsi-consultations/:stageId/reviews", auth, c.reviewSt
 
 // Kaprodi routes
 router.get("/kaprodi/skripsi-consultations", auth, c.listForKaprodi);
-router.get("/kaprodi/skripsi-consultations/:pengajuanJudulId", auth, c.getDetailForKaprodi);
+router.get("/kaprodi/skripsi-consultations/:pengajuanDisposisiPembimbingId", auth, c.getDetailForKaprodi);
 
 module.exports = router;
