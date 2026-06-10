@@ -354,105 +354,109 @@ exports.review = async (req, res, next) => {
     );
 
     if (status === "APPROVED") {
-      const [kartuRows] = await conn.query(
-        `SELECT id
-         FROM kartu_konsultasi_outline
-         WHERE pengajuan_disposisi_pembimbing_id = ?
-         LIMIT 1
-         FOR UPDATE`,
+      const [snapshotRows] = await conn.query(
+        `SELECT
+           pj.id AS pengajuan_disposisi_pembimbing_id,
+           pj.outline_id,
+           pj.npm,
+           pj.program_studi_id,
+           pj.pembimbing1_ditetapkan_nidn,
+           pj.pembimbing2_ditetapkan_nidn,
+           o.judul AS judul_skripsi,
+           m.nama AS nama_mahasiswa,
+           ps.nama AS program_studi_nama,
+           d1.nama AS pembimbing1_nama,
+           d2.nama AS pembimbing2_nama
+         FROM pengajuan_disposisi_pembimbing pj
+         INNER JOIN outline o ON o.id = pj.outline_id
+         INNER JOIN mahasiswa m ON m.npm = pj.npm
+         LEFT JOIN program_studi ps ON ps.id = pj.program_studi_id
+         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_ditetapkan_nidn
+         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_ditetapkan_nidn
+         WHERE pj.id = ?
+         LIMIT 1`,
         [id],
+      );
+      const snap = snapshotRows[0] || null;
+
+      if (!snap) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Failed to resolve snapshot data for consultation initialization",
+        });
+      }
+      if (!snap.program_studi_id) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Missing required snapshot data: program_studi_id",
+        });
+      }
+      if (!snap.program_studi_nama || String(snap.program_studi_nama).trim().length === 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Missing required snapshot data: program_studi_nama",
+        });
+      }
+      if (!snap.judul_skripsi || String(snap.judul_skripsi).trim().length === 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Missing required snapshot data: judul_skripsi",
+        });
+      }
+      if (!snap.nama_mahasiswa || String(snap.nama_mahasiswa).trim().length === 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Missing required snapshot data: nama_mahasiswa",
+        });
+      }
+      if (!snap.pembimbing2_ditetapkan_nidn || String(snap.pembimbing2_ditetapkan_nidn).trim().length === 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
+        });
+      }
+
+      // Write approved pembimbing data back to outline so it becomes the source of truth
+      await conn.query(
+        `UPDATE outline SET
+           pembimbing1_nidn = ?,
+           pembimbing1_nama = ?,
+           pembimbing2_nidn = ?,
+           pembimbing2_nama = ?,
+           judul_final      = ?,
+           approved_at      = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [
+          snap.pembimbing1_ditetapkan_nidn ?? null,
+          snap.pembimbing1_nama ?? null,
+          String(snap.pembimbing2_ditetapkan_nidn).trim(),
+          snap.pembimbing2_nama ?? null,
+          String(snap.judul_skripsi).trim(),
+          snap.outline_id,
+        ],
+      );
+
+      const [kartuRows] = await conn.query(
+        `SELECT id FROM kartu_konsultasi_outline WHERE outline_id = ? LIMIT 1 FOR UPDATE`,
+        [snap.outline_id],
       );
 
       if (kartuRows.length === 0) {
-        const [snapshotRows] = await conn.query(
-          `SELECT
-             pj.id AS pengajuan_disposisi_pembimbing_id,
-             pj.npm,
-             pj.program_studi_id,
-             pj.pembimbing1_ditetapkan_nidn,
-             pj.pembimbing2_ditetapkan_nidn,
-             o.judul AS judul_skripsi,
-             m.nama AS nama_mahasiswa,
-             ps.nama AS program_studi_nama,
-             d1.nama AS pembimbing1_nama,
-             d2.nama AS pembimbing2_nama
-           FROM pengajuan_disposisi_pembimbing pj
-           INNER JOIN outline o ON o.id = pj.outline_id
-           INNER JOIN mahasiswa m ON m.npm = pj.npm
-           LEFT JOIN program_studi ps ON ps.id = pj.program_studi_id
-           LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_ditetapkan_nidn
-           LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_ditetapkan_nidn
-           WHERE pj.id = ?
-           LIMIT 1`,
-          [id],
-        );
-        const snap = snapshotRows[0] || null;
-
-        if (!snap) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(409).json({
-            ok: false,
-            message:
-              "Failed to resolve snapshot data for consultation initialization",
-          });
-        }
-        if (!snap.program_studi_id) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(409).json({
-            ok: false,
-            message: "Missing required snapshot data: program_studi_id",
-          });
-        }
-        if (
-          !snap.program_studi_nama ||
-          String(snap.program_studi_nama).trim().length === 0
-        ) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(409).json({
-            ok: false,
-            message: "Missing required snapshot data: program_studi_nama",
-          });
-        }
-        if (
-          !snap.judul_skripsi ||
-          String(snap.judul_skripsi).trim().length === 0
-        ) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(409).json({
-            ok: false,
-            message: "Missing required snapshot data: judul_skripsi",
-          });
-        }
-        if (
-          !snap.nama_mahasiswa ||
-          String(snap.nama_mahasiswa).trim().length === 0
-        ) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(409).json({
-            ok: false,
-            message: "Missing required snapshot data: nama_mahasiswa",
-          });
-        }
-        if (
-          !snap.pembimbing2_ditetapkan_nidn ||
-          String(snap.pembimbing2_ditetapkan_nidn).trim().length === 0
-        ) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(409).json({
-            ok: false,
-            message:
-              "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
-          });
-        }
-
         const [insKartu] = await conn.query(
           `INSERT INTO kartu_konsultasi_outline (
+             outline_id,
              pengajuan_disposisi_pembimbing_id,
              nama_mahasiswa,
              npm,
@@ -464,8 +468,9 @@ exports.review = async (req, res, next) => {
              pembimbing2_nidn,
              pembimbing2_nama,
              is_completed
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           [
+            snap.outline_id,
             snap.pengajuan_disposisi_pembimbing_id,
             String(snap.nama_mahasiswa).trim(),
             snap.npm,
@@ -482,7 +487,7 @@ exports.review = async (req, res, next) => {
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
              kartu_konsultasi_outline_id,
-             pengajuan_disposisi_pembimbing_id,
+             outline_id,
              stage,
              pembimbing_nidn,
              current_status,
@@ -491,7 +496,7 @@ exports.review = async (req, res, next) => {
            ) VALUES (?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
           [
             insKartu.insertId,
-            snap.pengajuan_disposisi_pembimbing_id,
+            snap.outline_id,
             String(snap.pembimbing2_ditetapkan_nidn).trim(),
           ],
         );

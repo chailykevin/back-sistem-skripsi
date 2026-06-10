@@ -1,32 +1,32 @@
-﻿const router = require("express").Router();
+const router = require("express").Router();
 const auth = require("../middlewares/auth");
 const c = require("../controllers/outlineConsultation.controller");
 
 router.post(
-  "/internal/pengajuan-judul/:pengajuanDisposisiPembimbingId/kartu-konsultasi-outline/init",
+  "/internal/outline/:outlineId/kartu-konsultasi-outline/init",
   auth,
   c.initFromApprovedPengajuan,
 );
 
 router.get("/outline-consultations/me", auth, c.listMine);
-router.get("/outline-consultations/me/:pengajuanDisposisiPembimbingId", auth, c.getMyDetail);
+router.get("/outline-consultations/me/:outlineId", auth, c.getMyDetail);
 router.post(
-  "/outline-consultations/me/:pengajuanDisposisiPembimbingId/submissions",
+  "/outline-consultations/me/:outlineId/submissions",
   auth,
   c.submitMyOutline,
 );
 router.get(
-  "/outline-consultations/me/:pengajuanDisposisiPembimbingId/reviews",
+  "/outline-consultations/me/:outlineId/reviews",
   auth,
   c.getMyReviewHistory,
 );
 router.get(
-  "/outline-consultations/me/:pengajuanDisposisiPembimbingId/kartu",
+  "/outline-consultations/me/:outlineId/kartu",
   auth,
   c.getMyKartu,
 );
 router.get(
-  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/final",
+  "/outline-consultations/:outlineId/kartu/final",
   auth,
   c.getMyFinalKartuFile,
 );
@@ -39,7 +39,7 @@ router.get(
 );
 router.get("/kaprodi/outline-consultations", auth, c.listForKaprodi);
 router.get(
-  "/kaprodi/outline-consultations/:pengajuanDisposisiPembimbingId",
+  "/kaprodi/outline-consultations/:outlineId",
   auth,
   c.getDetailForKaprodi,
 );
@@ -60,17 +60,17 @@ router.post(
 );
 
 router.post(
-  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/finalize",
+  "/outline-consultations/:outlineId/kartu/finalize",
   auth,
   c.finalizeKartu,
 );
 router.get(
-  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/preview-docx",
+  "/outline-consultations/:outlineId/kartu/preview-docx",
   auth,
   c.previewKartuDocx,
 );
 router.get(
-  "/outline-consultations/:pengajuanDisposisiPembimbingId/kartu/files",
+  "/outline-consultations/:outlineId/kartu/files",
   auth,
   c.getKartuFiles,
 );
