@@ -411,13 +411,13 @@ async function generateAndStoreHalamanDocx(
 
 async function autoSubmitSkPenelitian(
   conn,
-  { pengajuanDisposisiPembimbingId, kartuId, halamanPersetujuanJudulId },
+  { outlineId, kartuId, halamanPersetujuanJudulId },
 ) {
-  console.log("[autoSubmitSkPenelitian] start", { pengajuanDisposisiPembimbingId, kartuId, halamanPersetujuanJudulId });
+  console.log("[autoSubmitSkPenelitian] start", { outlineId, kartuId, halamanPersetujuanJudulId });
 
   const [existingRows] = await conn.query(
-    `SELECT id FROM pengajuan_sk_penelitian WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
+    `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
+    [outlineId],
   );
   if (existingRows.length > 0) {
     console.log("[autoSubmitSkPenelitian] skip: already_exists", existingRows[0].id);
@@ -425,12 +425,18 @@ async function autoSubmitSkPenelitian(
   }
 
   const [krsRows] = await conn.query(
-    `SELECT file_content, file_name FROM pengajuan_disposisi_pembimbing_file WHERE pengajuan_disposisi_pembimbing_id = ? AND file_type = 'KRS' LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
+    `SELECT pf.file_content, pf.file_name
+     FROM pengajuan_disposisi_pembimbing_file pf
+     JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+     WHERE pj.outline_id = ? AND pf.file_type = 'KRS' LIMIT 1`,
+    [outlineId],
   );
   const [rekapRows] = await conn.query(
-    `SELECT file_content, file_name FROM pengajuan_disposisi_pembimbing_file WHERE pengajuan_disposisi_pembimbing_id = ? AND file_type = 'TRANSKRIP' LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
+    `SELECT pf.file_content, pf.file_name
+     FROM pengajuan_disposisi_pembimbing_file pf
+     JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+     WHERE pj.outline_id = ? AND pf.file_type = 'TRANSKRIP' LIMIT 1`,
+    [outlineId],
   );
   const [kartuFileRows] = await conn.query(
     `SELECT file_content, file_name, mime_type FROM kartu_konsultasi_outline_file WHERE kartu_konsultasi_outline_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1 ORDER BY generated_at DESC LIMIT 1`,
@@ -465,8 +471,8 @@ async function autoSubmitSkPenelitian(
   }
 
   const [ins] = await conn.query(
-    `INSERT INTO pengajuan_sk_penelitian (pengajuan_disposisi_pembimbing_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
-    [pengajuanDisposisiPembimbingId],
+    `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+    [outlineId],
   );
   const skId = ins.insertId;
 
@@ -2210,18 +2216,18 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
     let autoSkResult = null;
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
-      const pengajuanDisposisiPembimbingId = kartuInfo?.pengajuan_disposisi_pembimbing_id ?? null;
+      const outlineId = kartuInfo?.outline_id ?? null;
       let halamanId = autoHalamanResult?.halamanId ?? null;
-      if (!halamanId && pengajuanDisposisiPembimbingId) {
+      if (!halamanId && outlineId) {
         const [[hRow]] = await conn.query(
-          `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-          [pengajuanDisposisiPembimbingId],
+          `SELECT id FROM halaman_persetujuan_judul WHERE outline_id = ? LIMIT 1`,
+          [outlineId],
         );
         halamanId = hRow?.id ?? null;
       }
-      if (halamanId && pengajuanDisposisiPembimbingId) {
+      if (halamanId && outlineId) {
         autoSkResult = await autoSubmitSkPenelitian(conn, {
-          pengajuanDisposisiPembimbingId,
+          outlineId,
           kartuId: stage.kartu_id,
           halamanPersetujuanJudulId: halamanId,
         });

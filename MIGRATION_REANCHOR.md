@@ -45,26 +45,28 @@ Routes renamed: `:pengajuanDisposisiPembimbingId` → `:outlineId` on all outlin
 
 ---
 
-### ⬜ Pending: Halaman Persetujuan Judul
+### ✅ Done: Halaman Persetujuan Judul (`2026-06-10_reanchor_halaman_persetujuan.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `halaman_persetujuan_judul` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK |
-| `halaman_persetujuan_judul_signatures` | via `halaman_id` FK | no change needed |
-| `halaman_persetujuan_judul_file` | via `halaman_id` FK | no change needed |
+| Table | Before | After |
+|-------|--------|-------|
+| `halaman_persetujuan_judul` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK; `pengajuan_disposisi_pembimbing_id` kept as plain column |
+| `halaman_persetujuan_judul_signatures` | via `halaman_id` FK | no change |
+| `halaman_persetujuan_judul_file` | via `halaman_id` FK | no change |
 
-Controller: `halamanPersetujuan.controller.js` + `autoGenerateHalamanPersetujuan` in `outlineConsultation.controller.js`.
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:outlineId` on all halaman persetujuan endpoints.
 
 ---
 
-### ⬜ Pending: SK Penelitian
+### ✅ Done: SK Penelitian (`2026-06-10_reanchor_sk_penelitian.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `pengajuan_sk_penelitian` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK |
-| `pengajuan_sk_penelitian_files` | via `pengajuan_sk_penelitian_id` FK | no change needed |
+| Table | Before | After |
+|-------|--------|-------|
+| `pengajuan_sk_penelitian` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK; `pengajuan_disposisi_pembimbing_id` kept as plain column (bridge for `skripsi` INSERT until skripsi is re-anchored) |
+| `pengajuan_sk_penelitian_files` | via `pengajuan_sk_penelitian_id` FK | no change |
 
-Controller: `skPenelitian.controller.js` + `autoSubmitSkPenelitian` in `outlineConsultation.controller.js`.
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:outlineId` on all SK penelitian endpoints.
+
+`autoSubmitSkPenelitian` in `outlineConsultation.controller.js` now uses `outlineId` — the bridge column `kartu_konsultasi_outline.pengajuan_disposisi_pembimbing_id` is no longer read by any outline-side code.
 
 ---
 
