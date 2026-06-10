@@ -1078,27 +1078,18 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           generatedByUserId: req.user.id,
         });
 
-        // Resolve pengajuan_disposisi_pembimbing_id for tables not yet re-anchored
-        const [[pjBridge]] = await conn.query(
-          `SELECT pj.id FROM pengajuan_disposisi_pembimbing pj
-           JOIN skripsi s ON s.outline_id = pj.outline_id
-           WHERE s.id = ? LIMIT 1`,
-          [stage.skripsi_id],
-        );
-        const bridgePjId = pjBridge?.id ?? null;
-
         // Auto-init pengajuan_sidang DRAFT first, then pengajuan_sidang_kaprodi linked to it
         let [[existingSidang]] = await conn.query(
           `SELECT id FROM pengajuan_sidang
-           WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+           WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
            ORDER BY id DESC LIMIT 1`,
-          [bridgePjId],
+          [stage.skripsi_id],
         );
         let autoSidangId = existingSidang?.id ?? null;
         if (!autoSidangId) {
           const [sidangIns] = await conn.query(
-            `INSERT INTO pengajuan_sidang (pengajuan_disposisi_pembimbing_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
-            [bridgePjId],
+            `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
+            [stage.skripsi_id],
           );
           autoSidangId = sidangIns.insertId;
         }
@@ -1109,8 +1100,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         );
         if (!existingKaprodi) {
           await conn.query(
-            `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_disposisi_pembimbing_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
-            [bridgePjId, autoSidangId],
+            `INSERT INTO pengajuan_sidang_kaprodi (skripsi_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
+            [stage.skripsi_id, autoSidangId],
           );
         }
       }

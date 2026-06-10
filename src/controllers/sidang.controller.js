@@ -119,27 +119,27 @@ const NOTULEN_ROLE_LABEL = {
   PENGUJI_2: "Anggota Penguji",
 };
 
-async function getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId) {
+async function getSidangBySkripsiId(conn, skripsiId) {
   const [[sidang]] = await conn.query(
-    `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
+    `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+    [skripsiId],
   );
   return sidang ?? null;
 }
 
-// GET /sidang/:pengajuanDisposisiPembimbingId
+// GET /sidang/:skripsiId
 exports.getSidang = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     if (!sidang) {
       return res
@@ -289,11 +289,11 @@ exports.getSidang = async (req, res, next) => {
 // PATCH /sidang/:pengajuanDisposisiPembimbingId/start
 exports.startSidang = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -304,8 +304,8 @@ exports.startSidang = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     if (!sidang) {
       return res
@@ -344,16 +344,16 @@ exports.startSidang = async (req, res, next) => {
   }
 };
 
-// POST /sidang/:pengajuanDisposisiPembimbingId/notulen
+// POST /sidang/:skripsiId/notulen
 exports.submitNotulen = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -373,7 +373,7 @@ exports.submitNotulen = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId);
+    const sidang = await getSidangBySkripsiId(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -427,16 +427,16 @@ exports.submitNotulen = async (req, res, next) => {
   }
 };
 
-// POST /sidang/:pengajuanDisposisiPembimbingId/penilaian
+// POST /sidang/:skripsiId/penilaian
 exports.submitPenilaian = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -487,7 +487,7 @@ exports.submitPenilaian = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId);
+    const sidang = await getSidangBySkripsiId(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -638,16 +638,16 @@ exports.submitPenilaian = async (req, res, next) => {
   }
 };
 
-// POST /sidang/:pengajuanDisposisiPembimbingId/hasil-penilaian
+// POST /sidang/:skripsiId/hasil-penilaian
 exports.submitHasilPenilaian = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -674,7 +674,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getSidangByPengajuanJudulId(conn, pengajuanDisposisiPembimbingId);
+    const sidang = await getSidangBySkripsiId(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -835,16 +835,16 @@ exports.submitHasilPenilaian = async (req, res, next) => {
 
     // Detect re-exam: a prior sidang exists for this student (ujian_ke >= 2)
     const [[priorSidang]] = await conn.query(
-      `SELECT id FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? AND id != ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId, sidang.id],
+      `SELECT id FROM sidang WHERE skripsi_id = ? AND id != ? LIMIT 1`,
+      [skripsiId, sidang.id],
     );
     const isUjianUlang = !!priorSidang;
 
     if (isUjianUlang && hasilSidang === "LULUS") {
       // Re-exam passed: reset revisi_pasca_sidang so student goes through revisi again
       const [[existingRevisi]] = await conn.query(
-        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT id FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+        [sidang.id],
       );
       if (existingRevisi) {
         const [stageRows] = await conn.query(
@@ -885,13 +885,13 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     // Auto-init revisi pasca sidang for original sidang (existence-guarded; re-exam resets above handle it)
     if (!isUjianUlang) {
       const [[existingRevisi]] = await conn.query(
-        `SELECT id FROM revisi_pasca_sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT id FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+        [sidang.id],
       );
       if (!existingRevisi) {
         await conn.query(
-          `INSERT INTO revisi_pasca_sidang (sidang_id, pengajuan_disposisi_pembimbing_id, npm) VALUES (?, ?, ?)`,
-          [sidang.id, pengajuanDisposisiPembimbingId, sidang.npm],
+          `INSERT INTO revisi_pasca_sidang (sidang_id, skripsi_id, npm) VALUES (?, ?, ?)`,
+          [sidang.id, skripsiId, sidang.npm],
         );
       }
     }
@@ -1080,7 +1080,7 @@ exports.getLecturerSidang = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
         s.id,
-        s.pengajuan_disposisi_pembimbing_id,
+        s.skripsi_id,
         s.npm,
         s.nama_mahasiswa,
         s.judul_skripsi,
@@ -1148,17 +1148,17 @@ function sendDocx(res, fileRow) {
   return res.send(buffer);
 }
 
-// GET /sidang/:pengajuanDisposisiPembimbingId/files/berita-acara
+// GET /sidang/:skripsiId/files/berita-acara
 exports.getBeritaAcara = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
@@ -1186,17 +1186,17 @@ exports.getBeritaAcara = async (req, res, next) => {
   }
 };
 
-// GET /sidang/:pengajuanDisposisiPembimbingId/files/hasil-penilaian
+// GET /sidang/:skripsiId/files/hasil-penilaian
 exports.getHasilPenilaianFile = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
@@ -1227,12 +1227,12 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
 const VALID_PENILAIAN_ROLES = ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"];
 const VALID_NOTULEN_ROLES = ["PENGUJI_1", "PENGUJI_2"];
 
-// GET /sidang/:pengajuanDisposisiPembimbingId/files/penilaian/:role
+// GET /sidang/:skripsiId/files/penilaian/:role
 exports.getPenilaianFile = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const role = req.params.role;
@@ -1244,8 +1244,8 @@ exports.getPenilaianFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
@@ -1273,12 +1273,12 @@ exports.getPenilaianFile = async (req, res, next) => {
   }
 };
 
-// GET /sidang/:pengajuanDisposisiPembimbingId/files/notulen/:role
+// GET /sidang/:skripsiId/files/notulen/:role
 exports.getNotulenFile = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const role = req.params.role;
@@ -1290,8 +1290,8 @@ exports.getNotulenFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     if (!sidang) {
       return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
@@ -1337,7 +1337,7 @@ exports.getSekretariatSidang = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         s.id, s.pengajuan_disposisi_pembimbing_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
+         s.id, s.skripsi_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
          s.program_studi_id, s.program_studi_nama, s.judul_skripsi, s.ujian_ke,
          s.status, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
          s.pembimbing1_nidn, s.pembimbing1_nama, s.pembimbing2_nidn, s.pembimbing2_nama,

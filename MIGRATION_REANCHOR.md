@@ -95,8 +95,6 @@ Routes renamed: `:pengajuanDisposisiPembimbingId` → `:skripsiId` on all 5 stud
 
 `skripsiSource` query in `skPenelitian.controller.js` now pulls directly from `kartu_konsultasi_outline` (no JOIN to `pengajuan_sk_penelitian`); INSERT uses `outline_id`.
 
-`pengajuanSidang.controller.js` (`initPengajuanSidang`, `initKaprodi`): `pjRow` query now also fetches `outline_id`; `skripsi` lookup uses `pjRow.outline_id`.
-
 `pengumpulanBerkasFinal.controller.js` (`generateSuratDoc`): `skripsi` lookup joins through `pengajuan_disposisi_pembimbing` to resolve `outline_id`.
 
 Bridge columns dropped in the same migration:
@@ -105,55 +103,80 @@ Bridge columns dropped in the same migration:
 
 ---
 
-### ⬜ Pending: Pengajuan Sidang Kaprodi + Sekretariat
+### ✅ Done: Pengajuan Sidang Kaprodi + Sekretariat (`2026-06-10_reanchor_pengajuan_sidang.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `pengajuan_sidang_kaprodi` | `pengajuan_disposisi_pembimbing_id` BIGINT | `skripsi_id` BIGINT |
-| `pengajuan_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT | `skripsi_id` BIGINT |
-| `pengajuan_sidang_files` | via `pengajuan_sidang_id` FK | no change needed |
+| Table | Before | After |
+|-------|--------|-------|
+| `pengajuan_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT FK | `skripsi_id` BIGINT UNSIGNED NOT NULL FK → `skripsi(id)` |
+| `pengajuan_sidang_kaprodi` | `pengajuan_disposisi_pembimbing_id` BIGINT FK | `skripsi_id` BIGINT UNSIGNED NOT NULL FK → `skripsi(id)` |
+| `pengajuan_sidang_files` | via `pengajuan_sidang_id` FK | no change |
+| `skripsi` | no `perlu_surat_pengantar` | `perlu_surat_pengantar` TINYINT(1) NOT NULL DEFAULT 0 added; backfilled from `pengajuan_disposisi_pembimbing` |
 
-Controllers: `pengajuanSidangKaprodi.controller.js`, `pengajuanSidang.controller.js`.
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:skripsiId` on all pengajuan-sidang and pengajuan-sidang-kaprodi endpoints.
 
----
+`generateSuratUndangan`: `sidang` INSERT still uses `pengajuan_disposisi_pembimbing_id` (bridge PJ lookup) until `sidang` is re-anchored; also pre-populates `sidang.skripsi_id` (nullable column added in this migration).
 
-### ⬜ Pending: Sidang
+`revisiPascaSidang.controller.js`: broken `JOIN skripsi sk ON sk.pengajuan_disposisi_pembimbing_id = ...` fixed via correlated subquery; `INSERT INTO pengajuan_sidang` fixed to use `skripsi_id` (resolved via bridge).
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT | `skripsi_id` BIGINT |
-| `sidang_penilaian` | via `sidang_id` FK | no change needed |
-| `sidang_notulen` | via `sidang_id` FK | no change needed |
-| `sidang_hasil_penilaian` | via `sidang_id` FK | no change needed |
-| `sidang_files` | via `sidang_id` FK | no change needed |
-
-Controller: `sidang.controller.js`.
+`skripsiConsultation.controller.js`: auto-create block in `reviewStageByLecturer` now uses `skripsi_id` for both sidang + kaprodi INSERTs; bridge PJ resolution dropped.
 
 ---
 
-### ⬜ Pending: Revisi Pasca Sidang
+### ✅ Done: Sidang (`2026-06-10_reanchor_sidang.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `revisi_pasca_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNIQUE FK |
-| `revisi_pasca_sidang_stages` | via `revisi_id` FK | no change needed |
-| `revisi_pasca_sidang_submissions` | via `stage_id` FK | no change needed |
-| `revisi_pasca_sidang_reviews` | via `stage_id` FK | no change needed |
-| `revisi_pasca_sidang_files` | via `revisi_id` FK | no change needed |
+| Table | Before | After |
+|-------|--------|-------|
+| `sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT FK | `skripsi_id` BIGINT UNSIGNED NOT NULL FK → `skripsi(id)` |
+| `sidang_penilaian` | via `sidang_id` FK | no change |
+| `sidang_notulen` | via `sidang_id` FK | no change |
+| `sidang_hasil_penilaian` | via `sidang_id` FK | no change |
+| `sidang_files` | via `sidang_id` FK | no change |
 
-Controller: `revisiPascaSidang.controller.js`.
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:skripsiId` on all sidang endpoints.
+
+Helper `getSidangByPengajuanJudulId` → `getSidangBySkripsiId`.
+
+`submitHasilPenilaian`: prior sidang count uses `WHERE skripsi_id = ?`; revisi lookup uses `WHERE sidang_id = ?`; new revisi INSERT uses bridge PJ lookup (revisi still anchors on `pengajuan_disposisi_pembimbing_id`).
+
+`revisiPascaSidang.controller.js`: `initRevisi` sidang query fixed to use `skripsi_id`; `reviewRevisi` sidang count fixed to use `skripsi_id`.
+
+`pengumpulanBerkasFinal.controller.js`: all 9 occurrences of `JOIN sidang ON pengajuan_disposisi_pembimbing_id` fixed with skripsi bridge; all 4 occurrences of `JOIN skripsi ON skripsi.pengajuan_disposisi_pembimbing_id` fixed with outline_id bridge (skripsi lost that column earlier).
 
 ---
 
-### ⬜ Pending: Pengumpulan Berkas Final
+### ✅ Done: Revisi Pasca Sidang (`2026-06-10_reanchor_revisi_pasca_sidang.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `pengumpulan_berkas_final` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNIQUE FK |
-| `pengumpulan_berkas_final_files` | via `pengumpulan_id` FK | no change needed |
-| `pengumpulan_berkas_final_confirmations` | via `pengumpulan_id` FK | no change needed |
+| Table | Before | After |
+|-------|--------|-------|
+| `revisi_pasca_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNSIGNED NOT NULL UNIQUE FK → `skripsi(id)` |
+| `revisi_pasca_sidang_stages` | via `revisi_id` FK | no change |
+| `revisi_pasca_sidang_submissions` | via `stage_id` FK | no change |
+| `revisi_pasca_sidang_reviews` | via `stage_id` FK | no change |
+| `revisi_pasca_sidang_files` | via `revisi_id` FK | no change |
 
-Controller: `pengumpulanBerkasFinal.controller.js`.
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:skripsiId` on all revisi pasca sidang endpoints.
+
+`sidang.controller.js`: `submitHasilPenilaian` revisi INSERT now uses `skripsi_id` directly (bridge PJ lookup dropped).
+
+`pengumpulanBerkasFinal.controller.js`: `getPengajuanJudulRecord` JOIN on `revisi_pasca_sidang` fixed to use `skripsi_id` bridge; `initPengumpulan` prerequisite check fixed to join via `skripsi`.
+
+---
+
+### ✅ Done: Pengumpulan Berkas Final (`2026-06-10_reanchor_pengumpulan_berkas_final.sql`)
+
+| Table | Before | After |
+|-------|--------|-------|
+| `pengumpulan_berkas_final` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNSIGNED NOT NULL UNIQUE FK → `skripsi(id)` |
+| `pengumpulan_berkas_final_files` | via `pengumpulan_id` FK | no change |
+| `pengumpulan_berkas_final_confirmations` | via `pengumpulan_id` FK | no change |
+
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:skripsiId` on all 6 pengumpulan endpoints.
+
+All SQL in `pengumpulanBerkasFinal.controller.js` simplified — correlated subquery bridges replaced with direct `JOIN skripsi sk ON sk.id = pbf.skripsi_id` and `JOIN sidang s ON s.skripsi_id = pbf.skripsi_id`.
+
+Response shape: `pengajuanDisposisiPembimbingId` field replaced with `skripsiId` in all list and GET responses.
+
+`pengajuanSidang.controller.js` (`generateSuratUndangan`): stale bridge PJ lookup and `pengajuan_disposisi_pembimbing_id` column in `sidang` INSERT removed (column was already dropped in Step 7).
 
 ---
 

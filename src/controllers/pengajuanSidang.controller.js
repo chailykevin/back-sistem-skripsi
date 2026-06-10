@@ -658,15 +658,15 @@ const VALID_SIDANG_STATUSES = [
 const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
 
 // Returns the active (non-terminal) sidang or the most recent one
-async function getActiveSidang(conn, pengajuanDisposisiPembimbingId) {
+async function getActiveSidang(conn, skripsiId) {
   const [rows] = await conn.query(
     `SELECT * FROM pengajuan_sidang
-     WHERE pengajuan_disposisi_pembimbing_id = ?
+     WHERE skripsi_id = ?
      ORDER BY
        CASE WHEN status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED') THEN 0 ELSE 1 END ASC,
        created_at DESC
      LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
+    [skripsiId],
   );
   return rows[0] ?? null;
 }
@@ -682,11 +682,11 @@ exports.initPengajuanSidang = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -696,20 +696,10 @@ exports.initPengajuanSidang = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const [[pjRow]] = await conn.query(
-      `SELECT id, outline_id FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
-    );
-    if (!pjRow) {
-      return res
-        .status(404)
-        .json({ ok: false, message: "Pengajuan judul tidak ditemukan" });
-    }
-
     // Prerequisite: skripsi must be COMPLETED
     const [[skripsiRow]] = await conn.query(
-      `SELECT id FROM skripsi WHERE outline_id = ? AND status = 'COMPLETED' LIMIT 1`,
-      [pjRow.outline_id],
+      `SELECT id, perlu_surat_pengantar FROM skripsi WHERE id = ? AND npm = ? AND status = 'COMPLETED' LIMIT 1`,
+      [skripsiId, npm],
     );
     if (!skripsiRow) {
       return res
@@ -719,8 +709,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
 
     // Determine if this is an ujian ulang (re-exam) or original sidang
     const [[latestSidang]] = await conn.query(
-      `SELECT id, hasil_sidang FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT id, hasil_sidang FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
     const isUjianUlang = !!(
       latestSidang && latestSidang.hasil_sidang === "TIDAK_LULUS"
@@ -729,8 +719,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
     if (isUjianUlang) {
       // Ujian ulang: prerequisite is revisi_pasca_sidang completed
       const [[revisiRow]] = await conn.query(
-        `SELECT id, is_completed FROM revisi_pasca_sidang WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT id, is_completed FROM revisi_pasca_sidang WHERE skripsi_id = ? LIMIT 1`,
+        [skripsiId],
       );
       if (!revisiRow || !revisiRow.is_completed) {
         return res
@@ -740,8 +730,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
     } else {
       // Original flow: Kaprodi form must be VALID
       const [[kaprodiRow]] = await conn.query(
-        `SELECT id, status FROM pengajuan_sidang_kaprodi WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT id, status FROM pengajuan_sidang_kaprodi WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+        [skripsiId],
       );
       if (!kaprodiRow || kaprodiRow.status !== "VALID") {
         return res
@@ -755,12 +745,12 @@ exports.initPengajuanSidang = async (req, res, next) => {
     // so they must also prevent creating a new row.
     const [[activeRow]] = await conn.query(
       `SELECT id, status, submitted_at FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
        ORDER BY
          CASE WHEN status = 'DRAFT' AND submitted_at IS NULL THEN 0 ELSE 1 END ASC,
          created_at DESC
        LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
 
     await conn.beginTransaction();
@@ -790,14 +780,14 @@ exports.initPengajuanSidang = async (req, res, next) => {
     } else {
       // Count existing sidang rows to determine ujian_ke
       const [[{ sidangCount }]] = await conn.query(
-        `SELECT COUNT(*) AS sidangCount FROM sidang WHERE pengajuan_disposisi_pembimbing_id = ?`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT COUNT(*) AS sidangCount FROM sidang WHERE skripsi_id = ?`,
+        [skripsiId],
       );
       const ujianKe = Number(sidangCount) + 1;
 
       const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (pengajuan_disposisi_pembimbing_id, status, ujian_ke) VALUES (?, 'DRAFT', ?)`,
-        [pengajuanDisposisiPembimbingId, ujianKe],
+        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', ?)`,
+        [skripsiId, ujianKe],
       );
       sidangId = ins.insertId;
       isNew = true;
@@ -806,8 +796,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
     if (!isUjianUlang) {
       // Original flow: auto-pull system files
       const [[kartuSkripsi]] = await conn.query(
-        `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.skripsi_id = ? LIMIT 1`,
+        [skripsiId],
       );
       if (!kartuSkripsi) {
         await conn.rollback();
@@ -851,9 +841,10 @@ exports.initPengajuanSidang = async (req, res, next) => {
         `SELECT f.file_content, f.file_name, f.mime_type
          FROM pengajuan_sk_penelitian_files f
          INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-         WHERE psk.pengajuan_disposisi_pembimbing_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
+           AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
          ORDER BY f.created_at DESC LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        [skripsiId],
       );
       if (!skPembimbingRow) {
         await conn.rollback();
@@ -882,9 +873,10 @@ exports.initPengajuanSidang = async (req, res, next) => {
         `SELECT f.file_content, f.file_name, f.mime_type
          FROM pengajuan_sk_penelitian_files f
          INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-         WHERE psk.pengajuan_disposisi_pembimbing_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+         WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
+           AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
          ORDER BY f.created_at DESC LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        [skripsiId],
       );
       if (suratPenyelesaianRow) {
         await conn.query(
@@ -933,14 +925,14 @@ exports.initPengajuanSidang = async (req, res, next) => {
 
 exports.getPengajuanSidang = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const sidang = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const sidang = await getActiveSidang(db, skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -948,18 +940,12 @@ exports.getPengajuanSidang = async (req, res, next) => {
     }
 
     const [[mahasiswaInfo]] = await db.query(
-      `SELECT
-         m.npm,
-         m.nama AS nama_mahasiswa,
-         m.sks,
-         ps.nama AS program_studi_nama,
-         ps.id AS program_studi_id,
-         pj.perlu_surat_pengantar
-       FROM mahasiswa m
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT s.npm, s.nama_mahasiswa, m.sks, s.program_studi_id, s.program_studi_nama,
+              s.perlu_surat_pengantar
+       FROM skripsi s
+       JOIN mahasiswa m ON m.npm = s.npm
+       WHERE s.id = ? LIMIT 1`,
+      [skripsiId],
     );
 
     const [files] = await db.query(
@@ -987,11 +973,11 @@ exports.uploadFiles = async (req, res, next) => {
         .json({ ok: false, message: "Only students can upload files" });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { files } = req.body ?? {};
@@ -1035,7 +1021,7 @@ exports.uploadFiles = async (req, res, next) => {
         .json({ ok: false, message: "fileType tidak boleh duplikat" });
     }
 
-    const sidang = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const sidang = await getActiveSidang(db, skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -1050,8 +1036,8 @@ exports.uploadFiles = async (req, res, next) => {
     }
 
     const [[kaprodiRow]] = await db.query(
-      `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT status FROM pengajuan_sidang_kaprodi WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [skripsiId],
     );
 
     const kaprodiNotYetValid = kaprodiRow && kaprodiRow.status !== "VALID";
@@ -1134,11 +1120,11 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1153,9 +1139,9 @@ exports.submitPengajuanSidang = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
     if (!sidang) {
       await conn.rollback();
@@ -1174,11 +1160,11 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       });
     }
 
-    const [[pjRow]] = await conn.query(
-      `SELECT perlu_surat_pengantar FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+    const [[skripsiForSubmit]] = await conn.query(
+      `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
+      [skripsiId],
     );
-    const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
+    const perluSuratKeterangan = skripsiForSubmit?.perlu_surat_pengantar === 1;
 
     // Validate required files are present
     const [existingFiles] = await conn.query(
@@ -1279,11 +1265,11 @@ exports.reviewFile = async (req, res, next) => {
         .json({ ok: false, message: "Only sekretariat can review files" });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const fileType = req.params.fileType;
@@ -1307,9 +1293,9 @@ exports.reviewFile = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
     if (!sidang) {
       await conn.rollback();
@@ -1373,11 +1359,11 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { action, catatanSekretariat } = req.body ?? {};
@@ -1405,9 +1391,9 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
     if (!sidang) {
       await conn.rollback();
@@ -1437,11 +1423,9 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       );
       const [[studentRow]] = await conn.query(
         `SELECT u.id FROM users u
-         INNER JOIN mahasiswa m ON m.npm = u.npm
-         INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-         WHERE u.is_active = 1
-         LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+         JOIN skripsi s ON s.npm = u.npm
+         WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+        [skripsiId],
       );
       if (studentRow) {
         await insertNotification(
@@ -1485,11 +1469,11 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
           });
         }
       } else {
-        const [[pjRow]] = await conn.query(
-          `SELECT perlu_surat_pengantar FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
-          [pengajuanDisposisiPembimbingId],
+        const [[skripsiForVerify]] = await conn.query(
+          `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
+          [skripsiId],
         );
-        const perluSuratKeterangan = pjRow?.perlu_surat_pengantar === 1;
+        const perluSuratKeterangan = skripsiForVerify?.perlu_surat_pengantar === 1;
 
         const unverified = REQUIRED_FILE_TYPES.filter(
           (t) => !SYSTEM_FILE_TYPES.includes(t) && fileMap[t] !== "VERIFIED",
@@ -1532,12 +1516,9 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
 
       // Notify mahasiswa
       const [[studentRow]] = await conn.query(
-        `SELECT u.id FROM users u
-         INNER JOIN mahasiswa m ON m.npm = u.npm
-         INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-         WHERE u.is_active = 1
-         LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
+         WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+        [skripsiId],
       );
       if (studentRow) {
         await insertNotification(
@@ -1570,12 +1551,9 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
     );
 
     const [[studentRow]] = await conn.query(
-      `SELECT u.id FROM users u
-       INNER JOIN mahasiswa m ON m.npm = u.npm
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-       WHERE u.is_active = 1
-       LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
+       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+      [skripsiId],
     );
     if (studentRow) {
       await insertNotification(
@@ -1602,11 +1580,11 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
 
 exports.getFile = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const fileType = req.params.fileType;
@@ -1617,7 +1595,7 @@ exports.getFile = async (req, res, next) => {
       });
     }
 
-    const sidang = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const sidang = await getActiveSidang(db, skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -1666,7 +1644,7 @@ exports.listForSekretariat = async (req, res, next) => {
       params.push(statusParam);
     }
     if (filterByProdi) {
-      conditions.push("k.program_studi_id = ?");
+      conditions.push("sk.program_studi_id = ?");
       params.push(programStudiIdParam);
     }
 
@@ -1675,18 +1653,18 @@ exports.listForSekretariat = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          ps.id,
-         ps.pengajuan_disposisi_pembimbing_id,
+         ps.skripsi_id,
          ps.status,
          ps.catatan_sekretariat,
          ps.submitted_at,
          ps.verified_at,
          ps.created_at,
-         k.nama_mahasiswa,
-         k.npm,
-         k.program_studi_id,
-         k.program_studi_nama
+         sk.nama_mahasiswa,
+         sk.npm,
+         sk.program_studi_id,
+         sk.program_studi_nama
        FROM pengajuan_sidang ps
-       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_disposisi_pembimbing_id = ps.pengajuan_disposisi_pembimbing_id
+       LEFT JOIN skripsi sk ON sk.id = ps.skripsi_id
        ${whereClause}
        ORDER BY ps.submitted_at DESC`,
       params,
@@ -1711,11 +1689,11 @@ exports.initKaprodi = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1725,19 +1703,9 @@ exports.initKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const [[pjRow]] = await conn.query(
-      `SELECT id, outline_id FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
-    );
-    if (!pjRow) {
-      return res
-        .status(404)
-        .json({ ok: false, message: "Pengajuan judul tidak ditemukan" });
-    }
-
     const [[skripsiRow]] = await conn.query(
-      `SELECT id FROM skripsi WHERE outline_id = ? AND status = 'COMPLETED' LIMIT 1`,
-      [pjRow.outline_id],
+      `SELECT id FROM skripsi WHERE id = ? AND npm = ? AND status = 'COMPLETED' LIMIT 1`,
+      [skripsiId, npm],
     );
     if (!skripsiRow) {
       return res
@@ -1748,9 +1716,9 @@ exports.initKaprodi = async (req, res, next) => {
     // Find the current active pengajuan_sidang for this student
     const [[activeSidang]] = await conn.query(
       `SELECT id, ujian_ke FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
        ORDER BY id DESC LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
 
     // Check if a kaprodi row already exists for this specific pengajuan_sidang
@@ -1774,8 +1742,8 @@ exports.initKaprodi = async (req, res, next) => {
     const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
 
     const [ins] = await conn.query(
-      `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_disposisi_pembimbing_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
-      [pengajuanDisposisiPembimbingId, activeSidang?.id ?? null],
+      `INSERT INTO pengajuan_sidang_kaprodi (skripsi_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
+      [skripsiId, activeSidang?.id ?? null],
     );
 
     if (!isUjianUlang) {
@@ -1783,16 +1751,16 @@ exports.initKaprodi = async (req, res, next) => {
       let targetSidangId = activeSidang?.id;
       if (!targetSidangId) {
         const [sidangIns] = await conn.query(
-          `INSERT INTO pengajuan_sidang (pengajuan_disposisi_pembimbing_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
-          [pengajuanDisposisiPembimbingId],
+          `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
+          [skripsiId],
         );
         targetSidangId = sidangIns.insertId;
       }
 
       // Auto-pull KARTU_KONSULTASI_SKRIPSI
       const [[kartuSkripsi]] = await conn.query(
-        `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        `SELECT k.id FROM kartu_konsultasi_skripsi k WHERE k.skripsi_id = ? LIMIT 1`,
+        [skripsiId],
       );
       if (kartuSkripsi) {
         const [[kartuSkripsiFile]] = await conn.query(
@@ -1824,9 +1792,10 @@ exports.initKaprodi = async (req, res, next) => {
         `SELECT f.file_content, f.file_name, f.mime_type
          FROM pengajuan_sk_penelitian_files f
          INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-         WHERE psk.pengajuan_disposisi_pembimbing_id = ? AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
+           AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
          ORDER BY f.created_at DESC LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        [skripsiId],
       );
       if (skPembimbingRow) {
         await conn.query(
@@ -1850,9 +1819,10 @@ exports.initKaprodi = async (req, res, next) => {
         `SELECT f.file_content, f.file_name, f.mime_type
          FROM pengajuan_sk_penelitian_files f
          INNER JOIN pengajuan_sk_penelitian psk ON psk.id = f.pengajuan_sk_penelitian_id
-         WHERE psk.pengajuan_disposisi_pembimbing_id = ? AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+         WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
+           AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
          ORDER BY f.created_at DESC LIMIT 1`,
-        [pengajuanDisposisiPembimbingId],
+        [skripsiId],
       );
       if (suratPenyelesaianRow) {
         await conn.query(
@@ -1894,19 +1864,19 @@ exports.initKaprodi = async (req, res, next) => {
 
 exports.getKaprodi = async (req, res, next) => {
   try {
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const activeSidangForGet = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const activeSidangForGet = await getActiveSidang(db, skripsiId);
     const [[kaprodi]] = await db.query(
       activeSidangForGet
         ? `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`
-        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
-      [activeSidangForGet ? activeSidangForGet.id : pengajuanDisposisiPembimbingId],
+        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [activeSidangForGet ? activeSidangForGet.id : skripsiId],
     );
     if (!kaprodi) {
       return res.status(404).json({
@@ -1916,35 +1886,25 @@ exports.getKaprodi = async (req, res, next) => {
     }
 
     const [[autoData]] = await db.query(
-      `SELECT
-         m.npm,
-         m.nama AS nama_mahasiswa,
-         m.sks,
-         ps.nama AS program_studi_nama,
-         ps.id AS program_studi_id,
-         k.judul_skripsi,
-         k.pembimbing1_nidn,
-         k.pembimbing1_nama,
-         k.pembimbing2_nidn,
-         k.pembimbing2_nama,
-         COALESCE(psd.ujian_ke, 0) AS ujian_ke
-       FROM pengajuan_disposisi_pembimbing pj
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_disposisi_pembimbing_id = pj.id
-       LEFT JOIN pengajuan_sidang psd ON psd.pengajuan_disposisi_pembimbing_id = pj.id
+      `SELECT s.npm, s.nama_mahasiswa, m.sks, s.program_studi_id,
+              s.program_studi_nama, s.judul AS judul_skripsi,
+              s.pembimbing1_nidn, s.pembimbing1_nama,
+              s.pembimbing2_nidn, s.pembimbing2_nama,
+              COALESCE(psd.ujian_ke, 0) AS ujian_ke
+       FROM skripsi s
+       JOIN mahasiswa m ON m.npm = s.npm
+       LEFT JOIN pengajuan_sidang psd ON psd.skripsi_id = s.id
          AND psd.status NOT IN ('REJECTED')
-       WHERE pj.id = ?
-       ORDER BY psd.id DESC
-       LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+       WHERE s.id = ?
+       ORDER BY psd.id DESC LIMIT 1`,
+      [skripsiId],
     );
 
     const tahunMasuk = autoData?.npm
       ? "20" + String(autoData.npm).substring(0, 2)
       : null;
 
-    const sidang = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const sidang = await getActiveSidang(db, skripsiId);
     let files = [];
     if (sidang) {
       const [fileRows] = await db.query(
@@ -1994,19 +1954,19 @@ exports.updateKaprodi = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const activeSidangForUpdate = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const activeSidangForUpdate = await getActiveSidang(db, skripsiId);
     const [[kaprodi]] = await db.query(
       activeSidangForUpdate
         ? `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`
-        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1`,
-      [activeSidangForUpdate ? activeSidangForUpdate.id : pengajuanDisposisiPembimbingId],
+        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      [activeSidangForUpdate ? activeSidangForUpdate.id : skripsiId],
     );
     if (!kaprodi) {
       return res.status(404).json({
@@ -2136,11 +2096,11 @@ exports.submitKaprodi = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -2153,12 +2113,12 @@ exports.submitKaprodi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const activeSidangForSubmit = await getActiveSidang(conn, pengajuanDisposisiPembimbingId);
+    const activeSidangForSubmit = await getActiveSidang(conn, skripsiId);
     const [[kaprodi]] = await conn.query(
       activeSidangForSubmit
         ? `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`
-        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_disposisi_pembimbing_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
-      [activeSidangForSubmit ? activeSidangForSubmit.id : pengajuanDisposisiPembimbingId],
+        : `SELECT * FROM pengajuan_sidang_kaprodi WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+      [activeSidangForSubmit ? activeSidangForSubmit.id : skripsiId],
     );
     if (!kaprodi) {
       await conn.rollback();
@@ -2217,21 +2177,18 @@ exports.submitKaprodi = async (req, res, next) => {
 
     // Generate LEMBAR_PERMOHONAN_UJIAN
     const [[docData]] = await conn.query(
-      `SELECT
-         m.npm, m.nama AS nama_mahasiswa, m.sks,
-         ps.nama AS prodi_nama,
-         f.nama AS fakultas_nama,
-         k.judul_skripsi,
-         k.pembimbing1_nama AS dospem1_nama,
-         k.pembimbing2_nama AS dospem2_nama,
-         u_kaprodi.signature_image AS kaprodi_sig,
-         d_kaprodi.nama AS nama_kaprodi,
-         u_mhs.signature_image AS mahasiswa_sig
-       FROM pengajuan_disposisi_pembimbing pj
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+      `SELECT s.npm, s.nama_mahasiswa, m.sks,
+              ps.nama AS prodi_nama, f.nama AS fakultas_nama,
+              s.judul AS judul_skripsi,
+              s.pembimbing1_nama AS dospem1_nama,
+              s.pembimbing2_nama AS dospem2_nama,
+              u_kaprodi.signature_image AS kaprodi_sig,
+              d_kaprodi.nama AS nama_kaprodi,
+              u_mhs.signature_image AS mahasiswa_sig
+       FROM skripsi s
+       JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_disposisi_pembimbing_id = pj.id
        LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
          AND u_kaprodi.is_active = 1
          AND EXISTS (
@@ -2240,9 +2197,9 @@ exports.submitKaprodi = async (req, res, next) => {
            WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
          )
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-       LEFT JOIN users u_mhs ON u_mhs.npm = m.npm AND u_mhs.is_active = 1
-       WHERE pj.id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+       LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
+       WHERE s.id = ? LIMIT 1`,
+      [skripsiId],
     );
 
     const todayDate = formatTanggalIndonesia(new Date());
@@ -2283,14 +2240,14 @@ exports.submitKaprodi = async (req, res, next) => {
     // Auto-create pengajuan_sidang DRAFT if none exists, then upsert the file
     let [[existingSidang]] = await conn.query(
       `SELECT id FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY created_at DESC LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
     if (!existingSidang) {
       const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (pengajuan_disposisi_pembimbing_id, status) VALUES (?, 'DRAFT')`,
-        [pengajuanDisposisiPembimbingId],
+        `INSERT INTO pengajuan_sidang (skripsi_id, status) VALUES (?, 'DRAFT')`,
+        [skripsiId],
       );
       existingSidang = { id: ins.insertId };
     }
@@ -2456,11 +2413,11 @@ exports.reviewFileKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can review files" });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const fileType = req.params.fileType;
@@ -2490,12 +2447,11 @@ exports.reviewFileKaprodi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getActiveSidang(conn, pengajuanDisposisiPembimbingId);
+    const sidang = await getActiveSidang(conn, skripsiId);
     const [[kaprodi]] = await conn.query(
-      `SELECT psk.*, m.program_studi_id
+      `SELECT psk.*, s.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.id = psk.pengajuan_disposisi_pembimbing_id
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
+       JOIN skripsi s ON s.id = psk.skripsi_id
        WHERE psk.pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
       [sidang?.id],
     );
@@ -2579,11 +2535,11 @@ exports.reviewKaprodi = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { action, catatanKaprodi } = req.body ?? {};
@@ -2617,12 +2573,11 @@ exports.reviewKaprodi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const activeSidangForReview = await getActiveSidang(conn, pengajuanDisposisiPembimbingId);
+    const activeSidangForReview = await getActiveSidang(conn, skripsiId);
     const [[kaprodi]] = await conn.query(
-      `SELECT psk.*, m.program_studi_id
+      `SELECT psk.*, s.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.id = psk.pengajuan_disposisi_pembimbing_id
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
+       JOIN skripsi s ON s.id = psk.skripsi_id
        WHERE psk.pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
       [activeSidangForReview?.id],
     );
@@ -2706,12 +2661,9 @@ exports.reviewKaprodi = async (req, res, next) => {
     );
 
     const [[studentRow]] = await conn.query(
-      `SELECT u.id FROM users u
-       INNER JOIN mahasiswa m ON m.npm = u.npm
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-       WHERE u.is_active = 1
-       LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
+       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+      [skripsiId],
     );
 
     if (studentRow) {
@@ -2785,7 +2737,7 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
       statusParam && VALID_KAPRODI_STATUSES.includes(statusParam);
 
     const conditions = [
-      `m.program_studi_id IN (${kaprodiProgramStudiIds.map(() => "?").join(",")})`,
+      `ps.id IN (${kaprodiProgramStudiIds.map(() => "?").join(",")})`,
       `psk.status != 'DRAFT'`,
     ];
     const params = [...kaprodiProgramStudiIds];
@@ -2798,22 +2750,20 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          psk.id,
-         psk.pengajuan_disposisi_pembimbing_id,
+         psk.skripsi_id,
          psk.status,
          psk.catatan_kaprodi,
          psk.submitted_at,
          psk.reviewed_at,
          psk.created_at,
-         m.npm,
-         m.nama AS nama_mahasiswa,
-         m.program_studi_id,
+         s.npm,
+         s.nama_mahasiswa,
+         s.program_studi_id,
          ps.nama AS program_studi_nama,
-         k.judul_skripsi
+         s.judul AS judul_skripsi
        FROM pengajuan_sidang_kaprodi psk
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.id = psk.pengajuan_disposisi_pembimbing_id
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_disposisi_pembimbing_id = pj.id
+       JOIN skripsi s ON s.id = psk.skripsi_id
+       JOIN program_studi ps ON ps.id = s.program_studi_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY psk.submitted_at DESC`,
       params,
@@ -2833,11 +2783,11 @@ exports.updateDisposisi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can update disposisi" });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -2848,14 +2798,12 @@ exports.updateDisposisi = async (req, res, next) => {
     }
     const kaprodiProgramStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
 
-    const activeSidangForUpdate = await getActiveSidang(db, pengajuanDisposisiPembimbingId);
+    const activeSidangForUpdate = await getActiveSidang(db, skripsiId);
     const [[kaprodi]] = await db.query(
-      `SELECT psk.*, m.program_studi_id
+      `SELECT psk.*, s.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.id = psk.pengajuan_disposisi_pembimbing_id
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE psk.pengajuan_sidang_id = ?
-       LIMIT 1`,
+       JOIN skripsi s ON s.id = psk.skripsi_id
+       WHERE psk.pengajuan_sidang_id = ? LIMIT 1`,
       [activeSidangForUpdate?.id],
     );
     if (!kaprodi) {
@@ -2938,11 +2886,11 @@ exports.submitDisposisi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can submit disposisi" });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -2956,17 +2904,12 @@ exports.submitDisposisi = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const activeSidangForDisposisi = await getActiveSidang(
-      conn,
-      pengajuanDisposisiPembimbingId,
-    );
+    const activeSidangForDisposisi = await getActiveSidang(conn, skripsiId);
     const [[kaprodi]] = await conn.query(
-      `SELECT psk.*, m.program_studi_id
+      `SELECT psk.*, s.program_studi_id
        FROM pengajuan_sidang_kaprodi psk
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.id = psk.pengajuan_disposisi_pembimbing_id
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE psk.pengajuan_sidang_id = ?
-       LIMIT 1 FOR UPDATE`,
+       JOIN skripsi s ON s.id = psk.skripsi_id
+       WHERE psk.pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
       [activeSidangForDisposisi?.id],
     );
     if (!kaprodi) {
@@ -3011,7 +2954,7 @@ exports.submitDisposisi = async (req, res, next) => {
       });
     }
 
-    const sidang = await getActiveSidang(conn, pengajuanDisposisiPembimbingId);
+    const sidang = await getActiveSidang(conn, skripsiId);
     if (
       !sidang ||
       !["VERIFIED", "WAITING_FOR_DISPOSISI"].includes(sidang.status)
@@ -3027,20 +2970,19 @@ exports.submitDisposisi = async (req, res, next) => {
 
     const [[docData]] = await conn.query(
       `SELECT
-         m.npm, m.nama AS nama_mahasiswa,
+         s.npm, s.nama_mahasiswa,
          ps.nama AS prodi_nama,
          f.nama AS fakultas_nama,
-         k.judul_skripsi,
-         k.pembimbing1_nama AS dospem1_nama,
-         k.pembimbing2_nama AS dospem2_nama,
+         s.judul AS judul_skripsi,
+         s.pembimbing1_nama AS dospem1_nama,
+         s.pembimbing2_nama AS dospem2_nama,
          u_kaprodi.signature_image AS kaprodi_sig,
          d_kaprodi.nama AS nama_kaprodi,
          u_mhs.signature_image AS mahasiswa_sig
-       FROM pengajuan_disposisi_pembimbing pj
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       FROM skripsi s
+       JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_disposisi_pembimbing_id = pj.id
        LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
          AND u_kaprodi.is_active = 1
          AND EXISTS (
@@ -3049,9 +2991,9 @@ exports.submitDisposisi = async (req, res, next) => {
            WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
          )
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-       LEFT JOIN users u_mhs ON u_mhs.npm = m.npm AND u_mhs.is_active = 1
-       WHERE pj.id = ? LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+       LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
+       WHERE s.id = ? LIMIT 1`,
+      [skripsiId],
     );
 
     const npm = docData?.npm ?? "";
@@ -3115,11 +3057,9 @@ exports.submitDisposisi = async (req, res, next) => {
     // Notify mahasiswa that schedule has been set and surat is pending
     const [[studentRow]] = await conn.query(
       `SELECT u.id FROM users u
-       INNER JOIN mahasiswa m ON m.npm = u.npm
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-       WHERE u.is_active = 1
-       LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+       JOIN skripsi s ON s.npm = u.npm
+       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+      [skripsiId],
     );
     if (studentRow) {
       await insertNotification(
@@ -3198,18 +3138,18 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
       params.push(statusParam);
     }
     if (filterByProdi) {
-      conditions.push("m.program_studi_id = ?");
+      conditions.push("s.program_studi_id = ?");
       params.push(programStudiIdParam);
     }
 
     const [rows] = await db.query(
       `SELECT
          ps2.id AS pengajuan_sidang_id,
-         psk.pengajuan_disposisi_pembimbing_id,
-         m.nama AS nama_mahasiswa,
-         m.npm,
+         psk.skripsi_id,
+         s.nama_mahasiswa,
+         s.npm,
          ps.nama AS program_studi_nama,
-         k.judul_skripsi,
+         s.judul AS judul_skripsi,
          psk.status AS kaprodi_status,
          psk.tanggal_sidang,
          psk.waktu_sidang,
@@ -3221,10 +3161,8 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
          psk.penguji2_nidn,
          psk.disposisi_submitted_at
        FROM pengajuan_sidang_kaprodi psk
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.id = psk.pengajuan_disposisi_pembimbing_id
-       INNER JOIN mahasiswa m ON m.npm = pj.npm
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.pengajuan_disposisi_pembimbing_id = pj.id
+       JOIN skripsi s ON s.id = psk.skripsi_id
+       JOIN program_studi ps ON ps.id = s.program_studi_id
        LEFT JOIN pengajuan_sidang ps2 ON ps2.id = psk.pengajuan_sidang_id
          AND ps2.status IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED')
        WHERE ${conditions.join(" AND ")}
@@ -3249,11 +3187,11 @@ exports.generateSuratUndangan = async (req, res, next) => {
       });
     }
 
-    const pengajuanDisposisiPembimbingId = Number(req.params.pengajuanDisposisiPembimbingId);
-    if (!Number.isFinite(pengajuanDisposisiPembimbingId) || pengajuanDisposisiPembimbingId <= 0) {
+    const skripsiId = Number(req.params.skripsiId);
+    if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid pengajuanDisposisiPembimbingId" });
+        .json({ ok: false, message: "Invalid skripsiId" });
     }
 
     await conn.beginTransaction();
@@ -3261,12 +3199,12 @@ exports.generateSuratUndangan = async (req, res, next) => {
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE pengajuan_disposisi_pembimbing_id = ?
+       WHERE skripsi_id = ?
        ORDER BY
          CASE WHEN status = 'WAITING_FOR_SURAT' THEN 0 ELSE 1 END ASC,
          created_at DESC
        LIMIT 1 FOR UPDATE`,
-      [pengajuanDisposisiPembimbingId],
+      [skripsiId],
     );
     if (!sidang) {
       await conn.rollback();
@@ -3289,7 +3227,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
     // Join pengajuan_sidang_kaprodi via pengajuan_sidang_id to handle ujian ulang (multiple rows per student)
     const [[dataRow]] = await conn.query(
       `SELECT
-         pj.npm,
+         s.npm,
          m.nama AS nama_mahasiswa,
          m.email AS mahasiswa_email,
          ps.id AS program_studi_id,
@@ -3298,25 +3236,23 @@ exports.generateSuratUndangan = async (req, res, next) => {
          ps.kaprodi_nidn,
          f.nama AS fakultas_nama,
          f.kode AS f_kode,
-         sk.judul AS judul_skripsi,
-         kko.pembimbing1_nama, kko.pembimbing1_nidn,
-         kko.pembimbing2_nama, kko.pembimbing2_nidn,
+         s.judul AS judul_skripsi,
+         s.pembimbing1_nama, s.pembimbing1_nidn,
+         s.pembimbing2_nama, s.pembimbing2_nidn,
          psk.nomor_surat, psk.verified_at AS sk_verified_at,
          psk_k.penguji1_nama, psk_k.penguji1_nidn,
          psk_k.penguji2_nama, psk_k.penguji2_nidn,
          psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
          psk_k.tanggal_disposisi, psk_k.ujian_ke
-       FROM pengajuan_disposisi_pembimbing pj
-       JOIN mahasiswa m ON m.npm = pj.npm
-       JOIN program_studi ps ON ps.id = m.program_studi_id
+       FROM skripsi s
+       JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
        JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN skripsi sk ON sk.pengajuan_disposisi_pembimbing_id = pj.id
-       LEFT JOIN kartu_konsultasi_outline kko ON kko.pengajuan_disposisi_pembimbing_id = pj.id
-       LEFT JOIN pengajuan_sk_penelitian psk ON psk.pengajuan_disposisi_pembimbing_id = pj.id
+       LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = s.outline_id
        LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = ?
-       WHERE pj.id = ?
+       WHERE s.id = ?
        LIMIT 1`,
-      [sidang.id, pengajuanDisposisiPembimbingId],
+      [sidang.id, skripsiId],
     );
 
     const npm = dataRow?.npm ?? "";
@@ -3359,13 +3295,12 @@ exports.generateSuratUndangan = async (req, res, next) => {
     const month = now.getMonth() + 1;
     const [[{ seq }]] = await conn.query(
       `SELECT COUNT(*) AS seq
-       FROM sidang s
-       JOIN pengajuan_disposisi_pembimbing pj ON pj.id = s.pengajuan_disposisi_pembimbing_id
-       JOIN mahasiswa m ON m.npm = pj.npm
-       WHERE m.program_studi_id = ?
-         AND s.nomor_surat IS NOT NULL
-         AND YEAR(s.created_at) = ?
-         AND MONTH(s.created_at) = ?`,
+       FROM sidang sd
+       JOIN skripsi sk ON sk.id = sd.skripsi_id
+       WHERE sk.program_studi_id = ?
+         AND sd.nomor_surat IS NOT NULL
+         AND YEAR(sd.created_at) = ?
+         AND MONTH(sd.created_at) = ?`,
       [dataRow?.program_studi_id, year, month],
     );
     const nomorSuratSidang = `${String(Number(seq) + 1).padStart(3, "0")}/${dataRow?.f_kode ?? ""}/${dataRow?.ps_kode ?? ""}/Sidang-Skripsi/${BULAN_ROMAWI[month - 1]}/${year}`;
@@ -3439,14 +3374,14 @@ exports.generateSuratUndangan = async (req, res, next) => {
     if (!existingSidang) {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
-           (pengajuan_disposisi_pembimbing_id, nomor_surat, pengajuan_sidang_id,
+           (skripsi_id, nomor_surat, pengajuan_sidang_id,
             npm, nama_mahasiswa, program_studi_id, program_studi_nama, judul_skripsi, ujian_ke,
             pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
             penguji1_nidn, penguji1_nama, penguji2_nidn, penguji2_nama,
             tanggal_sidang, waktu_sidang, tempat_sidang, tanggal_disposisi)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          pengajuanDisposisiPembimbingId,
+          skripsiId,
           nomorSuratSidang,
           sidang.id,
           dataRow?.npm ?? "",
@@ -3515,11 +3450,9 @@ exports.generateSuratUndangan = async (req, res, next) => {
 
     const [[studentRow]] = await conn.query(
       `SELECT u.id FROM users u
-       INNER JOIN mahasiswa m ON m.npm = u.npm
-       INNER JOIN pengajuan_disposisi_pembimbing pj ON pj.npm = m.npm AND pj.id = ?
-       WHERE u.is_active = 1
-       LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+       JOIN skripsi s ON s.npm = u.npm
+       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+      [skripsiId],
     );
     if (studentRow) {
       await insertNotification(
