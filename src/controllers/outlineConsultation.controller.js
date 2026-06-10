@@ -490,22 +490,13 @@ async function autoSubmitSkPenelitian(
 
 async function autoGenerateHalamanPersetujuan(
   conn,
-  { pengajuanDisposisiPembimbingId, kartu, generatedByUserId },
+  { outlineId, kartu, generatedByUserId },
 ) {
-  console.log("[autoGenerateHalamanPersetujuan] start", { pengajuanDisposisiPembimbingId, kartuId: kartu?.id, npm: kartu?.npm });
-
-  const [pjRows] = await conn.query(
-    `SELECT id FROM pengajuan_disposisi_pembimbing WHERE id = ? AND status = 'APPROVED' LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
-  );
-  if (pjRows.length === 0) {
-    console.log("[autoGenerateHalamanPersetujuan] skip: pengajuan_disposisi_pembimbing not APPROVED for id", pengajuanDisposisiPembimbingId);
-    return { file: null, skippedReason: "pengajuan_disposisi_pembimbing_not_approved" };
-  }
+  console.log("[autoGenerateHalamanPersetujuan] start", { outlineId, kartuId: kartu?.id, npm: kartu?.npm });
 
   const [existingRows] = await conn.query(
-    `SELECT id FROM halaman_persetujuan_judul WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
+    `SELECT id FROM halaman_persetujuan_judul WHERE outline_id = ? LIMIT 1`,
+    [outlineId],
   );
   if (existingRows.length > 0) {
     console.log("[autoGenerateHalamanPersetujuan] skip: halaman already exists", existingRows[0].id);
@@ -571,8 +562,8 @@ async function autoGenerateHalamanPersetujuan(
   );
 
   const [ins] = await conn.query(
-    `INSERT INTO halaman_persetujuan_judul (pengajuan_disposisi_pembimbing_id, status) VALUES (?, 'PENDING')`,
-    [pengajuanDisposisiPembimbingId],
+    `INSERT INTO halaman_persetujuan_judul (outline_id, status) VALUES (?, 'PENDING')`,
+    [outlineId],
   );
   const halamanId = ins.insertId;
 
@@ -2210,7 +2201,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
       if (kartuInfo) {
         autoHalamanResult = await autoGenerateHalamanPersetujuan(conn, {
-          pengajuanDisposisiPembimbingId: kartuInfo.pengajuan_disposisi_pembimbing_id,
+          outlineId: kartuInfo.outline_id,
           kartu: kartuInfo,
           generatedByUserId: req.user.id,
         });
