@@ -81,13 +81,21 @@ Controller: `skripsiConsultation.controller.js`.
 
 ---
 
-### ⬜ Pending: Skripsi record
+### ✅ Done: Skripsi record (`2026-06-10_reanchor_skripsi.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `skripsi` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK (nullable) | `outline_id` BIGINT UNIQUE FK |
+| Table | Before | After |
+|-------|--------|-------|
+| `skripsi` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE (nullable, no FK) | `outline_id` BIGINT UNSIGNED NOT NULL UNIQUE FK → `outline(id)` |
 
-Controller: auto-inserted inside SK Penelitian VERIFY transaction.
+`skripsiSource` query in `skPenelitian.controller.js` now pulls directly from `kartu_konsultasi_outline` (no JOIN to `pengajuan_sk_penelitian`); INSERT uses `outline_id`.
+
+`pengajuanSidang.controller.js` (`initPengajuanSidang`, `initKaprodi`): `pjRow` query now also fetches `outline_id`; `skripsi` lookup uses `pjRow.outline_id`.
+
+`pengumpulanBerkasFinal.controller.js` (`generateSuratDoc`): `skripsi` lookup joins through `pengajuan_disposisi_pembimbing` to resolve `outline_id`.
+
+Bridge columns dropped in the same migration:
+- `kartu_konsultasi_outline.pengajuan_disposisi_pembimbing_id` — gone
+- `pengajuan_sk_penelitian.pengajuan_disposisi_pembimbing_id` — gone
 
 ---
 
@@ -143,13 +151,8 @@ Controller: `pengumpulanBerkasFinal.controller.js`.
 
 ---
 
-## Final cleanup (after all features re-anchored)
+## Final cleanup
 
-```sql
-ALTER TABLE kartu_konsultasi_outline
-  DROP COLUMN pengajuan_disposisi_pembimbing_id;
-```
+Bridge columns (`kartu_konsultasi_outline.pengajuan_disposisi_pembimbing_id` and `pengajuan_sk_penelitian.pengajuan_disposisi_pembimbing_id`) were dropped as part of `2026-06-10_reanchor_skripsi.sql`.
 
-At this point `pengajuan_disposisi_pembimbing` is no longer an FK anchor for anything downstream.
-The `pengajuan_disposisi_pembimbing` → `outline_id` back-reference remains (it's how you find
-which title submission produced a given outline approval).
+After all remaining features (Konsultasi Skripsi → Pengumpulan Berkas Final) are re-anchored to `skripsi_id`, `pengajuan_disposisi_pembimbing` will no longer be an FK anchor for anything downstream. The `pengajuan_disposisi_pembimbing.outline_id` back-reference remains (it's how you find which title submission produced a given outline approval).

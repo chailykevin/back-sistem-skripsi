@@ -165,7 +165,9 @@ async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sek
   );
 
   const [[skripsiRow]] = await conn.query(
-    `SELECT judul FROM skripsi WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
+    `SELECT s.judul FROM skripsi s
+     JOIN pengajuan_disposisi_pembimbing pj ON pj.outline_id = s.outline_id
+     WHERE pj.id = ? LIMIT 1`,
     [pengumpulan.pengajuan_disposisi_pembimbing_id],
   );
 

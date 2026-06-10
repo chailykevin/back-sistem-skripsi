@@ -1049,27 +1049,26 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     await generateSkDocuments(conn, sk, outlineId);
 
     const [[skripsiSource]] = await conn.query(
-      `SELECT k.npm, k.judul_skripsi AS judul, k.nama_mahasiswa,
-              k.program_studi_id, k.program_studi_nama,
-              k.pembimbing1_nidn, k.pembimbing1_nama,
-              k.pembimbing2_nidn, k.pembimbing2_nama,
-              sk.pengajuan_disposisi_pembimbing_id
-       FROM kartu_konsultasi_outline k
-       JOIN pengajuan_sk_penelitian sk ON sk.outline_id = k.outline_id
-       WHERE k.outline_id = ?
+      `SELECT npm, judul_skripsi AS judul, nama_mahasiswa,
+              program_studi_id, program_studi_nama,
+              pembimbing1_nidn, pembimbing1_nama,
+              pembimbing2_nidn, pembimbing2_nama,
+              outline_id
+       FROM kartu_konsultasi_outline
+       WHERE outline_id = ?
        LIMIT 1`,
       [outlineId],
     );
     if (skripsiSource) {
       await conn.query(
         `INSERT INTO skripsi
-           (npm, pengajuan_disposisi_pembimbing_id, judul, status, program_studi_id, program_studi_nama,
+           (npm, outline_id, judul, status, program_studi_id, program_studi_nama,
             pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
             nama_mahasiswa)
          VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?, ?, ?)`,
         [
           skripsiSource.npm,
-          skripsiSource.pengajuan_disposisi_pembimbing_id,
+          skripsiSource.outline_id,
           skripsiSource.judul,
           skripsiSource.program_studi_id ?? null,
           skripsiSource.program_studi_nama ?? null,

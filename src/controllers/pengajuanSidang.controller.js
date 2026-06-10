@@ -697,7 +697,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
     }
 
     const [[pjRow]] = await conn.query(
-      `SELECT id FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
+      `SELECT id, outline_id FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
       [pengajuanDisposisiPembimbingId],
     );
     if (!pjRow) {
@@ -708,8 +708,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
 
     // Prerequisite: skripsi must be COMPLETED
     const [[skripsiRow]] = await conn.query(
-      `SELECT id FROM skripsi WHERE pengajuan_disposisi_pembimbing_id = ? AND status = 'COMPLETED' LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT id FROM skripsi WHERE outline_id = ? AND status = 'COMPLETED' LIMIT 1`,
+      [pjRow.outline_id],
     );
     if (!skripsiRow) {
       return res
@@ -1726,7 +1726,7 @@ exports.initKaprodi = async (req, res, next) => {
     }
 
     const [[pjRow]] = await conn.query(
-      `SELECT id FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
+      `SELECT id, outline_id FROM pengajuan_disposisi_pembimbing WHERE id = ? LIMIT 1`,
       [pengajuanDisposisiPembimbingId],
     );
     if (!pjRow) {
@@ -1736,8 +1736,8 @@ exports.initKaprodi = async (req, res, next) => {
     }
 
     const [[skripsiRow]] = await conn.query(
-      `SELECT id FROM skripsi WHERE pengajuan_disposisi_pembimbing_id = ? AND status = 'COMPLETED' LIMIT 1`,
-      [pengajuanDisposisiPembimbingId],
+      `SELECT id FROM skripsi WHERE outline_id = ? AND status = 'COMPLETED' LIMIT 1`,
+      [pjRow.outline_id],
     );
     if (!skripsiRow) {
       return res
