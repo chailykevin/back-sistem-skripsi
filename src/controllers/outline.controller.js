@@ -62,6 +62,18 @@ exports.create = async (req, res, next) => {
       });
     }
 
+    // block if student has an active IN_PROGRESS skripsi
+    const [[activeSkripsi]] = await db.query(
+      `SELECT id FROM skripsi WHERE npm = ? AND status = 'IN_PROGRESS' LIMIT 1`,
+      [npm]
+    );
+    if (activeSkripsi) {
+      return res.status(409).json({
+        ok: false,
+        message: "Anda masih memiliki skripsi yang sedang berjalan.",
+      });
+    }
+
     const submissionPeriodId = req.openPeriod?.id ?? null;
 
     const [mahasiswaRows] = await db.query(

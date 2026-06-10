@@ -2,6 +2,7 @@
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const { insertNotification } = require("../utils/notify");
 
 const MIME_DOCX =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -664,10 +665,10 @@ exports.submitHasilPenilaian = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "hasilSidang wajib diisi" });
     }
-    if (!["LULUS", "TIDAK_LULUS"].includes(hasilSidang)) {
+    if (!["LULUS", "TIDAK_LULUS", "GAGAL"].includes(hasilSidang)) {
       return res.status(400).json({
         ok: false,
-        message: "hasilSidang harus LULUS atau TIDAK_LULUS",
+        message: "hasilSidang harus LULUS, TIDAK_LULUS, atau GAGAL",
       });
     }
 
@@ -832,6 +833,33 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       `UPDATE sidang SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW() WHERE id = ?`,
       [sidang.id],
     );
+
+    // GAGAL: plagiarism detected — invalidate skripsi, no revision phase
+    if (hasilSidang === "GAGAL") {
+      await conn.query(
+        `UPDATE skripsi SET status = 'GAGAL', updated_at = NOW() WHERE id = (SELECT skripsi_id FROM sidang WHERE id = ?)`,
+        [sidang.id],
+      );
+      const [[studentUserRow]] = await conn.query(
+        `SELECT u.id FROM users u WHERE u.npm = ? AND u.is_active = 1 LIMIT 1`,
+        [sidang.npm],
+      );
+      if (studentUserRow) {
+        await insertNotification(
+          conn,
+          studentUserRow.id,
+          "SIDANG_GAGAL",
+          "Skripsi Anda dinyatakan GAGAL karena terindikasi plagiat. Anda dapat mengulang dari awal pada semester berikutnya.",
+          `/sidang/${skripsiId}`,
+        );
+      }
+      await conn.commit();
+      txStarted = false;
+      return res.json({
+        ok: true,
+        message: "Hasil penilaian akhir berhasil disimpan. Sidang selesai.",
+      });
+    }
 
     // Detect re-exam: a prior sidang exists for this student (ujian_ke >= 2)
     const [[priorSidang]] = await conn.query(
