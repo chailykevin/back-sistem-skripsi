@@ -70,14 +70,20 @@ Routes renamed: `:pengajuanDisposisiPembimbingId` → `:outlineId` on all SK pen
 
 ---
 
-### ⬜ Pending: Konsultasi Skripsi
+### ✅ Done: Konsultasi Skripsi (`2026-06-10_reanchor_konsultasi_skripsi.sql`)
 
-| Table | Current anchor | Target |
-|-------|---------------|--------|
-| `kartu_konsultasi_skripsi` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK |
-| `konsultasi_skripsi_stage` | `pengajuan_disposisi_pembimbing_id` BIGINT | `outline_id` BIGINT FK |
+| Table | Before | After |
+|-------|--------|-------|
+| `kartu_konsultasi_skripsi` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNSIGNED NOT NULL UNIQUE FK → `skripsi(id)` |
+| `konsultasi_skripsi_stage` | `pengajuan_disposisi_pembimbing_id` BIGINT non-FK index | `skripsi_id` BIGINT UNSIGNED NOT NULL FK → `skripsi(id)` |
 
-Controller: `skripsiConsultation.controller.js`.
+Routes renamed: `:pengajuanDisposisiPembimbingId` → `:skripsiId` on all 5 student routes + 1 kaprodi route.
+
+`fetchKartuExtra` now queries `pengajuan_sk_penelitian` via JOIN through `skripsi.outline_id`.
+
+`initKartu` now sources all kartu data directly from `skripsi` row — no JOIN to `pengajuan_disposisi_pembimbing`.
+
+`reviewStageByLecturer` auto-create sidang: resolves `pengajuan_disposisi_pembimbing_id` bridge via `JOIN skripsi → pengajuan_disposisi_pembimbing` for `pengajuan_sidang` / `pengajuan_sidang_kaprodi` inserts (those tables not yet re-anchored).
 
 ---
 
@@ -103,8 +109,8 @@ Bridge columns dropped in the same migration:
 
 | Table | Current anchor | Target |
 |-------|---------------|--------|
-| `pengajuan_sidang_kaprodi` | `pengajuan_disposisi_pembimbing_id` BIGINT | `outline_id` BIGINT |
-| `pengajuan_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT | `outline_id` BIGINT |
+| `pengajuan_sidang_kaprodi` | `pengajuan_disposisi_pembimbing_id` BIGINT | `skripsi_id` BIGINT |
+| `pengajuan_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT | `skripsi_id` BIGINT |
 | `pengajuan_sidang_files` | via `pengajuan_sidang_id` FK | no change needed |
 
 Controllers: `pengajuanSidangKaprodi.controller.js`, `pengajuanSidang.controller.js`.
@@ -115,7 +121,7 @@ Controllers: `pengajuanSidangKaprodi.controller.js`, `pengajuanSidang.controller
 
 | Table | Current anchor | Target |
 |-------|---------------|--------|
-| `sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE | `outline_id` BIGINT UNIQUE |
+| `sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT | `skripsi_id` BIGINT |
 | `sidang_penilaian` | via `sidang_id` FK | no change needed |
 | `sidang_notulen` | via `sidang_id` FK | no change needed |
 | `sidang_hasil_penilaian` | via `sidang_id` FK | no change needed |
@@ -129,7 +135,7 @@ Controller: `sidang.controller.js`.
 
 | Table | Current anchor | Target |
 |-------|---------------|--------|
-| `revisi_pasca_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK |
+| `revisi_pasca_sidang` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNIQUE FK |
 | `revisi_pasca_sidang_stages` | via `revisi_id` FK | no change needed |
 | `revisi_pasca_sidang_submissions` | via `stage_id` FK | no change needed |
 | `revisi_pasca_sidang_reviews` | via `stage_id` FK | no change needed |
@@ -143,7 +149,7 @@ Controller: `revisiPascaSidang.controller.js`.
 
 | Table | Current anchor | Target |
 |-------|---------------|--------|
-| `pengumpulan_berkas_final` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `outline_id` BIGINT UNIQUE FK |
+| `pengumpulan_berkas_final` | `pengajuan_disposisi_pembimbing_id` BIGINT UNIQUE FK | `skripsi_id` BIGINT UNIQUE FK |
 | `pengumpulan_berkas_final_files` | via `pengumpulan_id` FK | no change needed |
 | `pengumpulan_berkas_final_confirmations` | via `pengumpulan_id` FK | no change needed |
 
