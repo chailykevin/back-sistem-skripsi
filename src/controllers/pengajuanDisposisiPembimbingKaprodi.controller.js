@@ -169,6 +169,13 @@ async function upsertFileByType(
     [pengajuanDisposisiPembimbingId, fileType],
   );
 
+  console.log("[upsertFileByType] INSERT params:", {
+    table: "pengajuan_disposisi_pembimbing_file",
+    pengajuan_disposisi_pembimbing_id: pengajuanDisposisiPembimbingId,
+    file_type: fileType,
+    file_name: fileName,
+    file_content_length: fileContent?.length,
+  });
   await conn.query(
     `INSERT INTO pengajuan_disposisi_pembimbing_file (
        pengajuan_disposisi_pembimbing_id, file_type, file_content, file_name
@@ -249,6 +256,8 @@ exports.review = async (req, res, next) => {
   let conn;
   let txStarted = false;
   try {
+    console.log("[review] START — params:", req.params, "body:", { ...req.body, fileContent: undefined });
+
     if (!req.user.hasRole("LECTURER", "KAPRODI")) {
       return res.status(403).json({ ok: false, message: "Only Kaprodi" });
     }
@@ -267,6 +276,8 @@ exports.review = async (req, res, next) => {
       syaratKrs,
       syaratMetodologi,
     } = req.body || {};
+
+    console.log("[review] parsed body:", { status, pembimbing1DitapkanNidn, pembimbing2DitapkanNidn, catatanKaprodi, syaratTranskrip, syaratKrs, syaratMetodologi });
 
     if (!["APPROVED", "NEED_REVISION", "REJECTED"].includes(status)) {
       return res.status(400).json({ ok: false, message: "Invalid status" });
@@ -299,6 +310,7 @@ exports.review = async (req, res, next) => {
       [req.user.id],
     );
     const kaprodiNidn = urows[0]?.nidn;
+    console.log("[review] kaprodiNidn:", kaprodiNidn);
     if (!kaprodiNidn) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
@@ -317,6 +329,7 @@ exports.review = async (req, res, next) => {
       `,
       [id, kaprodiNidn],
     );
+    console.log("[review] ownership check rows:", check.length);
 
     if (check.length === 0) {
       return res.status(404).json({
@@ -328,9 +341,11 @@ exports.review = async (req, res, next) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
+    console.log("[review] transaction started");
 
     let consultationInitialized = false;
 
+    console.log("[review] UPDATE pengajuan_disposisi_pembimbing id:", id, "status:", status);
     await conn.query(
       `
       UPDATE pengajuan_disposisi_pembimbing
@@ -352,8 +367,10 @@ exports.review = async (req, res, next) => {
         id,
       ],
     );
+    console.log("[review] UPDATE done");
 
     if (status === "APPROVED") {
+      console.log("[review] APPROVED branch — fetching snapshot");
       const [snapshotRows] = await conn.query(
         `SELECT
            pj.id AS pengajuan_disposisi_pembimbing_id,
@@ -378,6 +395,7 @@ exports.review = async (req, res, next) => {
         [id],
       );
       const snap = snapshotRows[0] || null;
+      console.log("[review] snapshot:", snap ? { ...snap } : null);
 
       if (!snap) {
         await conn.rollback();
@@ -428,6 +446,7 @@ exports.review = async (req, res, next) => {
         });
       }
 
+      console.log("[review] UPDATE outline id:", snap.outline_id);
       // Write approved pembimbing data back to outline so it becomes the source of truth
       await conn.query(
         `UPDATE outline SET
@@ -447,17 +466,19 @@ exports.review = async (req, res, next) => {
           snap.outline_id,
         ],
       );
+      console.log("[review] outline updated");
 
       const [kartuRows] = await conn.query(
         `SELECT id FROM kartu_konsultasi_outline WHERE outline_id = ? LIMIT 1 FOR UPDATE`,
         [snap.outline_id],
       );
+      console.log("[review] existing kartu rows:", kartuRows.length);
 
       if (kartuRows.length === 0) {
+        console.log("[review] INSERT kartu_konsultasi_outline — outline_id:", snap.outline_id);
         const [insKartu] = await conn.query(
           `INSERT INTO kartu_konsultasi_outline (
              outline_id,
-             pengajuan_disposisi_pembimbing_id,
              nama_mahasiswa,
              npm,
              program_studi_id,
@@ -468,10 +489,9 @@ exports.review = async (req, res, next) => {
              pembimbing2_nidn,
              pembimbing2_nama,
              is_completed
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
           [
             snap.outline_id,
-            snap.pengajuan_disposisi_pembimbing_id,
             String(snap.nama_mahasiswa).trim(),
             snap.npm,
             snap.program_studi_id,
@@ -483,6 +503,7 @@ exports.review = async (req, res, next) => {
             snap.pembimbing2_nama ?? null,
           ],
         );
+        console.log("[review] kartu_konsultasi_outline insertId:", insKartu.insertId);
 
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
@@ -500,6 +521,7 @@ exports.review = async (req, res, next) => {
             String(snap.pembimbing2_ditetapkan_nidn).trim(),
           ],
         );
+        console.log("[review] konsultasi_outline_stage inserted");
 
         consultationInitialized = true;
       }
@@ -510,6 +532,7 @@ exports.review = async (req, res, next) => {
       syaratKrs !== undefined ||
       syaratMetodologi !== undefined
     ) {
+      console.log("[review] upserting syarat");
       const [currentSyaratRows] = await conn.query(
         `SELECT
            syarat_transkrip,
@@ -532,8 +555,10 @@ exports.review = async (req, res, next) => {
           currentSyarat.syarat_metodologi_nilai_min_c ?? 0,
         ),
       });
+      console.log("[review] syarat upserted");
     }
 
+    console.log("[review] fetching reviewDocRows");
     const [reviewDocRows] = await conn.query(
       `SELECT
          pj.npm, pj.no_hp, pj.sks_diperoleh, pj.perlu_surat_pengantar, pj.nama_perusahaan,
@@ -564,6 +589,7 @@ exports.review = async (req, res, next) => {
       [id],
     );
     const rd = reviewDocRows[0] ?? {};
+    console.log("[review] reviewDocRows[0] keys:", Object.keys(rd));
 
     const keputusanMap = { APPROVED: "Diterima", NEED_REVISION: "Perlu Revisi", REJECTED: "Ditolak" };
     const [currentSyaratForDoc] = await conn.query(
@@ -572,7 +598,9 @@ exports.review = async (req, res, next) => {
       [id],
     );
     const syaratDoc = currentSyaratForDoc[0] ?? {};
+    console.log("[review] syaratDoc:", syaratDoc);
 
+    console.log("[review] generating formulir doc");
     const reviewFormulirBase64 = await generateFormulirDoc({
       npm: rd.npm,
       namaMahasiswa: rd.nama_mahasiswa,
@@ -598,6 +626,9 @@ exports.review = async (req, res, next) => {
       namaKaprodi: rd.kaprodi_nama ?? "",
       kaprodiSignature: rd.kaprodi_signature,
     });
+    console.log("[review] formulir doc generated, length:", reviewFormulirBase64?.length);
+
+    console.log("[review] calling upsertFileByType — pengajuanId:", id);
     await upsertFileByType(
       conn,
       id,
@@ -605,6 +636,7 @@ exports.review = async (req, res, next) => {
       reviewFormulirBase64,
       "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
+    console.log("[review] upsertFileByType done");
 
     const [reviewedRows] = await conn.query(
       `SELECT pj.npm, m.nama AS nama_mahasiswa,
@@ -615,12 +647,14 @@ exports.review = async (req, res, next) => {
       [id],
     );
     const reviewed = reviewedRows[0];
+    console.log("[review] reviewed row:", reviewed ? { npm: reviewed.npm, nama_mahasiswa: reviewed.nama_mahasiswa } : null);
     if (reviewed) {
       const [studentUserRows] = await conn.query(
         `SELECT id FROM users WHERE npm = ? LIMIT 1`,
         [reviewed.npm],
       );
       const studentUserId = studentUserRows[0]?.id ?? null;
+      console.log("[review] studentUserId:", studentUserId);
       if (studentUserId) {
         const typeMap = {
           NEED_REVISION: "TITLE_NEED_REVISION",
@@ -639,6 +673,7 @@ exports.review = async (req, res, next) => {
           msgMap[status],
           "/student/proposal",
         );
+        console.log("[review] student notification inserted");
       }
 
       if (status === "APPROVED") {
@@ -648,6 +683,7 @@ exports.review = async (req, res, next) => {
           reviewed.pembimbing2_ditetapkan_nidn,
         ]) {
           if (!nidn) continue;
+          console.log("[review] inserting pembimbing notification for nidn:", nidn);
           const [pUserRows] = await conn.query(
             `SELECT u.id FROM users u
              JOIN user_roles ur ON ur.user_id = u.id
@@ -671,6 +707,7 @@ exports.review = async (req, res, next) => {
 
     await conn.commit();
     txStarted = false;
+    console.log("[review] committed — done");
 
     return res.json({
       ok: true,
@@ -679,6 +716,7 @@ exports.review = async (req, res, next) => {
         : "Review saved",
     });
   } catch (err) {
+    console.error("[review] ERROR:", err.message, err.stack);
     try {
       if (conn && txStarted) {
         await conn.rollback();
