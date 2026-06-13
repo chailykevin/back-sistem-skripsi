@@ -62,30 +62,35 @@ This section defines how Use Cases, Activity Diagrams, and Sequence Diagrams sho
 ## Use Cases
 
 ### UC-KS-01: Memulai Konsultasi Skripsi
+
 - **Actor:** Mahasiswa
 - **Precondition:** SK Penelitian telah diterbitkan (status COMPLETED)
 - **Summary:** Mahasiswa menginisialisasi kartu konsultasi skripsi. Sistem membuat kartu baru dan membuka tahap pertama (Bab 1 & 2, Pembimbing 2) secara otomatis.
 - **Postcondition:** Kartu konsultasi skripsi terbuat dan mahasiswa dapat mulai mengumpulkan berkas bab.
 
 ### UC-KS-02: Mengumpulkan Berkas Bab
+
 - **Actor:** Mahasiswa
 - **Precondition:** Kartu konsultasi skripsi telah dibuat dan terdapat stage aktif yang menunggu pengumpulan atau perbaikan
 - **Summary:** Mahasiswa mengunggah berkas bab sesuai stage yang sedang aktif. Jika sebelumnya mendapat catatan revisi dari pembimbing, mahasiswa mengunggah ulang berkas yang sudah diperbaiki pada stage yang sama.
 - **Postcondition:** Berkas terkirim ke pembimbing terkait untuk direview.
 
 ### UC-KS-03: Mereview Berkas Bab
+
 - **Actor:** Dosen Pembimbing
 - **Precondition:** Mahasiswa telah mengumpulkan berkas bab pada stage milik dosen yang bersangkutan
 - **Summary:** Dosen memeriksa berkas bab yang dikumpulkan mahasiswa dan memberikan keputusan. Pembimbing 2 memilih antara melanjutkan ke Pembimbing 1 atau meminta revisi. Pembimbing 1 memilih antara menerima atau meminta revisi. Jika keputusan final (lanjut atau diterima), tanda tangan dosen tersimpan otomatis ke kartu.
 - **Postcondition:** Status stage diperbarui. Jika Pembimbing 1 menerima bab terakhir (Bab 5), konsultasi selesai dan kartu penulisan skripsi di-generate otomatis.
 
 ### UC-KS-04: Mengunduh Kartu Penulisan Skripsi
+
 - **Actor:** Mahasiswa, Dosen Pembimbing, Kaprodi
 - **Precondition:** Kartu konsultasi skripsi telah dibuat
 - **Summary:** Aktor mengunduh kartu penulisan skripsi dalam format DOCX. Jika konsultasi belum selesai, yang tersedia adalah versi preview yang mencerminkan progres terkini. Jika konsultasi sudah selesai, yang tersedia adalah versi final yang telah tersimpan di sistem.
 - **Postcondition:** Berkas DOCX kartu penulisan skripsi terunduh.
 
 ### UC-KS-05: Memantau Konsultasi Skripsi
+
 - **Actor:** Kaprodi
 - **Precondition:** Terdapat mahasiswa di program studi Kaprodi yang sedang atau telah menjalani konsultasi skripsi
 - **Summary:** Kaprodi melihat daftar seluruh konsultasi skripsi di program studinya beserta status progres masing-masing. Kaprodi dapat membuka detail konsultasi milik mahasiswa tertentu untuk melihat riwayat pengumpulan dan review per bab.
@@ -96,30 +101,35 @@ This section defines how Use Cases, Activity Diagrams, and Sequence Diagrams sho
 ## Use Cases
 
 ### UC-SS-01: Memulai Sidang
+
 - **Actor:** Pembimbing 1
 - **Precondition:** Record sidang telah terbuat (status `SCHEDULED`), dipicu oleh penerbitan Surat Undangan Sidang
 - **Summary:** Pembimbing 1 membuka halaman sidang dan memulai sesi sidang. Sistem mengubah status sidang menjadi `ONGOING` sehingga seluruh peserta dapat mengisi penilaian dan notulen.
 - **Postcondition:** Sidang berstatus `ONGOING` dan formulir penilaian/notulen dapat diisi.
 
 ### UC-SS-02: Mengisi Penilaian dan Notulen
+
 - **Actor:** Dosen Peserta Sidang (Pembimbing 1, Pembimbing 2, Penguji 1, Penguji 2)
 - **Precondition:** Sidang berstatus `ONGOING`
 - **Summary:** Setiap dosen peserta sidang mengisi formulir penilaian (nilai komponen: isi, bahasa, TSP, penguasaan, penunjang). Sistem menghitung total nilai berbobot dan men-generate dokumen formulir penilaian secara otomatis; jika dosen mengisi ulang, dokumen sebelumnya di-overwrite. Penguji juga mengisi notulen berupa catatan ujian; catatan tersebut disimpan tanpa generate dokumen pada tahap ini. Dosen dapat mengisi ulang selama sidang masih `ONGOING`.
 - **Postcondition:** Penilaian dan/atau notulen tersimpan. Dokumen formulir penilaian ter-generate (atau di-overwrite) untuk setiap peserta yang telah mengisi.
 
 ### UC-SS-03: Menyimpan Hasil Penilaian Akhir
+
 - **Actor:** Pembimbing 1
 - **Precondition:** Sidang berstatus `ONGOING` dan semua 4 peserta telah mengisi penilaian
 - **Summary:** Pembimbing 1 mengisi hasil akhir sidang (LULUS/TIDAK_LULUS) beserta satu catatan penguji gabungan. Sistem menghitung rata-rata nilai dari keempat peserta, menentukan grade, men-generate dokumen Notulen untuk setiap penguji yang telah mengisi catatan (masing-masing dengan catatan dan tanda tangan kosong yang akan diisi saat Revisi Pasca Sidang) menggunakan hasil akhir dari Pembimbing 1, men-generate dokumen Hasil Penilaian Akhir dan Berita Acara, lalu menandai sidang sebagai `COMPLETED`.
 - **Postcondition:** Sidang selesai. Dokumen Notulen (per penguji yang sudah submit), Hasil Penilaian Akhir, dan Berita Acara ter-generate. Revisi Pasca Sidang diinisialisasi otomatis oleh sistem.
 
 ### UC-SS-04: Mengunduh Dokumen Sidang
+
 - **Actor:** Mahasiswa, Dosen Peserta Sidang, Sekretariat, Kaprodi
 - **Precondition:** Sidang telah terbuat; dokumen yang diminta sudah ter-generate
 - **Summary:** Aktor mengunduh dokumen sidang sesuai hak aksesnya. Terdapat empat jenis dokumen: Formulir Penilaian (per peserta), Notulen Penguji (per penguji), Hasil Penilaian Akhir, dan Berita Acara. Sekretariat dan Kaprodi dapat mengunduh semua jenis dokumen. Dosen peserta sidang (diidentifikasi via kecocokan NIDN) dapat mengunduh semua jenis dokumen. Mahasiswa hanya dapat mengunduh Notulen Penguji; Formulir Penilaian, Hasil Penilaian Akhir, dan Berita Acara tidak dapat diakses oleh Mahasiswa.
 - **Postcondition:** Berkas DOCX terunduh.
 
 ### UC-SS-05: Memantau Sidang Skripsi
+
 - **Actor:** Sekretariat, Kaprodi
 - **Precondition:** Terdapat sidang yang telah terjadwal, sedang berlangsung, atau selesai
 - **Summary:** Aktor membuka daftar sidang dan dapat memfilter berdasarkan status. Sekretariat melihat seluruh sidang lintas program studi. Kaprodi melihat sidang di program studinya. Aktor dapat membuka detail sidang untuk melihat data peserta, nilai, dan hasil.
@@ -127,9 +137,639 @@ This section defines how Use Cases, Activity Diagrams, and Sequence Diagrams sho
 
 ---
 
+## Use Cases
+
+### UC-RPS-01: Menginisiasi Revisi Pasca Sidang
+
+- **Actor:** Mahasiswa
+- **Precondition:** Sidang telah selesai (status `COMPLETED`), dipicu oleh penyelesaian Hasil Penilaian Akhir
+- **Summary:** Mahasiswa membuka halaman Revisi Pasca Sidang. Sistem memastikan tahap pertama (Penguji 2) sudah terbuka — jika belum, sistem membuatnya secara otomatis — lalu menampilkan status revisi dan instruksi pengumpulan berkas.
+- **Postcondition:** Tahap pertama terbuka dan mahasiswa dapat mulai mengunggah berkas revisi ke Penguji 2.
+
+### UC-RPS-02: Mengumpulkan Berkas Revisi
+
+- **Actor:** Mahasiswa
+- **Precondition:** Revisi pasca sidang telah diinisiasi dan terdapat tahap aktif yang menunggu pengumpulan atau perbaikan
+- **Summary:** Mahasiswa mengunggah berkas revisi skripsi ke tahap yang sedang aktif. Jika sebelumnya mendapat catatan revisi dari penandatangan aktif, mahasiswa mengunggah ulang berkas yang sudah diperbaiki pada tahap yang sama.
+- **Postcondition:** Berkas terkirim ke penandatangan aktif untuk diperiksa.
+
+### UC-RPS-03: Mereview Berkas Revisi
+
+- **Actor:** Dosen (Penguji 2, Penguji 1, Pembimbing 2, atau Pembimbing 1 — sesuai urutan aktif)
+- **Precondition:** Mahasiswa telah mengunggah berkas revisi pada tahap milik dosen yang bersangkutan
+- **Summary:** Dosen memeriksa berkas revisi yang diunggah mahasiswa dan memberikan keputusan: menyetujui (APPROVED) atau meminta revisi ulang (NEED_REVISION). Jika disetujui, tahap berikutnya dibuka secara otomatis. Jika Penguji 2 atau Penguji 1 menyetujui, dokumen notulen penguji tersebut di-generate ulang dengan tanda tangan yang diambil dari data signature dosen yang tersimpan di sistem dan dirender otomatis ke dalam dokumen DOCX. Jika Pembimbing 1 menyetujui (tahap terakhir) dan hasil sidang LULUS, sistem men-generate Halaman Pengesahan Majelis Penguji dan Halaman Pengesahan Dekan secara otomatis.
+- **Postcondition:** Status tahap diperbarui. Jika semua tahap selesai, revisi pasca sidang ditandai selesai.
+
+### UC-RPS-04: Mengunduh Dokumen Pengesahan
+
+- **Actor:** Mahasiswa, Dosen Peserta Sidang, Sekretariat, Kaprodi
+- **Precondition:** Revisi pasca sidang telah selesai dan hasil sidang LULUS (sehingga dokumen pengesahan telah ter-generate)
+- **Summary:** Aktor mengunduh Halaman Pengesahan Majelis Penguji dan/atau Halaman Pengesahan Dekan dalam format DOCX. Semua aktor yang berhak mengakses dapat mengunduh kedua jenis dokumen tanpa pembatasan.
+- **Postcondition:** Berkas DOCX halaman pengesahan terunduh.
+
+### UC-RPS-05: Memantau Revisi Pasca Sidang
+
+- **Actor:** Dosen Peserta Sidang
+- **Precondition:** Terdapat mahasiswa yang sedang atau telah menjalani revisi pasca sidang dengan dosen yang bersangkutan sebagai salah satu penandatangan
+- **Summary:** Dosen membuka daftar revisi pasca sidang yang melibatkan dirinya, melihat status progres masing-masing, dan dapat membuka detail revisi mahasiswa tertentu untuk melihat tahap aktif, riwayat pengumpulan, dan riwayat review.
+- **Postcondition:** Dosen memperoleh informasi progres revisi pasca sidang mahasiswa.
+
+---
+
+## Activity Diagrams
+
+### UC-RPS-01: Menginisiasi Revisi Pasca Sidang
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman Revisi Pasca Sidang
+
+[Sistem] Memeriksa status sidang
+[Decision 1] Sidang berstatus COMPLETED?
+
+→ Belum: [Sistem] Menampilkan pesan prasyarat belum terpenuhi → END
+→ Sudah: lanjut
+
+[Sistem] Memeriksa status tahap pertama (Penguji 2)
+[Decision 2] Tahap pertama sudah terbuka?
+
+→ Belum: [Sistem] Membuka tahap pertama (Penguji 2) secara otomatis → lanjut
+→ Sudah: lanjut
+
+[Sistem] Menampilkan status revisi dan instruksi pengumpulan berkas
+
+END
+
+### UC-RPS-02: Mengumpulkan Berkas Revisi
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman Revisi Pasca Sidang
+[Sistem] Menampilkan status revisi dan tahap aktif
+
+[Mahasiswa] Mengunggah berkas revisi untuk tahap aktif
+[Sistem] Memvalidasi berkas
+[Decision 1] Berkas valid?
+
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengunggah berkas revisi
+→ Valid: lanjut
+
+[Sistem] Menyimpan berkas pengumpulan
+[Sistem] Menampilkan pesan berkas berhasil dikirim
+
+END
+
+### UC-RPS-03: Mereview Berkas Revisi
+
+**Swimlanes:** Dosen | Sistem Skripsi
+
+START
+
+[Dosen] Membuka daftar revisi pasca sidang
+[Sistem] Menampilkan daftar mahasiswa yang berkasnya menunggu review
+[Dosen] Memilih mahasiswa dan membuka detail berkas
+
+[Sistem] Menampilkan berkas revisi yang diunggah mahasiswa
+[Dosen] Memeriksa berkas dan mengisi catatan
+[Dosen] Memilih keputusan
+[Decision 1] Keputusan?
+
+→ NEED_REVISION: [Sistem] Memperbarui status tahap menjadi NEED_REVISION → [Sistem] Menampilkan pesan sukses → END
+→ APPROVED: lanjut
+
+[Sistem] Memperbarui status tahap menjadi APPROVED
+[Decision 2] Dosen adalah Penguji 2 atau Penguji 1?
+
+→ Ya: [Sistem] Mengambil tanda tangan dosen dari data akun → [Sistem] Men-generate ulang dokumen notulen penguji dengan tanda tangan → lanjut
+→ Tidak (Pembimbing): lanjut
+
+[Decision 3] Masih ada tahap berikutnya?
+
+→ Ya: [Sistem] Membuka tahap berikutnya secara otomatis → [Sistem] Menampilkan pesan sukses → END
+→ Tidak (Pembimbing 1, tahap terakhir): lanjut
+
+[Decision 4] Hasil sidang LULUS?
+
+→ Tidak (TIDAK_LULUS): [Sistem] Menandai revisi sebagai selesai → [Sistem] Menampilkan pesan sukses → END
+→ Ya (LULUS): lanjut
+
+[Sistem] Men-generate Halaman Pengesahan Majelis Penguji
+[Sistem] Men-generate Halaman Pengesahan Dekan
+[Sistem] Menandai revisi sebagai selesai
+[Sistem] Menampilkan pesan sukses
+
+END
+
+### UC-RPS-04: Mengunduh Dokumen Pengesahan
+
+**Swimlanes:** Aktor | Sistem Skripsi
+
+START
+
+[Aktor] Membuka halaman Revisi Pasca Sidang dan memilih dokumen yang ingin diunduh
+
+[Sistem] Memeriksa ketersediaan dokumen
+[Decision 1] Dokumen tersedia?
+
+→ Tidak: [Sistem] Menampilkan pesan dokumen belum tersedia → END
+→ Ya: lanjut
+
+[Sistem] Mengirimkan berkas DOCX
+
+END
+
+### UC-RPS-05: Memantau Revisi Pasca Sidang
+
+**Swimlanes:** Dosen | Sistem Skripsi
+
+START
+
+[Dosen] Membuka halaman daftar revisi pasca sidang
+[Sistem] Menampilkan daftar mahasiswa yang revisinya melibatkan dosen tersebut beserta status progres masing-masing
+
+[Dosen] Memilih mahasiswa untuk melihat detail
+[Sistem] Menampilkan detail revisi beserta tahap aktif, riwayat pengumpulan, dan riwayat review
+
+END
+
+---
+
+## Sequence Diagrams
+
+### UC-RPS-01: Menginisiasi Revisi Pasca Sidang
+
+**Lifelines:** Mahasiswa | Halaman Revisi Pasca Sidang | Database
+
+Mahasiswa → Halaman Revisi Pasca Sidang: Membuka halaman Revisi Pasca Sidang
+Halaman Revisi Pasca Sidang → Database: getSidangTerakhir(skripsiId)
+Database → Halaman Revisi Pasca Sidang: sidangId, statusSidang, hasilSidang
+
+alt [Sidang belum COMPLETED]
+Halaman Revisi Pasca Sidang → Mahasiswa: showErrorMessage() → END
+
+alt [Sidang COMPLETED]
+Halaman Revisi Pasca Sidang → Database: initRevisi(skripsiId)
+Database → Halaman Revisi Pasca Sidang: revisiId, isCompleted, stageAktif (signerRole, currentStatus)
+Halaman Revisi Pasca Sidang → Mahasiswa: viewHalamanRevisiPascaSidang(stageAktif, riwayatSubmission)
+
+END
+
+---
+
+### UC-RPS-02: Mengumpulkan Berkas Revisi
+
+**Lifelines:** Mahasiswa | Halaman Revisi Pasca Sidang | Database
+
+Mahasiswa → Halaman Revisi Pasca Sidang: Membuka halaman Revisi Pasca Sidang
+Halaman Revisi Pasca Sidang → Database: getRevisiPascaSidang(skripsiId)
+Database → Halaman Revisi Pasca Sidang: revisiId, isCompleted, stages, stageAktif (signerRole, currentStatus, catatan)
+Halaman Revisi Pasca Sidang → Mahasiswa: viewHalamanRevisiPascaSidang(stageAktif, riwayatSubmission, catatanRevisi)
+
+Mahasiswa → Halaman Revisi Pasca Sidang: Mengunggah berkas revisi dan menekan tombol Kumpulkan
+Halaman Revisi Pasca Sidang → Halaman Revisi Pasca Sidang: validateData()
+
+alt [Tidak valid]
+Halaman Revisi Pasca Sidang → Mahasiswa: showErrorMessage() → END
+
+alt [Valid]
+Halaman Revisi Pasca Sidang → Database: submitRevisi(skripsiId, fileContent, fileName)
+
+alt [Tidak ada tahap aktif atau revisi sudah selesai]
+Database → Halaman Revisi Pasca Sidang: error
+Halaman Revisi Pasca Sidang → Mahasiswa: showErrorMessage() → END
+
+alt [Tahap aktif tersedia]
+Database → Halaman Revisi Pasca Sidang: stageId, signerRole, submissionNo
+Halaman Revisi Pasca Sidang → Mahasiswa: showSuccessMessage()
+
+END
+
+---
+
+### UC-RPS-03: Mereview Berkas Revisi
+
+**Lifelines:** Dosen | Halaman Daftar Revisi Pasca Sidang | Halaman Detail Revisi Pasca Sidang | Database
+
+Dosen → Halaman Daftar Revisi Pasca Sidang: Membuka daftar revisi pasca sidang
+Halaman Daftar Revisi Pasca Sidang → Database: getDaftarRevisiPascaSidang(nidn)
+Database → Halaman Daftar Revisi Pasca Sidang: daftarRevisi, stageAktif, canReview
+Halaman Daftar Revisi Pasca Sidang → Dosen: viewDaftarRevisiPascaSidang()
+
+Dosen → Halaman Daftar Revisi Pasca Sidang: Memilih mahasiswa yang berkasnya menunggu review
+Halaman Daftar Revisi Pasca Sidang → Halaman Detail Revisi Pasca Sidang: navigateToHalamanDetailRevisiPascaSidang(skripsiId)
+Halaman Detail Revisi Pasca Sidang → Database: getDetailRevisiPascaSidang(skripsiId, nidn)
+Database → Halaman Detail Revisi Pasca Sidang: revisiId, stageAktif, riwayatSubmission, latestSubmission
+Halaman Detail Revisi Pasca Sidang → Dosen: viewDetailRevisiPascaSidang()
+
+Dosen → Halaman Detail Revisi Pasca Sidang: Mengisi catatan dan memilih keputusan, lalu menekan tombol Simpan Review
+Halaman Detail Revisi Pasca Sidang → Halaman Detail Revisi Pasca Sidang: validateData()
+
+alt [Tidak valid]
+Halaman Detail Revisi Pasca Sidang → Dosen: showErrorMessage() → END
+
+alt [Valid]
+
+alt [Keputusan NEED_REVISION]
+Halaman Detail Revisi Pasca Sidang → Database: reviewRevisi(skripsiId, decision: NEED_REVISION, catatan)
+Database → Halaman Detail Revisi Pasca Sidang: stageAktif, currentStatus
+Halaman Detail Revisi Pasca Sidang → Dosen: showSuccessMessage() → END
+
+alt [Keputusan APPROVED, bukan tahap terakhir]
+Halaman Detail Revisi Pasca Sidang → Database: reviewRevisi(skripsiId, decision: APPROVED)
+Database → Halaman Detail Revisi Pasca Sidang: stageAktif (signerRole: tahap berikutnya), notulenRegenerated (jika penguji)
+Halaman Detail Revisi Pasca Sidang → Dosen: showSuccessMessage() → END
+
+alt [Keputusan APPROVED, Pembimbing 1 — tahap terakhir, hasil TIDAK_LULUS]
+Halaman Detail Revisi Pasca Sidang → Database: reviewRevisi(skripsiId, decision: APPROVED)
+Database → Halaman Detail Revisi Pasca Sidang: isCompleted: true, pengajuanSidangBaruId
+Halaman Detail Revisi Pasca Sidang → Dosen: showSuccessMessage() → END
+
+alt [Keputusan APPROVED, Pembimbing 1 — tahap terakhir, hasil LULUS]
+Halaman Detail Revisi Pasca Sidang → Database: reviewRevisi(skripsiId, decision: APPROVED)
+Database → Halaman Detail Revisi Pasca Sidang: isCompleted: true, halamanMajelisFileName, halamanDekanFileName
+Halaman Detail Revisi Pasca Sidang → Dosen: showSuccessMessage()
+
+END
+
+---
+
+### UC-RPS-04: Mengunduh Dokumen Pengesahan
+
+**Lifelines:** Aktor | Halaman Revisi Pasca Sidang | Database
+
+Aktor → Halaman Revisi Pasca Sidang: Membuka halaman Revisi Pasca Sidang
+Halaman Revisi Pasca Sidang → Database: getRevisiPascaSidang(skripsiId)
+Database → Halaman Revisi Pasca Sidang: isCompleted, files (halamanMajelisAvailable, halamanDekanAvailable)
+Halaman Revisi Pasca Sidang → Aktor: viewHalamanRevisiPascaSidang()
+
+Aktor → Halaman Revisi Pasca Sidang: Menekan tombol unduh dokumen pengesahan (Majelis Penguji atau Dekan)
+Halaman Revisi Pasca Sidang → Database: getDokumenPengesahan(skripsiId, fileType)
+Database → Halaman Revisi Pasca Sidang: fileContent, fileName | null
+
+alt [Dokumen belum tersedia]
+Halaman Revisi Pasca Sidang → Aktor: showErrorMessage() → END
+
+alt [Dokumen tersedia]
+Halaman Revisi Pasca Sidang → Aktor: downloadFile(fileName)
+Halaman Revisi Pasca Sidang → Aktor: showSuccessMessage()
+
+END
+
+---
+
+### UC-RPS-05: Memantau Revisi Pasca Sidang
+
+**Lifelines:** Dosen | Halaman Daftar Revisi Pasca Sidang | Halaman Detail Revisi Pasca Sidang | Database
+
+Dosen → Halaman Daftar Revisi Pasca Sidang: Membuka halaman daftar revisi pasca sidang
+Halaman Daftar Revisi Pasca Sidang → Database: getDaftarRevisiPascaSidang(nidn)
+Database → Halaman Daftar Revisi Pasca Sidang: daftarRevisi, stageAktif per mahasiswa, isCompleted
+Halaman Daftar Revisi Pasca Sidang → Dosen: viewDaftarRevisiPascaSidang()
+
+Dosen → Halaman Daftar Revisi Pasca Sidang: Memilih mahasiswa untuk melihat detail
+Halaman Daftar Revisi Pasca Sidang → Halaman Detail Revisi Pasca Sidang: navigateToHalamanDetailRevisiPascaSidang(skripsiId)
+Halaman Detail Revisi Pasca Sidang → Database: getDetailRevisiPascaSidang(skripsiId, nidn)
+Database → Halaman Detail Revisi Pasca Sidang: revisi, stages, submissions, reviews, stageAktif
+Halaman Detail Revisi Pasca Sidang → Dosen: viewDetailRevisiPascaSidang()
+
+END
+
+---
+
+## Use Cases
+
+### UC-PBF-01: Menginisiasi Pengumpulan Berkas Final
+
+- **Actor:** Mahasiswa
+- **Precondition:** Revisi pasca sidang telah selesai (`is_completed = 1`) dan hasil sidang terakhir adalah `LULUS`
+- **Summary:** Mahasiswa menginisiasi pengumpulan berkas final skripsi. Sistem membuat record pengumpulan baru berstatus DRAFT. Jika record sudah ada sebelumnya (karena init sebelumnya), sistem mengembalikan record yang ada tanpa membuat duplikat.
+- **Postcondition:** Record pengumpulan berkas final berstatus DRAFT terbuat dan mahasiswa dapat mengunggah berkas.
+
+### UC-PBF-02: Mengunggah dan Mengirim Berkas Final
+
+- **Actor:** Mahasiswa
+- **Precondition:** Pengumpulan berkas final telah diinisiasi (status DRAFT atau SUBMITTED)
+- **Summary:** Mahasiswa mengunggah berkas skripsi final (FILE_SKRIPSI) dan artikel penelitian (ARTIKEL_PENELITIAN), lalu mengirimkan untuk dikonfirmasi. Sistem menghapus berkas lama (jika ada) dan menyimpan berkas baru, menghapus seluruh baris konfirmasi sebelumnya dan membuat ulang 6 baris konfirmasi baru (Perpustakaan, LPPM, Pembimbing 1 & 2, Penguji 1 & 2) dengan status belum dikonfirmasi, lalu mengubah status menjadi SUBMITTED. Submit ulang diperbolehkan selama status belum COMPLETED.
+- **Postcondition:** Berkas tersimpan, status SUBMITTED, dan 6 penerima dapat mulai mengkonfirmasi penerimaan.
+
+### UC-PBF-03: Mengkonfirmasi Penerimaan Berkas
+
+- **Actor:** Perpustakaan, LPPM, Dosen Pembimbing/Penguji (salah satu dari 6 penerima)
+- **Precondition:** Mahasiswa telah mengirimkan berkas (status SUBMITTED) dan aktor adalah salah satu dari 6 penerima yang belum mengkonfirmasi
+- **Summary:** Penerima mengkonfirmasi bahwa berkas telah diterima. Sistem mencatat waktu konfirmasi. Jika seluruh 6 penerima telah mengkonfirmasi, sistem secara otomatis men-generate Surat Pernyataan Penyerahan Skripsi (DOCX) menggunakan tanda tangan semua pihak (tanpa tanda tangan Sekretaris Prodi) dan mengubah status menjadi WAITING_SIGNATURE sehingga Sekretaris Prodi dapat menandatangani.
+- **Postcondition:** Konfirmasi penerima tersimpan. Jika semua sudah konfirmasi, Surat Pernyataan Penyerahan ter-generate (tanpa ttd Sekprodi) dan status berubah ke WAITING_SIGNATURE.
+
+### UC-PBF-04: Menandatangani Surat Penyerahan
+
+- **Actor:** Sekretaris Prodi (SEKPRODI)
+- **Precondition:** Status pengumpulan adalah WAITING_SIGNATURE (semua 6 penerima telah konfirmasi)
+- **Summary:** Sekretaris Prodi menandatangani Surat Pernyataan Penyerahan Skripsi. Sistem men-generate ulang dokumen dengan tanda tangan Sekretaris Prodi ditambahkan, mengubah status menjadi COMPLETED, dan menandai is_completed = 1.
+- **Postcondition:** Surat Pernyataan Penyerahan final ter-generate dengan tanda tangan Sekretaris Prodi. Pengumpulan berkas final selesai.
+
+### UC-PBF-05: Mengunduh Surat Pernyataan Penyerahan
+
+- **Actor:** Mahasiswa, Dosen Peserta Sidang, Perpustakaan, LPPM, Sekretaris Prodi, Sekretariat, Kaprodi
+- **Precondition:** Surat Pernyataan Penyerahan telah ter-generate (status minimal WAITING_SIGNATURE)
+- **Summary:** Aktor mengunduh Surat Pernyataan Penyerahan Skripsi dalam format DOCX. Dokumen yang tersedia saat status WAITING_SIGNATURE belum memuat tanda tangan Sekretaris Prodi; dokumen saat COMPLETED sudah memuat tanda tangan lengkap.
+- **Postcondition:** Berkas DOCX terunduh.
+
+### UC-PBF-06: Memantau Pengumpulan Berkas Final
+
+- **Actor:** Dosen Peserta Sidang, Perpustakaan, LPPM, Sekretaris Prodi
+- **Precondition:** Terdapat pengumpulan berkas final yang melibatkan aktor sebagai salah satu penerima atau berada dalam lingkup program studi aktor
+- **Summary:** Aktor membuka daftar pengumpulan berkas final yang relevan baginya. Dosen melihat entri di mana dirinya adalah Pembimbing atau Penguji beserta status konfirmasinya sendiri. Perpustakaan dan LPPM melihat semua pengumpulan lintas prodi yang sudah SUBMITTED ke atas (institution-wide). Sekretaris Prodi melihat semua pengumpulan di program studinya.
+- **Postcondition:** Aktor memperoleh informasi status pengumpulan berkas final mahasiswa.
+
+---
+
+## Activity Diagrams
+
+### UC-PBF-01: Menginisiasi Pengumpulan Berkas Final
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman Pengumpulan Berkas Final
+
+[Sistem] Memeriksa prasyarat (revisi pasca sidang selesai dan sidang terakhir LULUS)
+[Decision 1] Prasyarat terpenuhi?
+
+→ Tidak: [Sistem] Menampilkan pesan prasyarat belum terpenuhi → END
+→ Ya: lanjut
+
+[Sistem] Memeriksa apakah record pengumpulan sudah ada
+[Decision 2] Record sudah ada?
+
+→ Belum ada: [Sistem] Membuat record pengumpulan baru berstatus DRAFT → lanjut
+→ Sudah ada: lanjut
+
+[Sistem] Menampilkan halaman pengumpulan
+
+END
+
+### UC-PBF-02: Mengunggah dan Mengirim Berkas Final
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman Pengumpulan Berkas Final
+[Sistem] Menampilkan form unggah berkas dan status pengumpulan
+
+[Mahasiswa] Mengunggah FILE_SKRIPSI dan ARTIKEL_PENELITIAN, lalu menekan tombol Kirim
+[Sistem] Memvalidasi kelengkapan berkas (keduanya wajib ada)
+[Decision 1] Berkas lengkap dan valid?
+
+→ Tidak: [Sistem] Menampilkan pesan gagal → END
+→ Ya: lanjut
+
+[Sistem] Menghapus berkas lama (jika ada) dan menyimpan berkas baru
+[Sistem] Menghapus seluruh baris konfirmasi sebelumnya (jika ada) dan membuat ulang 6 baris konfirmasi baru
+[Sistem] Mengubah status menjadi SUBMITTED
+[Sistem] Menampilkan pesan berkas berhasil dikirim
+
+END
+
+### UC-PBF-03: Mengkonfirmasi Penerimaan Berkas
+
+**Swimlanes:** Penerima | Sistem Skripsi
+
+START
+
+[Penerima] Membuka halaman Pengumpulan Berkas Final
+[Sistem] Menampilkan status pengumpulan dan status konfirmasi masing-masing penerima
+
+[Penerima] Menekan tombol Konfirmasi
+[Sistem] Memverifikasi bahwa aktor adalah salah satu dari 6 penerima yang belum mengkonfirmasi
+[Decision 1] Aktor valid dan belum konfirmasi?
+
+→ Tidak: [Sistem] Menampilkan pesan error → END
+→ Ya: lanjut
+
+[Sistem] Mencatat waktu konfirmasi untuk penerima tersebut
+[Decision 2] Semua 6 penerima sudah mengkonfirmasi?
+
+→ Belum: [Sistem] Menampilkan pesan konfirmasi berhasil → END
+→ Sudah: lanjut
+
+[Sistem] Men-generate Surat Pernyataan Penyerahan Skripsi (tanpa tanda tangan Sekretaris Prodi)
+[Sistem] Mengubah status menjadi WAITING_SIGNATURE
+[Sistem] Menampilkan pesan konfirmasi berhasil
+
+END
+
+### UC-PBF-04: Menandatangani Surat Penyerahan
+
+**Swimlanes:** Sekretaris Prodi | Sistem Skripsi
+
+START
+
+[Sekretaris Prodi] Membuka halaman Pengumpulan Berkas Final
+[Sistem] Menampilkan status pengumpulan dan tombol tanda tangan
+
+[Sekretaris Prodi] Menekan tombol Tandatangani
+[Sistem] Memverifikasi bahwa aktor adalah Sekretaris Prodi yang sesuai dengan program studi mahasiswa
+[Decision 1] Aktor valid?
+
+→ Tidak: [Sistem] Menampilkan pesan error → END
+→ Ya: lanjut
+
+[Sistem] Mengambil tanda tangan Sekretaris Prodi dari data akun
+[Sistem] Men-generate ulang Surat Pernyataan Penyerahan Skripsi dengan tanda tangan Sekretaris Prodi
+[Sistem] Mengubah status menjadi COMPLETED dan menandai is_completed = 1
+[Sistem] Menampilkan pesan penandatanganan berhasil
+
+END
+
+### UC-PBF-05: Mengunduh Surat Pernyataan Penyerahan
+
+**Swimlanes:** Aktor | Sistem Skripsi
+
+START
+
+[Aktor] Membuka halaman Pengumpulan Berkas Final dan menekan tombol unduh Surat Pernyataan Penyerahan
+
+[Sistem] Memeriksa ketersediaan dokumen (status minimal WAITING_SIGNATURE)
+[Decision 1] Dokumen tersedia?
+
+→ Tidak: [Sistem] Menampilkan pesan dokumen belum tersedia → END
+→ Ya: lanjut
+
+[Sistem] Mengirimkan berkas DOCX
+
+END
+
+### UC-PBF-06: Memantau Pengumpulan Berkas Final
+
+**Swimlanes:** Aktor | Sistem Skripsi
+
+START
+
+[Aktor] Membuka halaman daftar Pengumpulan Berkas Final
+[Decision 1] Peran aktor?
+
+→ Dosen (Pembimbing/Penguji): [Sistem] Menampilkan daftar pengumpulan di mana aktor adalah penerima (NIDN match), beserta status konfirmasi aktor sendiri → END
+→ Perpustakaan / LPPM: [Sistem] Menampilkan semua pengumpulan lintas prodi dengan status minimal SUBMITTED → END
+→ Sekretaris Prodi: [Sistem] Menampilkan semua pengumpulan di program studi aktor → END
+
+END
+
+---
+
+## Sequence Diagrams
+
+### UC-PBF-01: Menginisiasi Pengumpulan Berkas Final
+
+**Lifelines:** Mahasiswa | Halaman Pengumpulan Berkas Final | Database
+
+Mahasiswa → Halaman Pengumpulan Berkas Final: Membuka halaman Pengumpulan Berkas Final
+Halaman Pengumpulan Berkas Final → Database: checkPrasyarat(skripsiId)
+Database → Halaman Pengumpulan Berkas Final: revisiIsCompleted, hasilSidangTerakhir
+
+alt [Prasyarat belum terpenuhi]
+Halaman Pengumpulan Berkas Final → Mahasiswa: showErrorMessage() → END
+
+alt [Prasyarat terpenuhi]
+Halaman Pengumpulan Berkas Final → Database: initPengumpulan(skripsiId)
+Database → Halaman Pengumpulan Berkas Final: pengumpulanId, status (DRAFT atau existing)
+Halaman Pengumpulan Berkas Final → Mahasiswa: viewHalamanPengumpulanBerkasFinal(pengumpulanId, status)
+
+END
+
+---
+
+### UC-PBF-02: Mengunggah dan Mengirim Berkas Final
+
+**Lifelines:** Mahasiswa | Halaman Pengumpulan Berkas Final | Database
+
+Mahasiswa → Halaman Pengumpulan Berkas Final: Membuka halaman Pengumpulan Berkas Final
+Halaman Pengumpulan Berkas Final → Database: getPengumpulan(skripsiId)
+Database → Halaman Pengumpulan Berkas Final: pengumpulanId, status, files
+Halaman Pengumpulan Berkas Final → Mahasiswa: viewHalamanPengumpulanBerkasFinal(pengumpulanId, status, files)
+
+Mahasiswa → Halaman Pengumpulan Berkas Final: Mengunggah FILE_SKRIPSI dan ARTIKEL_PENELITIAN, lalu menekan tombol Kirim
+Halaman Pengumpulan Berkas Final → Halaman Pengumpulan Berkas Final: validateData()
+
+alt [Tidak valid]
+Halaman Pengumpulan Berkas Final → Mahasiswa: showErrorMessage() → END
+
+alt [Valid]
+Halaman Pengumpulan Berkas Final → Database: submitPengumpulan(skripsiId, fileSkripsi, artikelPenelitian)
+
+alt [Status bukan DRAFT atau SUBMITTED]
+Database → Halaman Pengumpulan Berkas Final: error
+Halaman Pengumpulan Berkas Final → Mahasiswa: showErrorMessage() → END
+
+alt [Status valid]
+Database → Halaman Pengumpulan Berkas Final: pengumpulanId, status: SUBMITTED, confirmations (6 baris baru)
+Halaman Pengumpulan Berkas Final → Mahasiswa: showSuccessMessage()
+
+END
+
+---
+
+### UC-PBF-03: Mengkonfirmasi Penerimaan Berkas
+
+**Lifelines:** Penerima | Halaman Pengumpulan Berkas Final | Database
+
+Penerima → Halaman Pengumpulan Berkas Final: Membuka halaman Pengumpulan Berkas Final
+Halaman Pengumpulan Berkas Final → Database: getPengumpulan(skripsiId)
+Database → Halaman Pengumpulan Berkas Final: pengumpulanId, status, confirmations (termasuk status konfirmasi aktor)
+Halaman Pengumpulan Berkas Final → Penerima: viewHalamanPengumpulanBerkasFinal(status, confirmations)
+
+Penerima → Halaman Pengumpulan Berkas Final: Menekan tombol Konfirmasi
+Halaman Pengumpulan Berkas Final → Database: confirmPengumpulan(skripsiId)
+
+alt [Aktor bukan penerima atau sudah konfirmasi]
+Database → Halaman Pengumpulan Berkas Final: error
+Halaman Pengumpulan Berkas Final → Penerima: showErrorMessage() → END
+
+alt [Konfirmasi berhasil, belum semua 6 konfirmasi]
+Database → Halaman Pengumpulan Berkas Final: confirmedAt, totalConfirmed, status: SUBMITTED
+Halaman Pengumpulan Berkas Final → Penerima: showSuccessMessage() → END
+
+alt [Konfirmasi berhasil, semua 6 sudah konfirmasi]
+Database → Halaman Pengumpulan Berkas Final: confirmedAt, totalConfirmed, status: WAITING_SIGNATURE, suratFileName
+Halaman Pengumpulan Berkas Final → Penerima: showSuccessMessage()
+
+END
+
+---
+
+### UC-PBF-04: Menandatangani Surat Penyerahan
+
+**Lifelines:** Sekretaris Prodi | Halaman Pengumpulan Berkas Final | Database
+
+Sekretaris Prodi → Halaman Pengumpulan Berkas Final: Membuka halaman Pengumpulan Berkas Final
+Halaman Pengumpulan Berkas Final → Database: getPengumpulan(skripsiId)
+Database → Halaman Pengumpulan Berkas Final: pengumpulanId, status, confirmations
+Halaman Pengumpulan Berkas Final → Sekretaris Prodi: viewHalamanPengumpulanBerkasFinal(status, confirmations)
+
+Sekretaris Prodi → Halaman Pengumpulan Berkas Final: Menekan tombol Tandatangani
+Halaman Pengumpulan Berkas Final → Database: signPengumpulan(skripsiId)
+
+alt [Aktor bukan Sekretaris Prodi yang sesuai atau status bukan WAITING_SIGNATURE]
+Database → Halaman Pengumpulan Berkas Final: error
+Halaman Pengumpulan Berkas Final → Sekretaris Prodi: showErrorMessage() → END
+
+alt [Valid]
+Database → Halaman Pengumpulan Berkas Final: status: COMPLETED, isCompleted: true, suratFileName
+Halaman Pengumpulan Berkas Final → Sekretaris Prodi: showSuccessMessage()
+
+END
+
+---
+
+### UC-PBF-05: Mengunduh Surat Pernyataan Penyerahan
+
+**Lifelines:** Aktor | Halaman Pengumpulan Berkas Final | Database
+
+Aktor → Halaman Pengumpulan Berkas Final: Membuka halaman Pengumpulan Berkas Final dan menekan tombol unduh Surat Pernyataan Penyerahan
+Halaman Pengumpulan Berkas Final → Database: getFile(skripsiId, fileType: SURAT_PERNYATAAN_PENYERAHAN)
+Database → Halaman Pengumpulan Berkas Final: fileContent, fileName | null
+
+alt [Dokumen belum tersedia]
+Halaman Pengumpulan Berkas Final → Aktor: showErrorMessage() → END
+
+alt [Dokumen tersedia]
+Halaman Pengumpulan Berkas Final → Aktor: downloadFile(fileName)
+Halaman Pengumpulan Berkas Final → Aktor: showSuccessMessage()
+
+END
+
+---
+
+### UC-PBF-06: Memantau Pengumpulan Berkas Final
+
+**Lifelines:** Aktor | Halaman Daftar Pengumpulan Berkas Final | Database
+
+Aktor → Halaman Daftar Pengumpulan Berkas Final: Membuka halaman daftar Pengumpulan Berkas Final
+Halaman Daftar Pengumpulan Berkas Final → Database: getDaftarPengumpulan(aktorRole, nidn/userId)
+
+alt [Aktor adalah Dosen]
+Database → Halaman Daftar Pengumpulan Berkas Final: daftarPengumpulan (NIDN match), callerConfirmedAt per item
+
+alt [Aktor adalah Perpustakaan atau LPPM]
+Database → Halaman Daftar Pengumpulan Berkas Final: daftarPengumpulan (semua prodi, status >= SUBMITTED)
+
+alt [Aktor adalah Sekretaris Prodi]
+Database → Halaman Daftar Pengumpulan Berkas Final: daftarPengumpulan (prodi aktor)
+
+Halaman Daftar Pengumpulan Berkas Final → Aktor: viewDaftarPengumpulanBerkasFinal(daftarPengumpulan)
+
+END
+
+---
+
 ## Activity Diagrams
 
 ### UC-SS-01: Memulai Sidang
+
 **Swimlanes:** Pembimbing 1 | Sistem Skripsi
 
 START
@@ -152,6 +792,7 @@ START
 END
 
 ### UC-SS-02: Mengisi Penilaian dan Notulen
+
 **Swimlanes:** Dosen Peserta Sidang | Sistem Skripsi
 
 START
@@ -191,6 +832,7 @@ START
 END
 
 ### UC-SS-03: Menyimpan Hasil Penilaian Akhir
+
 **Swimlanes:** Pembimbing 1 | Sistem Skripsi
 
 START
@@ -218,6 +860,7 @@ START
 END
 
 ### UC-SS-04: Mengunduh Dokumen Sidang
+
 **Swimlanes:** Aktor | Sistem Skripsi
 
 START
@@ -235,6 +878,7 @@ START
 END
 
 ### UC-SS-05: Memantau Sidang Skripsi
+
 **Swimlanes:** Sekretariat / Kaprodi | Sistem Skripsi
 
 START
@@ -252,36 +896,42 @@ END
 ## Use Cases
 
 ### UC-PS-01: Mengajukan Berkas Sidang ke Kaprodi
+
 - **Actor:** Mahasiswa
 - **Precondition:** Konsultasi skripsi telah selesai (status COMPLETED)
 - **Summary:** Mahasiswa menginisialisasi pengajuan sidang, mengunggah berkas isi skripsi (judul luar/dalam, abstrak, bab, daftar pustaka, dll.), mengisi data diri dan data ujian (termasuk nama usulan penguji), lalu mengajukan ke Kaprodi. Sistem secara otomatis men-generate empat dokumen: Lembar Permohonan Ujian, Surat Pernyataan Perbaikan, Surat Pernyataan Kelengkapan, dan Lembar Usulan Penguji.
 - **Postcondition:** Pengajuan sidang terkirim ke Kaprodi untuk diperiksa.
 
 ### UC-PS-02: Memverifikasi Berkas Sidang oleh Kaprodi
+
 - **Actor:** Kaprodi
 - **Precondition:** Mahasiswa telah mengajukan berkas sidang ke Kaprodi
 - **Summary:** Kaprodi memeriksa berkas isi skripsi satu per satu dan memberikan status verifikasi per berkas. Setelah semua berkas wajib dinyatakan valid, Kaprodi mengambil keputusan akhir: menyetujui pengajuan (VALID) atau meminta mahasiswa memperbaiki (NEED_REVISION).
 - **Postcondition:** Pengajuan dinyatakan VALID sehingga mahasiswa dapat melanjutkan ke pengajuan ke Sekretariat, atau mahasiswa diminta memperbaiki data dan berkas.
 
 ### UC-PS-03: Mengajukan Berkas Sidang ke Sekretariat
+
 - **Actor:** Mahasiswa
 - **Precondition:** Kaprodi telah menyatakan pengajuan VALID, atau Sekretariat mengembalikan pengajuan dengan catatan revisi
 - **Summary:** Mahasiswa mengunggah berkas administrasi (pas foto, KTM, bukti pembayaran, rekap nilai, KHS, dan berkas pendukung lainnya) lalu mengajukan ke Sekretariat. Jika sebelumnya mendapat catatan revisi dari Sekretariat, mahasiswa mengunggah ulang berkas yang diminta pada pengajuan yang sama.
 - **Postcondition:** Pengajuan sidang terkirim ke Sekretariat untuk diperiksa.
 
 ### UC-PS-04: Memverifikasi Berkas Sidang oleh Sekretariat
+
 - **Actor:** Sekretariat
 - **Precondition:** Mahasiswa telah mengajukan berkas sidang ke Sekretariat
 - **Summary:** Sekretariat memeriksa seluruh berkas administrasi satu per satu dan memberikan status verifikasi per berkas. Setelah semua berkas wajib dinyatakan valid, Sekretariat mengambil keputusan akhir: memverifikasi pengajuan atau mengembalikan ke mahasiswa untuk dilengkapi.
 - **Postcondition:** Pengajuan berstatus WAITING_FOR_DISPOSISI dan menunggu disposisi dari Kaprodi, atau mahasiswa diminta melengkapi berkas.
 
 ### UC-PS-05: Mengirim Disposisi
+
 - **Actor:** Kaprodi
 - **Precondition:** Sekretariat telah memverifikasi pengajuan sidang (status WAITING_FOR_DISPOSISI)
 - **Summary:** Kaprodi mengisi jadwal sidang (tanggal, waktu, tempat) dan menetapkan dosen penguji, kemudian mengirim disposisi ke Sekretariat.
 - **Postcondition:** Pengajuan berstatus WAITING_FOR_SURAT dan Sekretariat dapat menerbitkan Surat Undangan Sidang.
 
 ### UC-PS-06: Menerbitkan Surat Undangan Sidang
+
 - **Actor:** Sekretariat
 - **Precondition:** Kaprodi telah mengirim disposisi (status WAITING_FOR_SURAT)
 - **Summary:** Sekretariat menerbitkan Surat Undangan Sidang. Sistem secara otomatis men-generate dokumen undangan, membuat record sidang beserta data penilaian awal, dan mengirim surat undangan via email ke mahasiswa, pembimbing, dan penguji.
@@ -292,18 +942,21 @@ END
 ## Use Cases
 
 ### UC-01: Mengajukan SK Penelitian
+
 - **Actor:** Mahasiswa
 - **Precondition:** Halaman Persetujuan Judul telah selesai ditandatangani semua pihak
 - **Summary:** Mahasiswa mengajukan SK Penelitian. Sistem secara otomatis mengumpulkan berkas-berkas yang dibutuhkan dari pengajuan sebelumnya (KRS, Rekap Nilai, Kartu Konsultasi, File Outline, Halaman Persetujuan).
 - **Postcondition:** Berkas SK terkirim ke Sekretariat untuk diperiksa.
 
 ### UC-02: Memverifikasi Berkas SK Penelitian
+
 - **Actor:** Sekretariat
 - **Precondition:** Mahasiswa telah mengajukan SK Penelitian
 - **Summary:** Sekretariat memeriksa setiap berkas satu per satu. Jika semua berkas lengkap dan valid, Sekretariat menerbitkan SK. Jika ada berkas yang kurang atau tidak sesuai, Sekretariat mengembalikan pengajuan ke mahasiswa.
 - **Postcondition:** SK Penelitian diterbitkan, atau mahasiswa diminta melengkapi berkas.
 
 ### UC-03: Melengkapi Berkas SK Penelitian
+
 - **Actor:** Mahasiswa
 - **Precondition:** Sekretariat mengembalikan pengajuan dengan catatan revisi
 - **Summary:** Mahasiswa mengunggah ulang hanya berkas yang diminta oleh Sekretariat, kemudian mengajukan kembali.
@@ -314,6 +967,7 @@ END
 ## Activity Diagrams
 
 ### UC-KS-01: Memulai Konsultasi Skripsi
+
 **Swimlanes:** Mahasiswa | Sistem Skripsi
 
 START
@@ -339,6 +993,7 @@ START
 END
 
 ### UC-KS-02: Mengumpulkan Berkas Bab
+
 **Swimlanes:** Mahasiswa | Sistem Skripsi
 
 START
@@ -363,6 +1018,7 @@ START
 END
 
 ### UC-KS-03: Mereview Berkas Bab
+
 **Swimlanes:** Dosen Pembimbing | Sistem Skripsi
 
 START
@@ -404,6 +1060,7 @@ START
 END
 
 ### UC-KS-04: Mengunduh Kartu Penulisan Skripsi
+
 **Swimlanes:** Mahasiswa / Dosen Pembimbing / Kaprodi | Sistem Skripsi
 
 START
@@ -418,6 +1075,7 @@ START
 → Tidak: [Sistem] Menampilkan pesan gagal → END
 
 ### UC-KS-05: Memantau Konsultasi Skripsi
+
 **Swimlanes:** Kaprodi | Sistem Skripsi
 
 START
@@ -434,6 +1092,7 @@ END
 ## Activity Diagrams
 
 ### UC-PS-01: Mengajukan Berkas Sidang ke Kaprodi
+
 **Swimlanes:** Mahasiswa | Sistem Skripsi
 
 START
@@ -489,6 +1148,7 @@ START
 END
 
 ### UC-PS-02: Memverifikasi Berkas Sidang oleh Kaprodi
+
 **Swimlanes:** Kaprodi | Sistem Skripsi
 
 START
@@ -524,6 +1184,7 @@ START
 END
 
 ### UC-PS-03: Mengajukan Berkas Sidang ke Sekretariat
+
 **Swimlanes:** Mahasiswa | Sistem Skripsi
 
 START
@@ -568,6 +1229,7 @@ START
 END
 
 ### UC-PS-04: Memverifikasi Berkas Sidang oleh Sekretariat
+
 **Swimlanes:** Sekretariat | Sistem Skripsi
 
 START
@@ -603,6 +1265,7 @@ START
 END
 
 ### UC-PS-05: Mengirim Disposisi
+
 **Swimlanes:** Kaprodi | Sistem Skripsi
 
 START
@@ -630,6 +1293,7 @@ START
 END
 
 ### UC-PS-06: Menerbitkan Surat Undangan Sidang
+
 **Swimlanes:** Sekretariat | Sistem Skripsi
 
 START
@@ -654,6 +1318,7 @@ END
 ## Sequence Diagrams
 
 ### UC-PS-01: Mengajukan Berkas Sidang ke Kaprodi
+
 **Lifelines:** Mahasiswa | Halaman Pengajuan Sidang | Database
 
 Mahasiswa → Halaman Pengajuan Sidang: Membuka halaman Pengajuan Sidang
@@ -714,6 +1379,7 @@ END
 ---
 
 ### UC-PS-02: Memverifikasi Berkas Sidang oleh Kaprodi
+
 **Lifelines:** Kaprodi | Halaman Daftar Pengajuan Sidang | Halaman Detail Pengajuan Sidang | Database
 
 Kaprodi → Halaman Daftar Pengajuan Sidang: Membuka halaman daftar pengajuan sidang
@@ -764,6 +1430,7 @@ END
 ---
 
 ### UC-PS-03: Mengajukan Berkas Sidang ke Sekretariat
+
 **Lifelines:** Mahasiswa | Halaman Pengajuan Sidang | Database
 
 Mahasiswa → Halaman Pengajuan Sidang: Membuka halaman Pengajuan Sidang
@@ -805,6 +1472,7 @@ END
 ---
 
 ### UC-PS-04: Memverifikasi Berkas Sidang oleh Sekretariat
+
 **Lifelines:** Sekretariat | Halaman Daftar Pengajuan Sidang | Halaman Detail Pengajuan Sidang | Database
 
 Sekretariat → Halaman Daftar Pengajuan Sidang: Membuka halaman daftar pengajuan sidang
@@ -853,6 +1521,7 @@ END
 ---
 
 ### UC-PS-05: Mengirim Disposisi
+
 **Lifelines:** Kaprodi | Halaman Daftar Pengajuan Sidang | Halaman Disposisi | Database
 
 Kaprodi → Halaman Daftar Pengajuan Sidang: Membuka halaman daftar pengajuan sidang
@@ -887,6 +1556,7 @@ END
 ---
 
 ### UC-PS-06: Menerbitkan Surat Undangan Sidang
+
 **Lifelines:** Sekretariat | Halaman Disposisi Sidang | Database
 
 Sekretariat → Halaman Disposisi Sidang: Membuka halaman disposisi sidang
@@ -907,21 +1577,24 @@ END
 ## Activity Diagrams
 
 ### UC-01: Mengajukan SK Penelitian
+
 **Swimlanes:** Mahasiswa | Sistem Skripsi
 
 START
 
 [Mahasiswa] Membuka halaman SK Penelitian
 [Sistem] Memeriksa prasyarat pengajuan
+
 - Jika belum terpenuhi: tampilkan pesan prasyarat belum terpenuhi → END
 - Jika terpenuhi: lanjut
-[Mahasiswa] Mengajukan SK Penelitian
-[Sistem] Mengumpulkan berkas dari pengajuan sebelumnya secara otomatis
-[Sistem] Mengirim pengajuan ke Sekretariat → END
+  [Mahasiswa] Mengajukan SK Penelitian
+  [Sistem] Mengumpulkan berkas dari pengajuan sebelumnya secara otomatis
+  [Sistem] Mengirim pengajuan ke Sekretariat → END
 
 ---
 
 ### UC-02: Memverifikasi Berkas SK Penelitian
+
 **Swimlanes:** Sekretariat | Sistem Skripsi
 
 START
@@ -940,6 +1613,7 @@ START
 ---
 
 ### UC-03: Melengkapi Berkas SK Penelitian
+
 **Swimlanes:** Mahasiswa | Sistem Skripsi
 
 START
@@ -957,6 +1631,7 @@ END
 ## Sequence Diagrams
 
 ### UC-KS-01: Memulai Konsultasi Skripsi
+
 **Lifelines:** Mahasiswa | Halaman Konsultasi Skripsi | Database
 
 Mahasiswa → Halaman Konsultasi Skripsi: Membuka halaman Konsultasi Skripsi
@@ -987,6 +1662,7 @@ Halaman Konsultasi Skripsi → Mahasiswa: showSuccessMessage()
 END
 
 ### UC-KS-02: Mengumpulkan Berkas Bab
+
 **Lifelines:** Mahasiswa | Halaman Konsultasi Skripsi | Database
 
 Mahasiswa → Halaman Konsultasi Skripsi: Membuka halaman Konsultasi Skripsi
@@ -1017,6 +1693,7 @@ Halaman Konsultasi Skripsi → Mahasiswa: showSuccessMessage()
 END
 
 ### UC-KS-03: Mereview Berkas Bab
+
 **Lifelines:** Dospem | Halaman Daftar Konsultasi Skripsi | Halaman Detail Konsultasi Skripsi | Database
 
 Dospem → Halaman Daftar Konsultasi Skripsi: Membuka daftar konsultasi skripsi
@@ -1086,6 +1763,7 @@ Halaman Detail Konsultasi Skripsi → Dospem: showSuccessMessage()
 END
 
 ### UC-KS-04: Mengunduh Kartu Penulisan Skripsi
+
 **Lifelines:** Mahasiswa / Dospem / Kaprodi | Halaman Konsultasi Skripsi | Database
 
 Mahasiswa / Dospem / Kaprodi → Halaman Konsultasi Skripsi: Membuka halaman Konsultasi Skripsi
@@ -1107,6 +1785,7 @@ Halaman Konsultasi Skripsi → Mahasiswa / Dospem / Kaprodi: showSuccessMessage(
 END
 
 ### UC-KS-05: Memantau Konsultasi Skripsi
+
 **Lifelines:** Kaprodi | Halaman Daftar Konsultasi Skripsi | Halaman Detail Konsultasi Skripsi | Database
 
 Kaprodi → Halaman Daftar Konsultasi Skripsi: Membuka halaman daftar konsultasi skripsi
@@ -1127,6 +1806,7 @@ END
 ## Sequence Diagrams
 
 ### UC-01: Mengajukan SK Penelitian
+
 **Lifelines:** Mahasiswa | Halaman SK Penelitian | Database
 
 Mahasiswa → Halaman SK Penelitian: Membuka halaman SK Penelitian
@@ -1150,6 +1830,7 @@ END
 ---
 
 ### UC-02: Memverifikasi Berkas SK Penelitian
+
 **Lifelines:** Sekretariat | Halaman Daftar SK Penelitian | Halaman Detail SK Penelitian | Database
 
 Sekretariat → Halaman Daftar SK Penelitian: Membuka daftar pengajuan SK Penelitian
@@ -1182,6 +1863,7 @@ END
 ---
 
 ### UC-03: Melengkapi Berkas SK Penelitian
+
 **Lifelines:** Mahasiswa | Halaman SK Penelitian | Database
 
 Mahasiswa → Halaman SK Penelitian: Membuka halaman SK Penelitian
@@ -1208,6 +1890,7 @@ END
 ## Sequence Diagrams
 
 ### UC-SS-01: Memulai Sidang
+
 **Lifelines:** Pembimbing 1 | Halaman Daftar Sidang | Halaman Sidang | Database
 
 Pembimbing 1 → Halaman Daftar Sidang: Membuka halaman daftar sidang
@@ -1238,6 +1921,7 @@ END
 ---
 
 ### UC-SS-02: Mengisi Penilaian dan Notulen
+
 **Lifelines:** Dosen Peserta Sidang | Halaman Daftar Sidang | Halaman Sidang | Database
 
 Dosen Peserta Sidang → Halaman Daftar Sidang: Membuka halaman daftar sidang
@@ -1286,6 +1970,7 @@ END
 ---
 
 ### UC-SS-03: Menyimpan Hasil Penilaian Akhir
+
 **Lifelines:** Pembimbing 1 | Halaman Daftar Sidang | Halaman Sidang | Database
 
 Pembimbing 1 → Halaman Daftar Sidang: Membuka halaman daftar sidang
@@ -1317,6 +2002,7 @@ END
 ---
 
 ### UC-SS-04: Mengunduh Dokumen Sidang
+
 **Lifelines:** Aktor | Halaman Daftar Sidang | Halaman Sidang | Database
 
 Aktor → Halaman Daftar Sidang: Membuka halaman daftar sidang
@@ -1345,6 +2031,7 @@ END
 ---
 
 ### UC-SS-05: Memantau Sidang Skripsi
+
 **Lifelines:** Sekretariat / Kaprodi | Halaman Daftar Sidang | Halaman Detail Sidang | Database
 
 Sekretariat / Kaprodi → Halaman Daftar Sidang: Membuka halaman daftar sidang
