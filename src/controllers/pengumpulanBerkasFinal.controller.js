@@ -126,7 +126,7 @@ async function getUserIdByRole(conn, role) {
   return row?.id ?? null;
 }
 
-async function getPengajuanJudulRecord(conn, skripsiId) {
+async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
   const [[row]] = await conn.query(
     `SELECT sk.npm, sk.status as skripsi_status,
             s.id as sidang_id,

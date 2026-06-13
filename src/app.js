@@ -22,8 +22,8 @@ app.use("/auth", authRoutes);
 const outlineRoutes = require("./routes/outline.routes");
 app.use("/outlines", outlineRoutes);
 
-const titleSubmission = require("./routes/titleSubmission.routes");
-app.use("/title-submissions", titleSubmission);
+const pengajuanDisposisiPembimbing = require("./routes/pengajuanDisposisiPembimbing.routes");
+app.use("/pengajuan-disposisi-pembimbing", pengajuanDisposisiPembimbing);
 
 const dosenRoutes = require("./routes/dosen.routes");
 app.use("/dosen", dosenRoutes);

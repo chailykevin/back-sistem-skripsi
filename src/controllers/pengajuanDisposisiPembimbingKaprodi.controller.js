@@ -220,7 +220,7 @@ exports.listForKaprodi = async (req, res, next) => {
       const [fileRows] = await db.query(
         `SELECT pengajuan_disposisi_pembimbing_id, file_content, file_name
          FROM pengajuan_disposisi_pembimbing_file
-         WHERE file_type = 'PENGAJUAN_JUDUL'
+         WHERE file_type = 'PENGAJUAN_DISPOSISI_PEMBIMBING'
            AND pengajuan_disposisi_pembimbing_id IN (?)`,
         [ids],
       );
@@ -601,7 +601,7 @@ exports.review = async (req, res, next) => {
     await upsertFileByType(
       conn,
       id,
-      "PENGAJUAN_JUDUL",
+      "PENGAJUAN_DISPOSISI_PEMBIMBING",
       reviewFormulirBase64,
       "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
@@ -628,9 +628,9 @@ exports.review = async (req, res, next) => {
           APPROVED: "TITLE_APPROVED",
         };
         const msgMap = {
-          NEED_REVISION: "Pengajuan judul Anda memerlukan revisi",
-          REJECTED: "Pengajuan judul Anda ditolak",
-          APPROVED: "Pengajuan judul Anda disetujui",
+          NEED_REVISION: "Pengajuan disposisi pembimbing Anda memerlukan revisi",
+          REJECTED: "Pengajuan disposisi pembimbing Anda ditolak",
+          APPROVED: "Pengajuan disposisi pembimbing Anda disetujui",
         };
         await insertNotification(
           conn,

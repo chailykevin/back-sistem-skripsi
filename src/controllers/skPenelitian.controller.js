@@ -217,13 +217,13 @@ async function generateSkDocuments(conn, sk, outlineId) {
       status: 400,
     });
 
-  // Fetch pengajuan judul for perlu_surat_pengantar + nama_perusahaan
+  // Fetch pengajuan disposisi pembimbing for perlu_surat_pengantar + nama_perusahaan
   const [[pj]] = await conn.query(
     `SELECT perlu_surat_pengantar, nama_perusahaan FROM pengajuan_disposisi_pembimbing WHERE outline_id = ? LIMIT 1`,
     [outlineId],
   );
   if (!pj)
-    throw Object.assign(new Error("Pengajuan judul tidak ditemukan"), {
+    throw Object.assign(new Error("Pengajuan disposisi pembimbing tidak ditemukan"), {
       status: 400,
     });
 
@@ -591,7 +591,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
       txStarted = false;
       return res.status(400).json({
         ok: false,
-        message: "File KRS tidak ditemukan pada pengajuan judul",
+        message: "File KRS tidak ditemukan pada pengajuan disposisi pembimbing",
       });
     }
     const krsRow = krsRows[0];
@@ -685,7 +685,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
         .json({
           ok: false,
           message:
-            "File transkrip/rekap nilai tidak ditemukan pada pengajuan judul",
+            "File transkrip/rekap nilai tidak ditemukan pada pengajuan disposisi pembimbing",
         });
     }
     const rekapRow = rekapRows[0];

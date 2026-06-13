@@ -138,7 +138,7 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
   };
 
   const byType = {
-    PENGAJUAN_JUDUL: ["file_pengajuan_disposisi_pembimbing", "file_pengajuan_disposisi_pembimbing_name"],
+    PENGAJUAN_DISPOSISI_PEMBIMBING: ["file_pengajuan_disposisi_pembimbing", "file_pengajuan_disposisi_pembimbing_name"],
     TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
     KRS: ["file_krs", "file_krs_name"],
     METODOLOGI: ["file_metodologi", "file_metodologi_name"],
@@ -220,7 +220,7 @@ async function upsertFileByType(
   );
 }
 
-async function hydrateTitleSubmissionReadData(baseRow) {
+async function hydratePengajuanDisposisiPembimbingReadData(baseRow) {
   if (!baseRow?.id) return baseRow;
 
   const [syaratRows] = await db.query(
@@ -253,8 +253,8 @@ async function hydrateTitleSubmissionReadData(baseRow) {
   };
 }
 
-// Create Formulir Pengajuan Judul Skripsi
-exports.createTitleSubmission = async (req, res, next) => {
+// Create Formulir Pengajuan Disposisi Pembimbing Skripsi
+exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
   let conn;
   let txStarted = false;
   try {
@@ -307,7 +307,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     if (existing.length > 0) {
       return res.status(409).json({
         ok: false,
-        message: "Title submission already exists for this outline",
+        message: "Pengajuan disposisi pembimbing already exists for this outline",
         data: existing[0],
       });
     }
@@ -400,7 +400,7 @@ exports.createTitleSubmission = async (req, res, next) => {
     await upsertFileByType(
       conn,
       pengajuanDisposisiPembimbingId,
-      "PENGAJUAN_JUDUL",
+      "PENGAJUAN_DISPOSISI_PEMBIMBING",
       formulirBase64,
       "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
@@ -460,7 +460,7 @@ exports.createTitleSubmission = async (req, res, next) => {
         kaprodiUserRows[0].id,
         "TITLE_SUBMITTED",
         `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
-        "/kaprodi/proposal/title-submissions",
+        "/kaprodi/proposal/pengajuan-disposisi-pembimbing",
       );
     }
 
@@ -527,7 +527,7 @@ exports.getLatestMine = async (req, res, next) => {
     if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only students can access their latest title submission",
+        message: "Only students can access their latest pengajuan disposisi pembimbing",
       });
     }
 
@@ -568,11 +568,11 @@ exports.getLatestMine = async (req, res, next) => {
       return res.json({
         ok: true,
         data: null,
-        message: "Title submission not found",
+        message: "Pengajuan disposisi pembimbing not found",
       });
     }
 
-    const hydrated = await hydrateTitleSubmissionReadData(rows[0]);
+    const hydrated = await hydratePengajuanDisposisiPembimbingReadData(rows[0]);
     return res.json({ ok: true, data: hydrated });
   } catch (err) {
     next(err);
@@ -655,7 +655,7 @@ exports.getById = async (req, res, next) => {
         return res.status(404).json({ ok: false, message: "Not found" });
       }
 
-      const hydrated = await hydrateTitleSubmissionReadData(rows[0]);
+      const hydrated = await hydratePengajuanDisposisiPembimbingReadData(rows[0]);
       return res.json({ ok: true, data: hydrated });
     }
 
@@ -729,7 +729,7 @@ exports.getById = async (req, res, next) => {
         return res.status(404).json({ ok: false, message: "Not found" });
       }
 
-      const hydrated = await hydrateTitleSubmissionReadData(rows[0]);
+      const hydrated = await hydratePengajuanDisposisiPembimbingReadData(rows[0]);
       return res.json({ ok: true, data: hydrated });
     }
 
@@ -746,7 +746,7 @@ exports.resubmit = async (req, res, next) => {
     if (!req.user || !req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only students can resubmit title submissions",
+        message: "Only students can resubmit pengajuan disposisi pembimbing",
       });
     }
 
@@ -754,7 +754,7 @@ exports.resubmit = async (req, res, next) => {
     if (!Number.isFinite(id) || id <= 0) {
       return res
         .status(400)
-        .json({ ok: false, message: "Invalid title submission id" });
+        .json({ ok: false, message: "Invalid pengajuan disposisi pembimbing id" });
     }
 
     const {
@@ -897,7 +897,7 @@ exports.resubmit = async (req, res, next) => {
       txStarted = false;
       return res.status(404).json({
         ok: false,
-        message: "Title submission not found",
+        message: "Pengajuan disposisi pembimbing not found",
       });
     }
 
@@ -907,7 +907,7 @@ exports.resubmit = async (req, res, next) => {
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: "Title submission status is not eligible for resubmit",
+        message: "Pengajuan disposisi pembimbing status is not eligible for resubmit",
       });
     }
 
@@ -1026,7 +1026,7 @@ exports.resubmit = async (req, res, next) => {
     await upsertFileByType(
       conn,
       id,
-      "PENGAJUAN_JUDUL",
+      "PENGAJUAN_DISPOSISI_PEMBIMBING",
       resubFormulirBase64,
       "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
     );
@@ -1087,7 +1087,7 @@ exports.resubmit = async (req, res, next) => {
           resubKaprodiRows[0].id,
           "TITLE_RESUBMITTED",
           `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
-          "/kaprodi/proposal/title-submissions",
+          "/kaprodi/proposal/pengajuan-disposisi-pembimbing",
         );
       }
     }
@@ -1097,7 +1097,7 @@ exports.resubmit = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message: "Title submission resubmitted",
+      message: "Pengajuan disposisi pembimbing resubmitted",
     });
   } catch (err) {
     try {
