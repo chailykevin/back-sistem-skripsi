@@ -21,15 +21,15 @@ Halaman Sinkronisasi Data Mahasiswa → Database: upsertDataMahasiswa(daftarMaha
 
 Database → Halaman Sinkronisasi Data Mahasiswa: daftarMahasiswa
 
+alt [Gagal]
+
+Halaman Sinkronisasi Data Mahasiswa → Admin: showErrorMessage()
+
 alt [Sukses]
 
 Halaman Sinkronisasi Data Mahasiswa → Admin: viewHalamanSinkronisasiDataMahasiswa(daftarMahasiswa)
 
 Halaman Sinkronisasi Data Mahasiswa → Admin: showSuccessMessage()
-
-alt [Gagal]
-
-Halaman Sinkronisasi Data Mahasiswa → Admin: showErrorMessage()
 
 END
 
@@ -48,17 +48,17 @@ Halaman Sinkronisasi Data Dosen → Sistem Eksternal: syncDataDosen()
 
 Sistem Eksternal → Halaman Sinkronisasi Data Dosen: daftarDosen
 
-Halaman Sinkronisasi Data Dosen → Database: saveData(dataDosen)
+Halaman Sinkronisasi Data Dosen → Database: upsertDataDosen(daftarDosen)
+
+Database → Halaman Sinkronisasi Data Dosen: daftarDosen
 
 alt [Gagal]
-
-Database → Halaman Sinkronisasi Data Dosen: error
 
 Halaman Sinkronisasi Data Dosen → Admin: showErrorMessage()
 
 alt [Sukses]
 
-Database → Halaman Sinkronisasi Data Dosen: daftarDosen
+Halaman Sinkronisasi Data Dosen → Admin: viewHalamanSinkronisasiDataDosen(daftarDosen)
 
 Halaman Sinkronisasi Data Dosen → Admin: showSuccessMessage()
 
@@ -67,27 +67,27 @@ END
 ---
 
 ### UC-ADM-03: Mengelola Jadwal Pengajuan Outline
-**Lifelines:** User | Halaman Manajemen Periode Outline | Database
+**Lifelines:** Admin | Halaman Manajemen Periode Outline | Database
 
-User → Halaman Manajemen Periode Outline: Membuka halaman jadwal pengajuan outline
+Admin → Halaman Manajemen Periode Outline: Membuka halaman jadwal pengajuan outline
 
 Halaman Manajemen Periode Outline → Database: getDaftarPeriodePengajuanOutline()
 
 Database → Halaman Manajemen Periode Outline: daftarPeriode
 
-Halaman Manajemen Periode Outline → User: viewHalamanManajemenPeriodeOutline(daftarPeriode)
+Halaman Manajemen Periode Outline → Admin: viewHalamanManajemenPeriodeOutline(daftarPeriode)
 
 alt [Tambah periode baru]
 
-User → Halaman Manajemen Periode Outline: Menekan tombol Tambah Periode
+Admin → Halaman Manajemen Periode Outline: Menekan tombol Tambah Periode
 
-User → Halaman Manajemen Periode Outline: Mengisi tahun akademik, periode akademik, dibuka pada, ditutup pada
+Admin → Halaman Manajemen Periode Outline: Mengisi tahun akademik, periode akademik, dibuka pada, ditutup pada
 
 Halaman Manajemen Periode Outline → Halaman Manajemen Periode Outline: validateData()
 
 alt [Tidak Valid]
 
-Halaman Manajemen Periode Outline → User: showErrorMessage()
+Halaman Manajemen Periode Outline → Admin: showErrorMessage()
 
 alt [Valid]
 
@@ -95,19 +95,19 @@ Halaman Manajemen Periode Outline → Database: createPeriode(tahunAkademik, per
 
 Database → Halaman Manajemen Periode Outline: periodeId
 
-Halaman Manajemen Periode Outline → User: showSuccessMessage()
+Halaman Manajemen Periode Outline → Admin: showSuccessMessage()
 
 alt [Edit Periode]
 
-User → Halaman Manajemen Periode Outline: Menekan tombol Edit
+Admin → Halaman Manajemen Periode Outline: Menekan tombol Edit
 
-User → Halaman Manajemen Periode Outline: Mengubah field pada form
+Admin → Halaman Manajemen Periode Outline: Mengubah field pada form
 
 Halaman Manajemen Periode Outline → Halaman Manajemen Periode Outline: validateData()
 
 alt [Tidak Valid]
 
-Halaman Manajemen Periode Outline → User: showErrorMessage()
+Halaman Manajemen Periode Outline → Admin: showErrorMessage()
 
 alt [Valid]
 
@@ -115,25 +115,23 @@ Halaman Manajemen Periode Outline → Database: updatePeriode(periodeId, tahunAk
 
 Database → Halaman Manajemen Periode Outline: periodeId
 
-Halaman Manajemen Periode Outline → User: showSuccessMessage()
+Halaman Manajemen Periode Outline → Admin: showSuccessMessage()
 
 alt [Hapus periode]
 
-User → Halaman Manajemen Periode Outline: Menekan tombol Hapus
+Admin → Halaman Manajemen Periode Outline: Menekan tombol Hapus
 
 Halaman Manajemen Periode Outline → Database: deletePeriode(periodeId)
 
+Database → Halaman Manajemen Periode Outline: result
+
 alt [Periode sudah digunakan oleh pengajuan outline]
 
-Database → Halaman Manajemen Periode Outline: error
-
-Halaman Manajemen Periode Outline → User: showErrorMessage()
+Halaman Manajemen Periode Outline → Admin: showErrorMessage()
 
 alt [Sukses]
 
-Database → Halaman Manajemen Periode Outline: ok
-
-Halaman Manajemen Periode Outline → User: showSuccessMessage()
+Halaman Manajemen Periode Outline → Admin: showSuccessMessage()
 
 END
 
