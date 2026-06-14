@@ -317,7 +317,7 @@ alt [Tidak Valid]
 Halaman Detail Pengajuan Outline → Ketua Program Studi: showErrorMessage()
 
 alt [Valid]
-Halaman Detail Pengajuan Outline → Database: saveReview(status, komentar, fileReview)
+Halaman Detail Pengajuan Outline → Database: submitReviewPengajuanOutline(status, komentar, fileReview)
 Database → Halaman Detail Pengajuan Outline: judulOutline, statusPengajuan
 Halaman Detail Pengajuan Outline → Ketua Program Studi: showSuccessMessage()
 
