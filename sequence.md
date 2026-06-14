@@ -17,19 +17,19 @@ Halaman Sinkronisasi Data Mahasiswa → Sistem Eksternal: syncDataMahasiswa()
 
 Sistem Eksternal → Halaman Sinkronisasi Data Mahasiswa: daftarMahasiswa
 
-Halaman Sinkronisasi Data Mahasiswa → Database: saveData(dataMahasiswa)
-
-alt [Gagal]
-
-Database → Halaman Sinkronisasi Data Mahasiswa: error
-
-Halaman Sinkronisasi Data Mahasiswa → Admin: showErrorMessage()
-
-alt [Sukses]
+Halaman Sinkronisasi Data Mahasiswa → Database: upsertDataMahasiswa(daftarMahasiswa)
 
 Database → Halaman Sinkronisasi Data Mahasiswa: daftarMahasiswa
 
+alt [Sukses]
+
+Halaman Sinkronisasi Data Mahasiswa → Admin: viewHalamanSinkronisasiDataMahasiswa(daftarMahasiswa)
+
 Halaman Sinkronisasi Data Mahasiswa → Admin: showSuccessMessage()
+
+alt [Gagal]
+
+Halaman Sinkronisasi Data Mahasiswa → Admin: showErrorMessage()
 
 END
 
