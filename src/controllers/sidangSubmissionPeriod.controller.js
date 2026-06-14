@@ -225,6 +225,17 @@ exports.remove = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Sidang submission period not found" });
     }
 
+    const [[{ count: sidangCount }]] = await db.query(
+      `SELECT COUNT(*) AS count FROM pengajuan_sidang WHERE sidang_submission_period_id = ?`,
+      [id]
+    );
+    if (sidangCount > 0) {
+      return res.status(409).json({
+        ok: false,
+        message: `Tidak dapat menghapus periode ini karena sudah digunakan oleh ${sidangCount} pengajuan sidang.`,
+      });
+    }
+
     await db.query(`DELETE FROM sidang_submission_period WHERE id = ?`, [id]);
     return res.json({ ok: true, message: "Sidang submission period deleted" });
   } catch (err) {

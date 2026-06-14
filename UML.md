@@ -61,6 +61,833 @@ This section defines how Use Cases, Activity Diagrams, and Sequence Diagrams sho
 
 ## Use Cases
 
+### UC-PO-01: Mengajukan Outline
+
+- **Actor:** Mahasiswa
+- **Precondition:** Periode pengajuan outline sedang dibuka dan mahasiswa belum memiliki outline aktif
+- **Summary:** Mahasiswa mengajukan outline skripsi dengan mengunggah berkas outline. Sistem menyimpan pengajuan dan mengirimkannya ke Kaprodi untuk direview.
+- **Postcondition:** Pengajuan outline tersimpan dengan status SUBMITTED dan menunggu review Kaprodi.
+
+### UC-PO-02: Mengajukan Disposisi Pembimbing
+
+- **Actor:** Mahasiswa
+- **Precondition:** Mahasiswa belum memiliki pengajuan disposisi pembimbing yang aktif
+- **Summary:** Mahasiswa mengajukan disposisi pembimbing dengan mengisi data diri, judul skripsi, usulan calon pembimbing 1 dan 2, serta mengunggah berkas pendukung (KRS, transkrip, metodologi). Mahasiswa juga menandatangani formulir secara digital menggunakan tanda tangan yang tersimpan di akun. Sistem men-generate formulir pengajuan disposisi pembimbing secara otomatis dan mengirimkan pengajuan ke Kaprodi.
+- **Postcondition:** Pengajuan disposisi pembimbing tersimpan dengan status SUBMITTED dan menunggu review Kaprodi.
+
+### UC-PO-03: Mereview Pengajuan Disposisi Pembimbing
+
+- **Actor:** Kaprodi
+- **Precondition:** Mahasiswa telah mengajukan disposisi pembimbing (status SUBMITTED atau NEED_REVISION setelah resubmit)
+- **Summary:** Kaprodi memeriksa formulir dan berkas pendukung pengajuan disposisi pembimbing. Kaprodi memverifikasi kelengkapan syarat (transkrip, KRS, metodologi) lalu mengambil keputusan: menyetujui pengajuan (APPROVED), meminta revisi (NEED_REVISION), atau menolak (REJECTED). Kaprodi juga menetapkan dosen pembimbing 1 dan 2 yang definitif. Sistem men-generate ulang formulir pengajuan dengan hasil keputusan dan tanda tangan Kaprodi.
+- **Postcondition:** Status pengajuan diperbarui. Jika APPROVED, mahasiswa dapat melanjutkan ke konsultasi outline dengan dosen pembimbing yang telah ditetapkan.
+
+### UC-PO-04: Mereview Pengajuan Outline
+
+- **Actor:** Kaprodi
+- **Precondition:** Mahasiswa telah mengajukan outline (status SUBMITTED atau NEED_REVISION setelah resubmit)
+- **Summary:** Kaprodi memeriksa berkas outline yang diunggah mahasiswa dan mengambil keputusan: menerima outline (ACCEPTED), meminta revisi (NEED_REVISION), atau menolak (REJECTED).
+- **Postcondition:** Status pengajuan outline diperbarui. Jika ACCEPTED, mahasiswa dapat melanjutkan ke konsultasi outline.
+
+---
+
+## Activity Diagrams
+
+### UC-PO-01: Mengajukan Outline
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman pengajuan outline
+[Sistem] Mengecek status pengajuan outline mahasiswa
+
+[Decision 1] Status pengajuan?
+
+→ Menunggu review / disetujui: [Sistem] Menampilkan detail pengajuan outline → END
+
+→ Belum ada pengajuan / ditolak / perlu revisi: lanjut
+
+[Sistem] Menampilkan detail pengajuan outline dan tombol navigasi ke halaman submit pengajuan outline
+[Mahasiswa] Memilih tombol navigasi
+[Sistem] Menampilkan halaman submit pengajuan outline
+
+[Mahasiswa] Mengisi atau memperbarui data pengajuan outline (judul, latar belakang, file outline skripsi)
+[Mahasiswa] Mengirim pengajuan outline
+[Sistem] Memvalidasi data
+[Decision 2] Data valid?
+
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengirim pengajuan outline
+→ Valid: lanjut
+
+[Sistem] Menyimpan data pengajuan outline
+[Sistem] Menampilkan pesan sukses
+
+END
+
+### UC-PO-02: Mengajukan Disposisi Pembimbing
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman pengajuan disposisi pembimbing
+[Sistem] Mengecek status pengajuan outline mahasiswa
+
+[Decision 1] Status outline?
+
+→ Belum disetujui: [Sistem] Menampilkan pesan bahwa outline belum disetujui → END
+→ Disetujui: lanjut
+
+[Sistem] Mengecek status pengajuan disposisi pembimbing mahasiswa
+
+[Decision 2] Status pengajuan disposisi?
+
+→ Menunggu review / disetujui: [Sistem] Menampilkan detail pengajuan disposisi pembimbing → END
+
+→ Belum ada pengajuan / ditolak / perlu revisi: lanjut
+
+[Sistem] Menampilkan detail pengajuan disposisi pembimbing dan tombol navigasi ke halaman submit pengajuan disposisi pembimbing
+[Mahasiswa] Memilih tombol navigasi
+[Sistem] Menampilkan halaman submit pengajuan disposisi pembimbing
+
+[Mahasiswa] Mengisi atau memperbarui data pengajuan (nomor telepon, jumlah SKS, usulan dosen pembimbing pertama dan kedua, nama perusahaan (opsional), serta file transkrip nilai, KRS, bukti nilai Metodologi Penelitian minimal C, dan tanda tangan)
+[Mahasiswa] Mengirim pengajuan disposisi pembimbing
+[Sistem] Memvalidasi data
+[Decision 3] Data valid?
+
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengirim pengajuan disposisi pembimbing
+→ Valid: lanjut
+
+[Sistem] Menyimpan data pengajuan disposisi pembimbing
+[Sistem] Menampilkan pesan sukses
+
+END
+
+### UC-PO-03: Mereview Pengajuan Disposisi Pembimbing
+
+**Swimlanes:** Kaprodi | Sistem Skripsi
+
+START
+
+[Kaprodi] Membuka halaman daftar pengajuan disposisi pembimbing
+[Sistem] Menampilkan daftar pengajuan disposisi pembimbing beserta aksi yang dapat dilakukan pada tiap pengajuan
+
+[Decision 1] Status pengajuan disposisi pembimbing?
+
+→ Ditolak / sedang direvisi: [Sistem] Menampilkan tombol detail → [Kaprodi] Memilih tombol detail → [Sistem] Menampilkan detail pengajuan disposisi pembimbing → END
+
+→ Disetujui: lanjut ke blok Disetujui
+
+→ Menunggu review: lanjut ke blok Review
+
+[Blok Disetujui]
+[Sistem] Menampilkan pengajuan disposisi pembimbing dengan tombol detail dan download
+[Decision 2] Aksi yang dipilih?
+
+→ Detail: [Kaprodi] Memilih tombol detail → [Sistem] Menampilkan detail pengajuan disposisi pembimbing → END
+→ Download: [Kaprodi] Memilih tombol download → [Sistem] Mengirimkan file formulir disposisi pembimbing → END
+
+[Blok Review]
+[Sistem] Menampilkan pengajuan disposisi pembimbing dengan tombol review
+[Kaprodi] Memilih tombol review
+[Sistem] Menampilkan halaman detail pengajuan disposisi pembimbing dengan bagian review
+
+[Kaprodi] Melakukan review (memeriksa dokumen persyaratan, menetapkan dosen pembimbing, menentukan status, dan memberi komentar)
+[Decision 3] Status yang ditetapkan?
+
+→ Ditolak / perlu revisi: lanjut ke blok Kirim Review
+→ Disetujui: [Kaprodi] Mengunggah tanda tangan → lanjut ke blok Kirim Review
+
+[Blok Kirim Review]
+[Kaprodi] Mengirim hasil review
+[Sistem] Memvalidasi data
+[Decision 4] Data valid?
+
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengirim hasil review
+→ Valid: lanjut
+
+[Sistem] Menyimpan data pengajuan disposisi pembimbing
+[Sistem] Menampilkan pesan sukses
+
+END
+
+### UC-PO-04: Mereview Pengajuan Outline
+
+**Swimlanes:** Kaprodi | Sistem Skripsi
+
+START
+
+[Kaprodi] Membuka halaman daftar pengajuan outline
+[Sistem] Menampilkan daftar pengajuan outline beserta aksi yang dapat dilakukan pada tiap pengajuan
+
+[Decision 1] Status pengajuan outline?
+
+→ Disetujui / ditolak / sedang direvisi: [Sistem] Menampilkan tombol detail → [Kaprodi] Memilih tombol detail → [Sistem] Menampilkan detail pengajuan outline → END
+
+→ Menunggu review: lanjut
+
+[Sistem] Menampilkan pengajuan outline dengan tombol review
+[Kaprodi] Memilih tombol review
+[Sistem] Menampilkan halaman detail pengajuan outline dengan bagian review
+
+[Kaprodi] Melakukan review (menentukan status, memberi komentar, dan opsional mengunggah file hasil review)
+[Kaprodi] Mengirim hasil review
+[Sistem] Memvalidasi data
+[Decision 2] Data valid?
+
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengirim hasil review
+→ Valid: lanjut
+
+[Sistem] Menyimpan hasil review pengajuan outline
+[Sistem] Menampilkan pesan sukses
+
+END
+
+---
+
+## Sequence Diagrams
+
+### UC-PO-01: Mengajukan Outline Skripsi
+**Lifelines:** Mahasiswa | Halaman Pengajuan Outline | Halaman Submit Pengajuan Outline | Database
+
+Mahasiswa → Halaman Pengajuan Outline: Membuka halaman pengajuan outline
+
+Halaman Pengajuan Outline → Database: getPengajuanOutline(mahasiswa_id)
+
+Database → Halaman Pengajuan Outline: judulOutline, latarBelakangOutline, statusPengajuan, catatanKaprodi, fileOutline, fileReviewKaprodi
+
+alt [Status Pengajuan Outline adalah Menunggu Review/Disetujui]
+
+Halaman Pengajuan Outline → Mahasiswa: viewHalamanPengajuanOutline(false)
+
+alt [Status Pengajuan Outline adalah Belum ada/Ditolak/Perlu revisi]
+
+Halaman Pengajuan Outline → Mahasiswa: viewHalamanPengajuanOutline(true)
+
+Mahasiswa → Halaman Pengajuan Outline: Memilih tombol navigasi
+
+Halaman Pengajuan Outline → Halaman Submit Pengajuan Outline: navigateToHalamanSubmitPengajuanOutline()
+
+Halaman Submit Pengajuan Outline → Mahasiswa: viewHalamanSubmitPengajuanOutline()
+
+Mahasiswa → Halaman Submit Pengajuan Outline: Mengisi/memperbarui judul, latar belakang, dan mengunggah file outline
+
+Mahasiswa → Halaman Submit Pengajuan Outline: submitOutline(judul, latarBelakang, fileOutline)
+
+Halaman Submit Pengajuan Outline → Halaman Submit Pengajuan Outline: validateData()
+
+alt [Tidak Valid]
+
+Halaman Submit Pengajuan Outline → Mahasiswa: showErrorMessage() → END
+
+alt [Valid]
+
+Halaman Submit Pengajuan Outline → Database: saveData(judul, latarBelakang, fileOutline)
+
+Database → Halaman Submit Pengajuan Outline: judulOutline, latarBelakangOutline, statusPengajuan
+
+Halaman Submit Pengajuan Outline → Mahasiswa: showSuccessMessage()
+
+END
+
+### UC-PO-03: Mereview Pengajuan Outline
+**Lifelines:** Ketua Program Studi | Halaman Daftar Pengajuan Outline | Halaman Detail Pengajuan Outline | Database
+
+Ketua Program Studi → Halaman Daftar Pengajuan Outline: Membuka halaman daftar pengajuan outline
+Halaman Daftar Pengajuan Outline → Database: getPengajuanOutline()
+Database → Halaman Daftar Pengajuan Outline: daftarPengajuanOutline
+Halaman Daftar Pengajuan Outline → Ketua Program Studi: viewHalamanDaftarPengajuanOutline()
+
+alt [Memilih Tombol Detail]
+Ketua Program Studi → Halaman Daftar Pengajuan Outline: Memilih tombol detail
+Halaman Daftar Pengajuan Outline → Halaman Detail Pengajuan Outline: navigateToHalamanDetailPengajuanOutline(pengajuanId)
+Halaman Detail Pengajuan Outline → Database: getPengajuanOutlineDetail(pengajuanId)
+Database → Halaman Detail Pengajuan Outline: judulOutline, latarBelakangOutline, fileOutline, statusPengajuan
+
+alt [canReview = false]
+Halaman Detail Pengajuan Outline → Ketua Program Studi: viewHalamanDetailPengajuanOutline(false)
+
+alt [canReview = true]
+Halaman Detail Pengajuan Outline → Ketua Program Studi: viewHalamanDetailPengajuanOutline(true)
+Ketua Program Studi → Halaman Detail Pengajuan Outline: Melakukan review dengan menentukan status, memberi komentar, dan secara opsional mengunggah file hasil review
+Ketua Program Studi → Halaman Detail Pengajuan Outline: submitReview(status, komentar, fileReview)
+Halaman Detail Pengajuan Outline → Halaman Detail Pengajuan Outline: validateData()
+
+alt [Tidak Valid]
+Halaman Detail Pengajuan Outline → Ketua Program Studi: showErrorMessage()
+
+alt [Valid]
+Halaman Detail Pengajuan Outline → Database: saveReview(status, komentar, fileReview)
+Database → Halaman Detail Pengajuan Outline: judulOutline, statusPengajuan
+Halaman Detail Pengajuan Outline → Ketua Program Studi: showSuccessMessage()
+
+alt [Memilih Tombol Review]
+Ketua Program Studi → Halaman Daftar Pengajuan Outline: Memilih tombol review
+Halaman Daftar Pengajuan Outline → Halaman Detail Pengajuan Outline: navigateToHalamanDetailPengajuanOutline(pengajuanId, canReview=true)
+
+END
+
+### UC-PO-02: Pengajuan Disposisi Pembimbing
+**Lifelines:** Mahasiswa | Halaman Pengajuan Disposisi Pembimbing | Halaman Submit Pengajuan Disposisi Pembimbing | Database
+
+Mahasiswa → Halaman Pengajuan Disposisi Pembimbing: Membuka halaman pengajuan disposisi pembimbing
+
+Halaman Pengajuan Disposisi Pembimbing → Database: getPengajuanOutline(mahasiswa_id)
+
+Database → Halaman Pengajuan Disposisi Pembimbing: statusOutline
+
+alt [Status Pengajuan Outline adalah Belum Disetujui]
+
+Halaman Pengajuan Disposisi Pembimbing → Mahasiswa: showErrorMessage()
+
+alt [Status Pengajuan Outline adalah Disetujui]
+
+Halaman Pengajuan Disposisi Pembimbing → Database: getPengajuanDisposisiPembimbing(mahasiswa_id)
+
+Database → Halaman Pengajuan Disposisi Pembimbing: judulOutline, pembimbing1Diajukan, pembimbing2Diajukan, pembimbing1Ditetapkan, pembimbing2Ditetapkan, statusPengajuan, catatanKaprodi
+
+alt [Status Pengajuan Disposisi Pembimbing adalah Disetujui]
+
+Halaman Pengajuan Disposisi Pembimbing → Mahasiswa: viewHalamanPengajuanDisposisiPembimbing(false)
+
+alt [Status Pengajuan Disposisi Pembimbing adalah Belum ada/Ditolak/Perlu revisi]
+
+Halaman Pengajuan Disposisi Pembimbing → Mahasiswa: viewHalamanPengajuanDisposisiPembimbing(true)
+
+Mahasiswa → Halaman Pengajuan Disposisi Pembimbing: Memilih tombol navigasi
+
+Halaman Pengajuan Disposisi Pembimbing → Halaman Submit Pengajuan Disposisi Pembimbing: navigateToHalamanSubmitPengajuanDisposisiPembimbing()
+
+Halaman Submit Pengajuan Disposisi Pembimbing → Mahasiswa: viewHalamanSubmitPengajuanDisposisiPembimbing()
+
+Mahasiswa → Halaman Submit Pengajuan Disposisi Pembimbing: Mengisi/memperbarui data pengajuan meliputi nomor telepon, jumlah SKS, usulan dosen pembimbing, nama perusahaan (opsional), serta mengunggah file transkrip nilai, KRS, bukti nilai Metodologi Penelitian minimal C, dan tanda tangan
+
+Mahasiswa → Halaman Submit Pengajuan Disposisi Pembimbing: submitPengajuanDisposisiPembimbing(nomorTelepon, sks, dosenPembimbing1, dosenPembimbing2, namaPerusahaan, fileTranskrip, fileKRS, fileMetpen, fileTandaTangan)
+
+Halaman Submit Pengajuan Disposisi Pembimbing → Halaman Submit Pengajuan Disposisi Pembimbing: validateData()
+
+alt [Tidak Valid]
+
+Halaman Submit Pengajuan Disposisi Pembimbing → Mahasiswa: showErrorMessage()
+
+alt [Valid]
+
+Halaman Submit Pengajuan Disposisi Pembimbing → Database: saveData()
+
+Database → Halaman Submit Pengajuan Disposisi Pembimbing: judulOutline, statusPengajuan
+
+Halaman Submit Pengajuan Disposisi Pembimbing → Mahasiswa: showSuccessMessage()
+
+END
+
+### UC-PO-04: Mereview Pengajuan Disposisi Pembimbing
+**Lifelines:** Ketua Program Studi | Halaman Daftar Pengajuan Disposisi Pembimbing | Halaman Detail Pengajuan Disposisi Pembimbing | Database
+
+Ketua Program Studi → Halaman Daftar Pengajuan Disposisi Pembimbing: Membuka halaman daftar pengajuan disposisi pembimbing
+
+Halaman Daftar Pengajuan Disposisi Pembimbing → Database: getPengajuanDisposisiPembimbing()
+
+Database → Halaman Daftar Pengajuan Disposisi Pembimbing: daftarPengajuanDisposisiPembimbing
+
+Halaman Daftar Pengajuan Disposisi Pembimbing → Ketua Program Studi: viewHalamanDaftarPengajuanDisposisiPembimbing()
+
+alt [Memilih Tombol Detail]
+
+Ketua Program Studi → Halaman Daftar Pengajuan Disposisi Pembimbing: Memilih tombol detail
+
+Halaman Daftar Pengajuan Disposisi Pembimbing → Halaman Detail Pengajuan Disposisi Pembimbing: navigateToHalamanDetailPengajuanDisposisiPembimbing(pengajuanId)
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Database: getPengajuanDisposisiPembimbingDetail(pengajuanId)
+
+Database → Halaman Detail Pengajuan Disposisi Pembimbing: judulOutline, pembimbing1Diajukan, pembimbing2Diajukan, pembimbing1Ditetapkan, pembimbing2Ditetapkan, fileKRS, fileTranskrip, fileMetodologi, statusPengajuan, catatanKaprodi
+
+alt [canReview = false]
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: viewHalamanDetailPengajuanDisposisiPembimbing(false)
+
+alt [canReview = true]
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: viewHalamanDetailPengajuanDisposisiPembimbing(true)
+
+Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: Melakukan review dengan memeriksa dokumen persyaratan, menetapkan dosen, menentukan status, dan memberi komentar
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Halaman Detail Pengajuan Disposisi Pembimbing: validateData()
+
+alt [Tidak Valid]
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: showErrorMessage()
+
+alt [Valid]
+
+alt [Status Disetujui]
+
+Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: Mengunggah tanda tangan
+
+Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: submitReview(status, komentar, dosenPembimbing1, dosenPembimbing2, fileTandaTangan)
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Database: saveReview(status, komentar)
+
+Database → Halaman Detail Pengajuan Disposisi Pembimbing: judulOutline, statusPengajuan
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: showSuccessMessage()
+
+alt [Status Ditolak/Perlu Revisi]
+
+Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: submitReview(status, komentar, dosenPembimbing1, dosenPembimbing2)
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Database: saveReview(status, komentar)
+
+Database → Halaman Detail Pengajuan Disposisi Pembimbing: judulOutline, statusPengajuan
+
+Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: showSuccessMessage()
+
+alt [Memilih Tombol Download]
+
+Ketua Program Studi → Halaman Daftar Pengajuan Disposisi Pembimbing: Memilih tombol download
+
+Halaman Daftar Pengajuan Disposisi Pembimbing → Database: downloadFormulir(pengajuanId)
+
+Database → Halaman Daftar Pengajuan Disposisi Pembimbing: fileFormulir
+
+Halaman Daftar Pengajuan Disposisi Pembimbing → Ketua Program Studi: Mengirimkan file formulir
+
+Ketua Program Studi → Ketua Program Studi: Mengunduh file formulir
+
+alt [Memilih Tombol Review]
+
+Ketua Program Studi → Halaman Daftar Pengajuan Disposisi Pembimbing: Memilih tombol review
+
+Halaman Daftar Pengajuan Disposisi Pembimbing → Halaman Detail Pengajuan Disposisi Pembimbing: navigateToHalamanDetailPengajuanDisposisiPembimbing(pengajuanId, canReview=true)
+
+END
+
+### UC-ADM-01: Mengelola Data Mahasiswa
+**Lifelines:** Admin | Halaman Sinkronisasi Data Mahasiswa | Sistem Eksternal | Database
+
+Admin → Halaman Sinkronisasi Data Mahasiswa: Membuka halaman sinkronisasi data mahasiswa
+
+Halaman Sinkronisasi Data Mahasiswa → Admin: viewHalamanSinkronisasiDataMahasiswa()
+
+Admin → Halaman Sinkronisasi Data Mahasiswa: Memilih tombol sinkronisasi
+
+Halaman Sinkronisasi Data Mahasiswa → Sistem Eksternal: syncDataMahasiswa()
+
+Sistem Eksternal → Halaman Sinkronisasi Data Mahasiswa: daftarMahasiswa
+
+Halaman Sinkronisasi Data Mahasiswa → Database: saveData(dataMahasiswa)
+
+alt [Gagal]
+
+Database → Halaman Sinkronisasi Data Mahasiswa: error
+
+Halaman Sinkronisasi Data Mahasiswa → Admin: showErrorMessage()
+
+alt [Sukses]
+
+Database → Halaman Sinkronisasi Data Mahasiswa: daftarMahasiswa
+
+Halaman Sinkronisasi Data Mahasiswa → Admin: showSuccessMessage()
+
+END
+
+### UC-ADM-02: Mengelola Data Dosen
+**Lifelines:** Admin | Halaman Sinkronisasi Data Dosen | Sistem Eksternal | Database
+
+Admin → Halaman Sinkronisasi Data Dosen: Membuka halaman sinkronisasi data dosen
+
+Halaman Sinkronisasi Data Dosen → Admin: viewHalamanSinkronisasiDataDosen()
+
+Admin → Halaman Sinkronisasi Data Dosen: Memilih tombol sinkronisasi
+
+Halaman Sinkronisasi Data Dosen → Sistem Eksternal: syncDataDosen()
+
+Sistem Eksternal → Halaman Sinkronisasi Data Dosen: daftarDosen
+
+Halaman Sinkronisasi Data Dosen → Database: saveData(dataDosen)
+
+alt [Gagal]
+
+Database → Halaman Sinkronisasi Data Dosen: error
+
+Halaman Sinkronisasi Data Dosen → Admin: showErrorMessage()
+
+alt [Sukses]
+
+Database → Halaman Sinkronisasi Data Dosen: daftarDosen
+
+Halaman Sinkronisasi Data Dosen → Admin: showSuccessMessage()
+
+END
+
+---
+
+## Activity Diagrams
+
+### UC-KO-01: Mengajukan Konsultasi Outline dengan Dosen Pembimbing
+
+**Swimlanes:** Mahasiswa | Sistem Skripsi
+
+START
+
+[Mahasiswa] Membuka halaman konsultasi outline
+[Sistem] Menampilkan halaman konsultasi outline
+
+[Mahasiswa] Melihat detail outline
+[Sistem] Menampilkan halaman detail konsultasi
+
+[Mahasiswa] Mengunggah file outline
+[Sistem] Memvalidasi file
+[Decision 1] File valid?
+
+→ Tidak Valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengunggah file outline
+→ Valid: lanjut
+
+[Sistem] Menyimpan file dan mengubah status menjadi DIAJUKAN
+[Sistem] Menampilkan pesan sukses
+
+END
+
+### UC-KO-02: Mengunduh Kartu Konsultasi Outline
+
+**Swimlanes:** User | Sistem Skripsi
+
+START
+
+[User] Membuka halaman detail konsultasi outline
+[Sistem] Menampilkan halaman detail konsultasi outline
+
+[User] Memilih tombol unduh pada halaman detail konsultasi outline
+[Sistem] Memproses unduhan dokumen
+[Decision 1] Hasil proses unduhan?
+
+→ Gagal: [Sistem] Menampilkan pesan gagal → END
+→ Sukses: lanjut
+
+[Sistem] Mengunduh file ke perangkat pengguna
+[User] Menerima file dokumen
+
+END
+
+### UC-KO-03: Memantau Konsultasi Outline
+
+**Swimlanes:** Kaprodi | Sistem Skripsi
+
+START
+
+[Kaprodi] Membuka halaman pemantauan konsultasi outline
+[Sistem] Menampilkan daftar konsultasi outline seluruh mahasiswa
+
+[Kaprodi] Memilih konsultasi outline mahasiswa
+[Sistem] Menampilkan detail konsultasi outline mahasiswa beserta status tahapan dan riwayat review
+
+END
+
+### UC-KO-04: Mereview Outline Mahasiswa
+
+**Swimlanes:** Dosen Pembimbing | Sistem Skripsi
+
+START
+
+[Dosen Pembimbing] Membuka halaman review outline mahasiswa
+[Sistem] Mengecek status tahapan outline mahasiswa bimbingan
+
+[Decision 1] Ada yang perlu direview?
+
+→ Tidak ada: [Sistem] Menampilkan pesan tidak ada outline yang perlu direview → END
+→ Ada: lanjut
+
+[Sistem] Menampilkan halaman review outline beserta file outline
+[Dosen Pembimbing] Melihat file outline
+[Dosen Pembimbing] Mengisi keputusan
+
+[Decision 2] Keputusan?
+
+→ Perlu revisi: lanjut ke blok Revisi
+→ Lanjut / Diterima: lanjut ke blok Lanjut
+
+[Blok Revisi]
+[Dosen Pembimbing] Mengisi catatan revisi
+[Dosen Pembimbing] Mengirim hasil review
+[Sistem] Memvalidasi data
+[Decision 3] Data valid?
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengisi keputusan
+→ Valid: [Sistem] Mengubah status tahapan outline → [Sistem] Menampilkan pesan sukses → END
+
+[Blok Lanjut]
+[Dosen Pembimbing] Mengisi catatan
+[Dosen Pembimbing] Mengunggah tanda tangan
+[Dosen Pembimbing] Mengirim hasil review
+[Sistem] Memvalidasi data
+[Decision 3] Data valid?
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Mengisi keputusan
+→ Valid: [Sistem] Mengubah status tahapan outline → [Sistem] Menampilkan pesan sukses → END
+
+END
+
+---
+
+## Use Cases
+
+### UC-KO-01: Mengajukan Konsultasi Outline dengan Dosen Pembimbing
+
+- **Actor:** Mahasiswa
+- **Precondition:** Outline telah diterima (status ACCEPTED) dan disposisi pembimbing telah disetujui (status APPROVED)
+- **Summary:** Mahasiswa menginisialisasi kartu konsultasi outline. Sistem membuat kartu baru dan membuka stage pertama (Pembimbing 2) secara otomatis. Mahasiswa kemudian mengunggah berkas outline untuk direview oleh pembimbing. Jika sebelumnya mendapat catatan revisi, mahasiswa mengunggah ulang berkas yang sudah diperbaiki.
+- **Postcondition:** Berkas outline terkirim ke pembimbing terkait untuk direview.
+
+### UC-KO-02: Mengunduh Kartu Konsultasi Outline
+
+- **Actor:** Mahasiswa, Dosen Pembimbing, Kaprodi
+- **Precondition:** Kartu konsultasi outline telah dibuat
+- **Summary:** Aktor mengunduh kartu konsultasi outline dalam format DOCX. Jika konsultasi belum selesai, yang tersedia adalah versi preview yang mencerminkan progres terkini. Jika konsultasi sudah selesai, yang tersedia adalah versi final yang telah tersimpan di sistem.
+- **Postcondition:** Berkas DOCX kartu konsultasi outline terunduh.
+
+### UC-KO-03: Memantau Konsultasi Outline
+
+- **Actor:** Kaprodi
+- **Precondition:** Terdapat mahasiswa di program studi Kaprodi yang sedang atau telah menjalani konsultasi outline
+- **Summary:** Kaprodi melihat daftar seluruh konsultasi outline di program studinya beserta status progres masing-masing. Kaprodi dapat membuka detail konsultasi milik mahasiswa tertentu untuk melihat riwayat pengumpulan dan review.
+- **Postcondition:** Kaprodi memperoleh informasi progres konsultasi outline mahasiswa.
+
+### UC-KO-04: Mereview Outline Mahasiswa
+
+- **Actor:** Dosen Pembimbing
+- **Precondition:** Mahasiswa telah mengunggah berkas outline pada stage milik dosen yang bersangkutan
+- **Summary:** Dosen memeriksa berkas outline yang diunggah mahasiswa dan memberikan keputusan. Pembimbing 2 memilih antara melanjutkan ke Pembimbing 1 (CONTINUE) atau meminta revisi (NEED_REVISION). Pembimbing 1 memilih antara menerima (ACCEPTED) atau meminta revisi (NEED_REVISION). Jika keputusan adalah CONTINUE atau ACCEPTED, tanda tangan dosen tersimpan otomatis ke kartu konsultasi.
+- **Postcondition:** Status stage diperbarui. Jika Pembimbing 1 menerima outline, konsultasi outline selesai dan kartu konsultasi outline di-generate otomatis. Halaman Persetujuan Judul Desain Skripsi juga di-generate otomatis apabila seluruh prasyarat terpenuhi.
+
+---
+
+## Sequence Diagrams
+
+### UC-KO-01: Konsultasi Outline
+**Lifelines:** Mahasiswa | Halaman Konsultasi Outline | Halaman Detail Konsultasi Outline | Database
+
+Mahasiswa → Halaman Konsultasi Outline: Membuka halaman konsultasi outline
+
+Halaman Konsultasi Outline → Database: getKonsultasiOutline()
+
+Database → Halaman Konsultasi Outline: judulOutline, tahapPengajuan, tanggalDibuat, statusKonsultasi
+
+Halaman Konsultasi Outline → Mahasiswa: viewHalamanKonsultasiOutline()
+
+Mahasiswa → Halaman Konsultasi Outline: Memilih tombol detail
+
+Halaman Konsultasi Outline → Halaman Detail Konsultasi Outline: navigateToHalamanDetailKonsultasiOutline(konsultasiId)
+
+Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(konsultasiId)
+
+Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
+
+alt [Status outline diajukan/sedang direview]
+
+Halaman Detail Konsultasi Outline → Mahasiswa: viewHalamanDetailKonsultasiOutline(false)
+
+alt [Status outline perlu revisi/belum diajukan]
+
+Halaman Detail Konsultasi Outline → Mahasiswa: viewHalamanDetailKonsultasiOutline(true)
+
+Mahasiswa → Halaman Detail Konsultasi Outline: submitFileOutline(konsultasiId, file)
+
+Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
+
+alt [Tidak valid]
+
+Halaman Detail Konsultasi Outline → Mahasiswa: showErrorMessage()
+
+alt [Valid]
+
+Halaman Detail Konsultasi Outline → Database: saveData()
+
+Database → Halaman Detail Konsultasi Outline: statusKonsultasi
+
+Halaman Detail Konsultasi Outline → Mahasiswa: showSuccessMessage()
+
+END
+
+### UC-KO-04a: Mereview Outline Mahasiswa (Dosen Pembimbing 2)
+**Lifelines:** Dosen Pembimbing | Halaman Daftar Konsultasi Outline | Halaman Detail Konsultasi Outline | Database
+
+Dosen Pembimbing → Halaman Daftar Konsultasi Outline: Membuka halaman konsultasi outline
+
+Halaman Daftar Konsultasi Outline → Database: getOutlineByPembimbing(nidn)
+
+Database → Halaman Daftar Konsultasi Outline: daftarOutlineMahasiswa
+
+Halaman Daftar Konsultasi Outline → Dosen Pembimbing: viewHalamanDaftarKonsultasiOutline()
+
+Dosen Pembimbing → Halaman Daftar Konsultasi Outline: Memilih tombol review
+
+Halaman Daftar Konsultasi Outline → Halaman Detail Konsultasi Outline: navigateToHalamanDetailKonsultasiOutline(outlineId)
+
+Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(outlineId)
+
+Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing: viewHalamanDetailKonsultasiOutline()
+
+alt [Status outline 'perlu revisi']
+
+Dosen Pembimbing → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan
+
+Dosen Pembimbing → Halaman Detail Konsultasi Outline: submitReview(outlineId, keputusan, catatan)
+
+Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
+
+alt [Tidak valid]
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing: showErrorMessage()
+
+alt [Valid]
+
+Halaman Detail Konsultasi Outline → Database: saveData()
+
+Database → Halaman Detail Konsultasi Outline: statusKonsultasi
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing: showSuccessMessage()
+
+alt [Status outline 'lanjut']
+
+Dosen Pembimbing → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan serta mengunggah tanda tangan
+
+Dosen Pembimbing → Halaman Detail Konsultasi Outline: submitReview(outlineId, keputusan, catatan, fileTandaTangan)
+
+Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
+
+alt [Tidak valid]
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing: showErrorMessage()
+
+alt [Valid]
+
+Halaman Detail Konsultasi Outline → Database: saveData()
+
+Database → Halaman Detail Konsultasi Outline: statusKonsultasi
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing: showSuccessMessage()
+
+END
+
+### UC-KO-04b: Mereview Outline Mahasiswa (Dosen Pembimbing 1)
+**Lifelines:** Dosen Pembimbing 1 | Halaman Daftar Konsultasi Outline | Halaman Detail Konsultasi Outline | Database
+
+Dosen Pembimbing 1 → Halaman Daftar Konsultasi Outline: Membuka halaman konsultasi outline
+
+Halaman Daftar Konsultasi Outline → Database: getOutlineByPembimbing(nidn)
+
+Database → Halaman Daftar Konsultasi Outline: daftarOutlineMahasiswa
+
+Halaman Daftar Konsultasi Outline → Dosen Pembimbing 1: viewHalamanDaftarKonsultasiOutline()
+
+Dosen Pembimbing 1 → Halaman Daftar Konsultasi Outline: Memilih tombol review
+
+Halaman Daftar Konsultasi Outline → Halaman Detail Konsultasi Outline: navigateToHalamanDetailKonsultasiOutline(outlineId)
+
+Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(outlineId)
+
+Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: viewHalamanDetailKonsultasiOutline()
+
+alt [Status outline 'perlu revisi']
+
+Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan
+
+Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: submitReview(outlineId, keputusan, catatan)
+
+Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
+
+alt [Tidak valid]
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showErrorMessage()
+
+alt [Valid]
+
+Halaman Detail Konsultasi Outline → Database: saveData()
+
+Database → Halaman Detail Konsultasi Outline: statusKonsultasi
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showSuccessMessage()
+
+alt [Status outline 'diterima']
+
+Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan serta mengunggah tanda tangan
+
+Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: submitReview(outlineId, keputusan, catatan, fileTandaTangan)
+
+Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
+
+alt [Tidak valid]
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showErrorMessage()
+
+alt [Valid]
+
+Halaman Detail Konsultasi Outline → Database: saveData()
+
+Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: generateKartuKonsultasi()
+
+Database → Halaman Detail Konsultasi Outline: statusKonsultasi, kartuKonsultasi
+
+Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showSuccessMessage()
+
+END
+
+### UC-KO-03: Pemantauan Konsultasi Outline (Kaprodi)
+**Lifelines:** Ketua Program Studi | Halaman Daftar Konsultasi Outline | Halaman Detail Konsultasi Outline | Database
+
+Ketua Program Studi → Halaman Daftar Konsultasi Outline: Membuka halaman konsultasi outline
+
+Halaman Daftar Konsultasi Outline → Database: getOutlineByProgramStudi(programStudiId)
+
+Database → Halaman Daftar Konsultasi Outline: daftarKonsultasiOutlineMahasiswa
+
+Halaman Daftar Konsultasi Outline → Ketua Program Studi: viewHalamanDaftarKonsultasiOutline()
+
+Ketua Program Studi → Halaman Daftar Konsultasi Outline: Memilih tombol detail
+
+Halaman Daftar Konsultasi Outline → Halaman Detail Konsultasi Outline: navigateToHalamanDetailKonsultasiOutline(outlineId)
+
+Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(outlineId)
+
+Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
+
+Halaman Detail Konsultasi Outline → Ketua Program Studi: viewHalamanDetailKonsultasiOutline()
+
+END
+
+### UC-KO-02: Mengunduh Dokumen Konsultasi Outline
+**Lifelines:** User | Halaman Detail Konsultasi Outline | Database
+
+User → Halaman Detail Konsultasi Outline: Membuka halaman detail konsultasi outline
+
+Halaman Detail Konsultasi Outline → Database: getDetailKonsultasi(konsultasiId)
+
+Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
+
+Halaman Detail Konsultasi Outline → User: viewHalamanDetailKonsultasiOutline()
+
+User → Halaman Detail Konsultasi Outline: Klik tombol unduh
+
+Halaman Detail Konsultasi Outline → Database: downloadKonsultasiOutline()
+
+Database → Halaman Detail Konsultasi Outline: kartuKonsultasiOutline
+
+alt [Sukses]
+
+Halaman Detail Konsultasi Outline → User: showSuccessMessage()
+
+alt [Gagal]
+
+Halaman Detail Konsultasi Outline → User: showErrorMessage()
+
+END
+
+---
+
+## Use Cases
+
 ### UC-KS-01: Memulai Konsultasi Skripsi
 
 - **Actor:** Mahasiswa
@@ -2044,5 +2871,299 @@ Halaman Daftar Sidang → Halaman Detail Sidang: navigateToHalamanDetailSidang(p
 Halaman Detail Sidang → Database: getSidang(pengajuanDisposisiPembimbingId)
 Database → Halaman Detail Sidang: sidangId, status, infoSidang, penilaian[], notulen[], hasilPenilaian
 Halaman Detail Sidang → Sekretariat / Kaprodi: viewHalamanDetailSidang(status, infoSidang, nilaiPeserta, hasilPenilaian)
+
+END
+
+---
+
+## Use Cases
+
+### UC-ADM-01: Mengelola Data Mahasiswa
+
+- **Actor:** Admin
+- **Precondition:** Admin telah login
+- **Summary:** Admin melakukan sinkronisasi data mahasiswa dari sistem eksternal. Sistem mengambil data terbaru dan menyimpannya ke dalam Sistem Skripsi secara otomatis.
+- **Postcondition:** Data mahasiswa di Sistem Skripsi diperbarui sesuai data dari sistem eksternal.
+
+### UC-ADM-02: Mengelola Data Dosen
+
+- **Actor:** Admin
+- **Precondition:** Admin telah login
+- **Summary:** Admin melakukan sinkronisasi data dosen dari sistem eksternal. Sistem mengambil data terbaru dan menyimpannya ke dalam Sistem Skripsi secara otomatis.
+- **Postcondition:** Data dosen di Sistem Skripsi diperbarui sesuai data dari sistem eksternal.
+
+---
+
+## Activity Diagrams
+
+### UC-ADM-01: Mengelola Data Mahasiswa
+
+**Swimlanes:** Admin | Sistem Skripsi
+
+START
+
+[Admin] Membuka halaman sinkronisasi data mahasiswa
+[Sistem] Menampilkan halaman sinkronisasi data mahasiswa
+
+[Admin] Memilih tombol sinkronisasi
+[Sistem] Melakukan sinkronisasi dengan sistem eksternal dan menyimpan data mahasiswa ke dalam Sistem Skripsi
+
+[Decision 1] Hasil sinkronisasi?
+
+→ Sukses: [Sistem] Menampilkan pesan sukses → END
+→ Gagal: [Sistem] Menampilkan pesan gagal → END
+
+### UC-ADM-02: Mengelola Data Dosen
+
+**Swimlanes:** Admin | Sistem Skripsi
+
+START
+
+[Admin] Membuka halaman sinkronisasi data dosen
+[Sistem] Menampilkan halaman sinkronisasi data dosen
+
+[Admin] Memilih tombol sinkronisasi
+[Sistem] Melakukan sinkronisasi dengan sistem eksternal dan menyimpan data dosen ke dalam Sistem Skripsi
+
+[Decision 1] Hasil sinkronisasi?
+
+→ Sukses: [Sistem] Menampilkan pesan sukses → END
+→ Gagal: [Sistem] Menampilkan pesan gagal → END
+
+---
+
+## Use Cases
+
+### UC-ADM-04: Mengelola Jadwal Pengajuan Sidang
+- **Actor:** Admin
+- **Precondition:** Admin telah login
+- **Summary:** Admin mengelola periode buka dan tutup pengajuan sidang skripsi. Admin dapat menambah periode baru, mengedit periode yang ada, atau menghapus periode. Setiap periode memiliki tahun akademik, periode akademik (GANJIL/GENAP), tanggal buka, dan tanggal tutup. Sistem menampilkan status aktif setiap periode (Sedang Buka / Sudah Tutup) secara otomatis berdasarkan waktu saat ini.
+- **Postcondition:** Daftar periode pengajuan sidang diperbarui sesuai aksi yang dilakukan Admin.
+
+---
+
+## Activity Diagrams
+
+### UC-ADM-04: Mengelola Jadwal Pengajuan Sidang
+**Swimlanes:** Admin | Sistem Skripsi
+
+START
+
+[Admin] Membuka halaman Manajemen Periode Pengajuan Sidang
+[Sistem] Menampilkan daftar periode beserta status masing-masing
+
+[Decision 1] Aksi yang dipilih?
+
+→ Tambah Periode Baru: lanjut ke blok Tambah
+→ Edit Periode: lanjut ke blok Edit
+→ Hapus Periode: lanjut ke blok Hapus
+
+[Blok Tambah]
+[Admin] Menekan tombol Tambah Periode
+[Sistem] Menampilkan form tambah periode
+[Admin] Mengisi form dan menekan tombol Simpan
+[Sistem] Memvalidasi input
+[Decision 2] Input valid?
+→ Tidak Valid: [Sistem] Menampilkan pesan validasi → kembali ke Admin mengisi form
+→ Valid: [Sistem] Menyimpan periode baru → END
+
+[Blok Edit]
+[Admin] Menekan tombol Edit pada salah satu periode
+[Sistem] Menampilkan form dengan data periode yang dipilih
+[Admin] Mengubah field yang ingin diperbarui dan menekan tombol Simpan
+[Sistem] Memvalidasi input
+[Decision 2] Input valid?
+→ Tidak Valid: [Sistem] Menampilkan pesan validasi → kembali ke Admin mengubah field
+→ Valid: [Sistem] Memperbarui data periode → END
+
+[Blok Hapus]
+[Admin] Menekan tombol Hapus pada salah satu periode
+[Sistem] Memeriksa apakah periode sudah digunakan oleh pengajuan sidang
+[Decision 2] Periode sudah digunakan?
+→ Ada: [Sistem] Menampilkan pesan periode tidak dapat dihapus → END
+→ Tidak Ada: [Sistem] Menghapus periode → END
+
+END
+
+---
+
+## Sequence Diagrams
+
+### UC-ADM-04: Mengelola Jadwal Pengajuan Sidang
+**Lifelines:** Admin | Halaman Manajemen Periode Pengajuan Sidang | Database
+
+Admin → Halaman Manajemen Periode Pengajuan Sidang: Membuka halaman Manajemen Periode Pengajuan Sidang
+Halaman Manajemen Periode Pengajuan Sidang → Database: getDaftarPeriodePengajuanSidang()
+Database → Halaman Manajemen Periode Pengajuan Sidang: daftarPeriode (id, tahunAkademik, periodeAkademik, openAt, closeAt, isOpenNow)
+Halaman Manajemen Periode Pengajuan Sidang → Admin: viewHalamanManajemenPeriode(daftarPeriode)
+
+alt [Tambah periode baru]
+Admin → Halaman Manajemen Periode Pengajuan Sidang: Menekan tombol Tambah Periode dan mengisi form (tahunAkademik, periodeAkademik, openAt, closeAt)
+Halaman Manajemen Periode Pengajuan Sidang → Halaman Manajemen Periode Pengajuan Sidang: validateData()
+
+alt [Tidak valid]
+Halaman Manajemen Periode Pengajuan Sidang → Admin: showErrorMessage() → END
+
+alt [Valid]
+Halaman Manajemen Periode Pengajuan Sidang → Database: createPeriode(tahunAkademik, periodeAkademik, openAt, closeAt)
+Database → Halaman Manajemen Periode Pengajuan Sidang: periodeId
+
+alt [Edit periode]
+Admin → Halaman Manajemen Periode Pengajuan Sidang: Menekan tombol Edit dan mengubah field pada form
+Halaman Manajemen Periode Pengajuan Sidang → Halaman Manajemen Periode Pengajuan Sidang: validateData()
+
+alt [Tidak valid]
+Halaman Manajemen Periode Pengajuan Sidang → Admin: showErrorMessage() → END
+
+alt [Valid]
+Halaman Manajemen Periode Pengajuan Sidang → Database: updatePeriode(periodeId, tahunAkademik?, periodeAkademik?, openAt, closeAt)
+Database → Halaman Manajemen Periode Pengajuan Sidang: periodeId
+
+alt [Hapus periode]
+Admin → Halaman Manajemen Periode Pengajuan Sidang: Menekan tombol Hapus
+Halaman Manajemen Periode Pengajuan Sidang → Admin: showDeleteConfirmation()
+Admin → Halaman Manajemen Periode Pengajuan Sidang: Mengkonfirmasi penghapusan
+Halaman Manajemen Periode Pengajuan Sidang → Database: deletePeriode(periodeId)
+
+alt [Periode sudah digunakan oleh pengajuan sidang]
+Database → Halaman Manajemen Periode Pengajuan Sidang: error (409)
+Halaman Manajemen Periode Pengajuan Sidang → Admin: showErrorMessage() → END
+
+alt [Berhasil]
+Database → Halaman Manajemen Periode Pengajuan Sidang: ok
+
+Halaman Manajemen Periode Pengajuan Sidang → Database: getDaftarPeriodePengajuanSidang()
+Database → Halaman Manajemen Periode Pengajuan Sidang: daftarPeriode (diperbarui)
+Halaman Manajemen Periode Pengajuan Sidang → Admin: viewHalamanManajemenPeriode(daftarPeriode)
+
+END
+
+---
+
+## Use Cases
+
+### UC-ADM-03: Mengelola Jadwal Pengajuan Outline
+- **Actor:** Admin
+- **Precondition:** Admin telah login
+- **Summary:** Admin mengelola periode buka dan tutup pengajuan outline skripsi. Admin dapat menambah periode baru, mengedit periode yang ada, atau menghapus periode. Setiap periode memiliki tahun akademik, periode akademik (GANJIL/GENAP), tanggal buka, dan tanggal tutup. Sistem menampilkan status aktif setiap periode (Sedang Buka / Sudah Tutup) secara otomatis berdasarkan waktu saat ini. Periode yang sudah digunakan oleh pengajuan outline tidak dapat dihapus.
+- **Postcondition:** Daftar periode pengajuan outline diperbarui sesuai aksi yang dilakukan Admin.
+
+---
+
+## Activity Diagrams
+
+### UC-ADM-03: Mengelola Jadwal Pengajuan Outline
+**Swimlanes:** Admin | Sistem Skripsi
+
+START
+
+[Admin] Membuka halaman jadwal pengumpulan outline
+[Sistem] Menampilkan daftar periode beserta status masing-masing
+
+[Decision 1] Aksi yang dipilih?
+
+→ Tambah Periode Baru: lanjut ke blok Tambah
+→ Edit Periode: lanjut ke blok Edit
+→ Hapus Periode: lanjut ke blok Hapus
+
+[Blok Tambah]
+[Admin] Menekan tombol Tambah Periode
+[Sistem] Menampilkan form tambah periode
+[Admin] Mengisi form dan menekan tombol Simpan
+[Sistem] Memvalidasi input
+[Decision 2] Input valid?
+→ Tidak Valid: [Sistem] Menampilkan pesan validasi → kembali ke Admin mengisi form
+→ Valid: [Sistem] Menyimpan periode baru → END
+
+[Blok Edit]
+[Admin] Menekan tombol Edit pada salah satu periode
+[Sistem] Menampilkan form dengan data periode yang dipilih
+[Admin] Mengubah field yang ingin diperbarui dan menekan tombol Simpan
+[Sistem] Memvalidasi input
+[Decision 2] Input valid?
+→ Tidak Valid: [Sistem] Menampilkan pesan validasi → kembali ke Admin mengubah field
+→ Valid: [Sistem] Memperbarui data periode → END
+
+[Blok Hapus]
+[Admin] Menekan tombol Hapus pada salah satu periode
+[Sistem] Memeriksa apakah periode sudah digunakan oleh pengajuan outline
+[Decision 2] Periode sudah digunakan?
+→ Ada: [Sistem] Menampilkan pesan periode tidak dapat dihapus → END
+→ Tidak Ada: [Sistem] Menghapus periode → END
+
+END
+
+---
+
+## Sequence Diagrams
+
+### UC-ADM-03: Mengelola Jadwal Pengajuan Outline
+**Lifelines:** User | Halaman Manajemen Periode Outline | Database
+
+User → Halaman Manajemen Periode Outline: Membuka halaman jadwal pengajuan outline
+
+Halaman Manajemen Periode Outline → Database: getDaftarPeriodePengajuanOutline()
+
+Database → Halaman Manajemen Periode Outline: daftarPeriode
+
+Halaman Manajemen Periode Outline → User: viewHalamanManajemenPeriodeOutline(daftarPeriode)
+
+alt [Tambah periode baru]
+
+User → Halaman Manajemen Periode Outline: Menekan tombol Tambah Periode
+
+User → Halaman Manajemen Periode Outline: Mengisi tahun akademik, periode akademik, dibuka pada, ditutup pada
+
+Halaman Manajemen Periode Outline → Halaman Manajemen Periode Outline: validateData()
+
+alt [Tidak Valid]
+
+Halaman Manajemen Periode Outline → User: showErrorMessage()
+
+alt [Valid]
+
+Halaman Manajemen Periode Outline → Database: createPeriode(tahunAkademik, periodeAkademik, openAt, closeAt)
+
+Database → Halaman Manajemen Periode Outline: periodeId
+
+Halaman Manajemen Periode Outline → User: showSuccessMessage()
+
+alt [Edit Periode]
+
+User → Halaman Manajemen Periode Outline: Menekan tombol Edit
+
+User → Halaman Manajemen Periode Outline: Mengubah field pada form
+
+Halaman Manajemen Periode Outline → Halaman Manajemen Periode Outline: validateData()
+
+alt [Tidak Valid]
+
+Halaman Manajemen Periode Outline → User: showErrorMessage()
+
+alt [Valid]
+
+Halaman Manajemen Periode Outline → Database: updatePeriode(periodeId, tahunAkademik, periodeAkademik, openAt, closeAt)
+
+Database → Halaman Manajemen Periode Outline: periodeId
+
+Halaman Manajemen Periode Outline → User: showSuccessMessage()
+
+alt [Hapus periode]
+
+User → Halaman Manajemen Periode Outline: Menekan tombol Hapus
+
+Halaman Manajemen Periode Outline → Database: deletePeriode(periodeId)
+
+alt [Periode sudah digunakan oleh pengajuan outline]
+
+Database → Halaman Manajemen Periode Outline: error
+
+Halaman Manajemen Periode Outline → User: showErrorMessage()
+
+alt [Sukses]
+
+Database → Halaman Manajemen Periode Outline: ok
+
+Halaman Manajemen Periode Outline → User: showSuccessMessage()
 
 END

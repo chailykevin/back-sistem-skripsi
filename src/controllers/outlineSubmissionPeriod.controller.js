@@ -225,6 +225,17 @@ exports.remove = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Outline submission period not found" });
     }
 
+    const [[{ count: outlineCount }]] = await db.query(
+      `SELECT COUNT(*) AS count FROM outline WHERE submission_period_id = ?`,
+      [id]
+    );
+    if (outlineCount > 0) {
+      return res.status(409).json({
+        ok: false,
+        message: `Tidak dapat menghapus periode ini karena sudah digunakan oleh ${outlineCount} pengajuan outline.`,
+      });
+    }
+
     await db.query(`DELETE FROM outline_submission_period WHERE id = ?`, [id]);
     return res.json({ ok: true, message: "Outline submission period deleted" });
   } catch (err) {
