@@ -225,7 +225,7 @@ Halaman Submit Pengajuan Outline → Mahasiswa: showErrorMessage() → END
 
 alt [Valid]
 
-Halaman Submit Pengajuan Outline → Database: saveData(judul, latarBelakang, fileOutline)
+Halaman Submit Pengajuan Outline → Database: submitPengajuanOutline(judul, latarBelakang, fileOutline)
 
 Database → Halaman Submit Pengajuan Outline: judulOutline, latarBelakangOutline, statusPengajuan
 
