@@ -280,7 +280,7 @@ Halaman Submit Pengajuan Disposisi Pembimbing → Mahasiswa: showErrorMessage()
 
 alt [Valid]
 
-Halaman Submit Pengajuan Disposisi Pembimbing → Database: saveData()
+Halaman Submit Pengajuan Disposisi Pembimbing → Database: submitPengajuanDisposisiPembimbing(nomorTelepon, sks, dosenPembimbing1, dosenPembimbing2, namaPerusahaan, fileTranskrip, fileKRS, fileMetpen, fileTandaTangan)
 
 Database → Halaman Submit Pengajuan Disposisi Pembimbing: judulOutline, statusPengajuan
 
