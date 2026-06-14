@@ -296,7 +296,7 @@ END
 Ketua Program Studi → Halaman Daftar Pengajuan Outline: Membuka halaman daftar pengajuan outline
 Halaman Daftar Pengajuan Outline → Database: getPengajuanOutline()
 Database → Halaman Daftar Pengajuan Outline: daftarPengajuanOutline
-Halaman Daftar Pengajuan Outline → Ketua Program Studi: viewHalamanDaftarPengajuanOutline()
+Halaman Daftar Pengajuan Outline → Ketua Program Studi: viewHalamanDaftarPengajuanOutline(daftarPengajuanOutline)
 
 alt [Memilih Tombol Detail]
 Ketua Program Studi → Halaman Daftar Pengajuan Outline: Memilih tombol detail
