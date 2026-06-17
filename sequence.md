@@ -338,7 +338,7 @@ Halaman Daftar Pengajuan Disposisi Pembimbing → Database: getPengajuanDisposis
 
 Database → Halaman Daftar Pengajuan Disposisi Pembimbing: daftarPengajuanDisposisiPembimbing
 
-Halaman Daftar Pengajuan Disposisi Pembimbing → Ketua Program Studi: viewHalamanDaftarPengajuanDisposisiPembimbing()
+Halaman Daftar Pengajuan Disposisi Pembimbing → Ketua Program Studi: viewHalamanDaftarPengajuanDisposisiPembimbing(daftarPengajuanDisposisiPembimbing)
 
 alt [Memilih Tombol Detail]
 
@@ -368,23 +368,9 @@ Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: showError
 
 alt [Valid]
 
-alt [Status Disetujui]
-
-Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: Mengunggah tanda tangan
-
-Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: submitReview(status, komentar, dosenPembimbing1, dosenPembimbing2, fileTandaTangan)
-
-Halaman Detail Pengajuan Disposisi Pembimbing → Database: saveReview(status, komentar)
-
-Database → Halaman Detail Pengajuan Disposisi Pembimbing: judulOutline, statusPengajuan
-
-Halaman Detail Pengajuan Disposisi Pembimbing → Ketua Program Studi: showSuccessMessage()
-
-alt [Status Ditolak/Perlu Revisi]
-
 Ketua Program Studi → Halaman Detail Pengajuan Disposisi Pembimbing: submitReview(status, komentar, dosenPembimbing1, dosenPembimbing2)
 
-Halaman Detail Pengajuan Disposisi Pembimbing → Database: saveReview(status, komentar)
+Halaman Detail Pengajuan Disposisi Pembimbing → Database: submitReviewPengajuanDisposisiPembimbing(status, komentar, dosenPembimbing1, dosenPembimbing2)
 
 Database → Halaman Detail Pengajuan Disposisi Pembimbing: judulOutline, statusPengajuan
 
@@ -412,6 +398,33 @@ END
 
 ---
 
+### UC-PO-05: Mengunduh Berkas Pengajuan Disposisi Pembimbing
+**Lifelines:** Mahasiswa | Halaman Pengajuan Disposisi Pembimbing | Database
+
+Mahasiswa → Halaman Pengajuan Disposisi Pembimbing: Membuka halaman pengajuan disposisi pembimbing
+
+Halaman Pengajuan Disposisi Pembimbing → Database: getPengajuanDisposisiPembimbing(mahasiswa_id)
+
+Database → Halaman Pengajuan Disposisi Pembimbing: judulOutline, pembimbing1Diajukan, pembimbing2Diajukan, pembimbing1Ditetapkan, pembimbing2Ditetapkan, statusPengajuan, catatanKaprodi, fileFormulirDisposisi
+
+alt [Pengajuan tidak ditemukan]
+
+Halaman Pengajuan Disposisi Pembimbing → Mahasiswa: showErrorMessage()
+
+alt [Pengajuan ditemukan]
+
+Halaman Pengajuan Disposisi Pembimbing → Mahasiswa: viewHalamanPengajuanDisposisiPembimbing(judulOutline, pembimbing1Diajukan, pembimbing2Diajukan, pembimbing1Ditetapkan, pembimbing2Ditetapkan, statusPengajuan, catatanKaprodi, fileFormulirDisposisi)
+
+Mahasiswa → Halaman Pengajuan Disposisi Pembimbing: Klik tombol unduh formulir pengajuan disposisi pembimbing
+
+Halaman Pengajuan Disposisi Pembimbing → Mahasiswa: Mengirimkan fileFormulirDisposisi (base64 DOCX)
+
+Mahasiswa → Mahasiswa: Mengunduh file formulir pengajuan disposisi pembimbing
+
+END
+
+---
+
 ## KO — Konsultasi Outline
 
 ### UC-KO-01: Konsultasi Outline
@@ -423,7 +436,7 @@ Halaman Konsultasi Outline → Database: getKonsultasiOutline()
 
 Database → Halaman Konsultasi Outline: judulOutline, tahapPengajuan, tanggalDibuat, statusKonsultasi
 
-Halaman Konsultasi Outline → Mahasiswa: viewHalamanKonsultasiOutline()
+Halaman Konsultasi Outline → Mahasiswa: viewHalamanKonsultasiOutline(judulOutline, tahapPengajuan, tanggalDibuat, statusKonsultasi)
 
 Mahasiswa → Halaman Konsultasi Outline: Memilih tombol detail
 
@@ -451,7 +464,7 @@ Halaman Detail Konsultasi Outline → Mahasiswa: showErrorMessage()
 
 alt [Valid]
 
-Halaman Detail Konsultasi Outline → Database: saveData()
+Halaman Detail Konsultasi Outline → Database: submitFileKonsultasiOutline(konsultasiId, file)
 
 Database → Halaman Detail Konsultasi Outline: statusKonsultasi
 
@@ -462,29 +475,29 @@ END
 ---
 
 ### UC-KO-02: Mengunduh Dokumen Konsultasi Outline
-**Lifelines:** User | Halaman Detail Konsultasi Outline | Database
+**Lifelines:** Mahasiswa | Halaman Detail Konsultasi Outline | Database
 
-User → Halaman Detail Konsultasi Outline: Membuka halaman detail konsultasi outline
+Mahasiswa → Halaman Detail Konsultasi Outline: Membuka halaman detail konsultasi outline
 
 Halaman Detail Konsultasi Outline → Database: getDetailKonsultasi(konsultasiId)
 
 Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
 
-Halaman Detail Konsultasi Outline → User: viewHalamanDetailKonsultasiOutline()
+Halaman Detail Konsultasi Outline → Mahasiswa: viewHalamanDetailKonsultasiOutline(judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi)
 
-User → Halaman Detail Konsultasi Outline: Klik tombol unduh
+Mahasiswa → Halaman Detail Konsultasi Outline: Klik tombol unduh
 
 Halaman Detail Konsultasi Outline → Database: downloadKonsultasiOutline()
 
 Database → Halaman Detail Konsultasi Outline: kartuKonsultasiOutline
 
-alt [Sukses]
-
-Halaman Detail Konsultasi Outline → User: showSuccessMessage()
-
 alt [Gagal]
 
-Halaman Detail Konsultasi Outline → User: showErrorMessage()
+Halaman Detail Konsultasi Outline → Mahasiswa: showErrorMessage()
+
+alt [Sukses]
+
+Halaman Detail Konsultasi Outline → Mahasiswa: showSuccessMessage()
 
 END
 
@@ -499,7 +512,7 @@ Halaman Daftar Konsultasi Outline → Database: getOutlineByProgramStudi(program
 
 Database → Halaman Daftar Konsultasi Outline: daftarKonsultasiOutlineMahasiswa
 
-Halaman Daftar Konsultasi Outline → Ketua Program Studi: viewHalamanDaftarKonsultasiOutline()
+Halaman Daftar Konsultasi Outline → Ketua Program Studi: viewHalamanDaftarKonsultasiOutline(daftarKonsultasiOutlineMahasiswa)
 
 Ketua Program Studi → Halaman Daftar Konsultasi Outline: Memilih tombol detail
 
@@ -509,7 +522,7 @@ Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(outli
 
 Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
 
-Halaman Detail Konsultasi Outline → Ketua Program Studi: viewHalamanDetailKonsultasiOutline()
+Halaman Detail Konsultasi Outline → Ketua Program Studi: viewHalamanDetailKonsultasiOutline(judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi)
 
 END
 
@@ -524,7 +537,7 @@ Halaman Daftar Konsultasi Outline → Database: getOutlineByPembimbing(nidn)
 
 Database → Halaman Daftar Konsultasi Outline: daftarOutlineMahasiswa
 
-Halaman Daftar Konsultasi Outline → Dosen Pembimbing: viewHalamanDaftarKonsultasiOutline()
+Halaman Daftar Konsultasi Outline → Dosen Pembimbing: viewHalamanDaftarKonsultasiOutline(daftarOutlineMahasiswa)
 
 Dosen Pembimbing → Halaman Daftar Konsultasi Outline: Memilih tombol review
 
@@ -534,9 +547,7 @@ Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(outli
 
 Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
 
-Halaman Detail Konsultasi Outline → Dosen Pembimbing: viewHalamanDetailKonsultasiOutline()
-
-alt [Status outline 'perlu revisi']
+Halaman Detail Konsultasi Outline → Dosen Pembimbing: viewHalamanDetailKonsultasiOutline(judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi)
 
 Dosen Pembimbing → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan
 
@@ -550,27 +561,7 @@ Halaman Detail Konsultasi Outline → Dosen Pembimbing: showErrorMessage()
 
 alt [Valid]
 
-Halaman Detail Konsultasi Outline → Database: saveData()
-
-Database → Halaman Detail Konsultasi Outline: statusKonsultasi
-
-Halaman Detail Konsultasi Outline → Dosen Pembimbing: showSuccessMessage()
-
-alt [Status outline 'lanjut']
-
-Dosen Pembimbing → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan serta mengunggah tanda tangan
-
-Dosen Pembimbing → Halaman Detail Konsultasi Outline: submitReview(outlineId, keputusan, catatan, fileTandaTangan)
-
-Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
-
-alt [Tidak valid]
-
-Halaman Detail Konsultasi Outline → Dosen Pembimbing: showErrorMessage()
-
-alt [Valid]
-
-Halaman Detail Konsultasi Outline → Database: saveData()
+Halaman Detail Konsultasi Outline → Database: submitReviewKonsultasiOutline(outlineId, keputusan, catatan)
 
 Database → Halaman Detail Konsultasi Outline: statusKonsultasi
 
@@ -589,7 +580,7 @@ Halaman Daftar Konsultasi Outline → Database: getOutlineByPembimbing(nidn)
 
 Database → Halaman Daftar Konsultasi Outline: daftarOutlineMahasiswa
 
-Halaman Daftar Konsultasi Outline → Dosen Pembimbing 1: viewHalamanDaftarKonsultasiOutline()
+Halaman Daftar Konsultasi Outline → Dosen Pembimbing 1: viewHalamanDaftarKonsultasiOutline(daftarOutlineMahasiswa)
 
 Dosen Pembimbing 1 → Halaman Daftar Konsultasi Outline: Memilih tombol review
 
@@ -599,9 +590,7 @@ Halaman Detail Konsultasi Outline → Database: getDetailKonsultasiOutline(outli
 
 Database → Halaman Detail Konsultasi Outline: judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi
 
-Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: viewHalamanDetailKonsultasiOutline()
-
-alt [Status outline 'perlu revisi']
+Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: viewHalamanDetailKonsultasiOutline(judulOutline, catatanPembimbing, dataMahasiswa, namaPembimbing1, namaPembimbing2, statusKonsultasi, riwayatKonsultasi)
 
 Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan
 
@@ -615,31 +604,9 @@ Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showErrorMessage()
 
 alt [Valid]
 
-Halaman Detail Konsultasi Outline → Database: saveData()
+Halaman Detail Konsultasi Outline → Database: submitReviewKonsultasiOutline(outlineId, keputusan, catatan)
 
 Database → Halaman Detail Konsultasi Outline: statusKonsultasi
-
-Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showSuccessMessage()
-
-alt [Status outline 'diterima']
-
-Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: Melihat outline dan mengisi keputusan serta mengunggah tanda tangan
-
-Dosen Pembimbing 1 → Halaman Detail Konsultasi Outline: submitReview(outlineId, keputusan, catatan, fileTandaTangan)
-
-Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: validateData()
-
-alt [Tidak valid]
-
-Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showErrorMessage()
-
-alt [Valid]
-
-Halaman Detail Konsultasi Outline → Database: saveData()
-
-Halaman Detail Konsultasi Outline → Halaman Detail Konsultasi Outline: generateKartuKonsultasi()
-
-Database → Halaman Detail Konsultasi Outline: statusKonsultasi, kartuKonsultasi
 
 Halaman Detail Konsultasi Outline → Dosen Pembimbing 1: showSuccessMessage()
 
@@ -1587,5 +1554,86 @@ alt [Aktor adalah Sekretaris Prodi]
 Database → Halaman Daftar Pengumpulan Berkas Final: daftarPengumpulan (prodi aktor)
 
 Halaman Daftar Pengumpulan Berkas Final → Aktor: viewDaftarPengumpulanBerkasFinal(daftarPengumpulan)
+
+END
+
+---
+
+## TT — Tanda Tangan
+
+### UC-TT-01: Mengelola Tanda Tangan
+**Lifelines:** Pengguna | Halaman Profil | Database
+
+Pengguna → Halaman Profil: Membuka halaman Profil
+
+Halaman Profil → Database: getSignature(userId)
+
+Database → Halaman Profil: hasSignature, signatureImage
+
+alt [Belum ada tanda tangan]
+
+Halaman Profil → Pengguna: viewHalamanProfil(hasSignature: false)
+
+Pengguna → Halaman Profil: Memilih file gambar tanda tangan
+
+Halaman Profil → Halaman Profil: validateFile(format, ukuran)
+
+alt [File tidak valid]
+
+Halaman Profil → Pengguna: showErrorMessage()
+
+alt [File valid]
+
+Halaman Profil → Database: upsertSignature(userId, signatureImage)
+
+Database → Halaman Profil: userId
+
+Halaman Profil → Database: getSignature(userId)
+
+Database → Halaman Profil: hasSignature, signatureImage
+
+Halaman Profil → Pengguna: viewHalamanProfil(hasSignature: true, signatureImage)
+
+Halaman Profil → Pengguna: showSuccessMessage()
+
+alt [Sudah ada tanda tangan]
+
+Halaman Profil → Pengguna: viewHalamanProfil(hasSignature: true, signatureImage)
+
+alt [Ganti tanda tangan]
+
+Pengguna → Halaman Profil: Memilih file gambar tanda tangan baru
+
+Halaman Profil → Halaman Profil: validateFile(format, ukuran)
+
+alt [File tidak valid]
+
+Halaman Profil → Pengguna: showErrorMessage()
+
+alt [File valid]
+
+Halaman Profil → Database: upsertSignature(userId, signatureImage)
+
+Database → Halaman Profil: userId
+
+Halaman Profil → Database: getSignature(userId)
+
+Database → Halaman Profil: hasSignature, signatureImage
+
+Halaman Profil → Pengguna: viewHalamanProfil(hasSignature: true, signatureImage)
+
+Halaman Profil → Pengguna: showSuccessMessage()
+
+alt [Hapus tanda tangan]
+
+Pengguna → Halaman Profil: Memilih tombol hapus tanda tangan
+
+Halaman Profil → Database: deleteSignature(userId)
+
+Database → Halaman Profil: userId
+
+Halaman Profil → Pengguna: viewHalamanProfil(hasSignature: false)
+
+Halaman Profil → Pengguna: showSuccessMessage()
 
 END

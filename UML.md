@@ -89,6 +89,13 @@ This section defines how Use Cases, Activity Diagrams, and Sequence Diagrams sho
 - **Summary:** Kaprodi memeriksa berkas outline yang diunggah mahasiswa dan mengambil keputusan: menerima outline (ACCEPTED), meminta revisi (NEED_REVISION), atau menolak (REJECTED).
 - **Postcondition:** Status pengajuan outline diperbarui. Jika ACCEPTED, mahasiswa dapat melanjutkan ke konsultasi outline.
 
+### UC-TT-01: Mengelola Tanda Tangan
+
+- **Actor:** Pengguna
+- **Precondition:** Pengguna telah login
+- **Summary:** Pengguna membuka halaman Profil untuk melihat status tanda tangan digitalnya. Jika belum ada tanda tangan, pengguna dapat mengunggah gambar tanda tangan (PNG/JPG/JPEG, maks. 2 MB). Jika sudah ada, pengguna dapat mengganti tanda tangan dengan mengunggah gambar baru, atau menghapus tanda tangan yang tersimpan. Sistem menyimpan perubahan dan menampilkan pratinjau tanda tangan terkini.
+- **Postcondition:** Tanda tangan pengguna tersimpan atau dihapus sesuai aksi yang dipilih.
+
 ---
 
 ## Activity Diagrams
@@ -245,6 +252,7 @@ START
 END
 
 ---
+
 ## Activity Diagrams
 
 ### UC-KO-01: Mengajukan Konsultasi Outline dengan Dosen Pembimbing
@@ -381,6 +389,7 @@ END
 - **Postcondition:** Status stage diperbarui. Jika Pembimbing 1 menerima outline, konsultasi outline selesai dan kartu konsultasi outline di-generate otomatis. Halaman Persetujuan Judul Desain Skripsi juga di-generate otomatis apabila seluruh prasyarat terpenuhi.
 
 ---
+
 ## Use Cases
 
 ### UC-KS-01: Memulai Konsultasi Skripsi
@@ -461,7 +470,7 @@ END
 
 ## Use Cases
 
-### UC-RPS-01: Menginisiasi Revisi Pasca Sidang
+### UC-RPS-01: Memulai Revisi Pasca Sidang
 
 - **Actor:** Mahasiswa
 - **Precondition:** Sidang telah selesai (status `COMPLETED`), dipicu oleh penyelesaian Hasil Penilaian Akhir
@@ -619,9 +628,10 @@ START
 END
 
 ---
+
 ## Use Cases
 
-### UC-PBF-01: Menginisiasi Pengumpulan Berkas Final
+### UC-PBF-01: Memulai Pengumpulan Berkas Final
 
 - **Actor:** Mahasiswa
 - **Precondition:** Revisi pasca sidang telah selesai (`is_completed = 1`) dan hasil sidang terakhir adalah `LULUS`
@@ -799,6 +809,7 @@ START
 END
 
 ---
+
 ## Activity Diagrams
 
 ### UC-SS-01: Memulai Sidang
@@ -1020,8 +1031,8 @@ START
 
 [Mahasiswa] Menekan tombol Mulai Konsultasi Skripsi
 [Sistem] Membuat kartu konsultasi skripsi
-[Sistem] Membuka stage pertama: Bab 1 & 2 — Pembimbing 2
-[Sistem] Menampilkan halaman konsultasi dengan stage aktif
+[Sistem] Membuka tahap pertama: Bab 1 & 2 — Pembimbing 2
+[Sistem] Menampilkan halaman konsultasi dengan tahap aktif
 
 END
 
@@ -1347,6 +1358,7 @@ START
 END
 
 ---
+
 ## Activity Diagrams
 
 ### UC-01: Mengajukan SK Penelitian
@@ -1398,6 +1410,7 @@ START
 [Sistem] Memperbarui status pengajuan dan mengirim notifikasi ke Sekretariat
 
 END
+
 ## Use Cases
 
 ### UC-ADM-01: Mengelola Data Mahasiswa
@@ -1457,6 +1470,7 @@ START
 ## Use Cases
 
 ### UC-ADM-04: Mengelola Jadwal Pengajuan Sidang
+
 - **Actor:** Admin
 - **Precondition:** Admin telah login
 - **Summary:** Admin mengelola periode buka dan tutup pengajuan sidang skripsi. Admin dapat menambah periode baru, mengedit periode yang ada, atau menghapus periode. Setiap periode memiliki tahun akademik, periode akademik (GANJIL/GENAP), tanggal buka, dan tanggal tutup. Sistem menampilkan status aktif setiap periode (Sedang Buka / Sudah Tutup) secara otomatis berdasarkan waktu saat ini.
@@ -1467,6 +1481,7 @@ START
 ## Activity Diagrams
 
 ### UC-ADM-04: Mengelola Jadwal Pengajuan Sidang
+
 **Swimlanes:** Admin | Sistem Skripsi
 
 START
@@ -1508,9 +1523,11 @@ START
 END
 
 ---
+
 ## Use Cases
 
 ### UC-ADM-03: Mengelola Jadwal Pengajuan Outline
+
 - **Actor:** Admin
 - **Precondition:** Admin telah login
 - **Summary:** Admin mengelola periode buka dan tutup pengajuan outline skripsi. Admin dapat menambah periode baru, mengedit periode yang ada, atau menghapus periode. Setiap periode memiliki tahun akademik, periode akademik (GANJIL/GENAP), tanggal buka, dan tanggal tutup. Sistem menampilkan status aktif setiap periode (Sedang Buka / Sudah Tutup) secara otomatis berdasarkan waktu saat ini. Periode yang sudah digunakan oleh pengajuan outline tidak dapat dihapus.
@@ -1521,6 +1538,7 @@ END
 ## Activity Diagrams
 
 ### UC-ADM-03: Mengelola Jadwal Pengajuan Outline
+
 **Swimlanes:** Admin | Sistem Skripsi
 
 START
@@ -1562,3 +1580,37 @@ START
 END
 
 ---
+
+### UC-TT-01: Mengelola Tanda Tangan
+
+**Swimlanes:** Pengguna | Sistem Skripsi
+
+START
+
+[Pengguna] Membuka halaman Profil
+[Sistem] Mengambil data tanda tangan pengguna
+
+[Decision 1] Tanda tangan tersimpan?
+
+→ Belum ada: [Sistem] Menampilkan pesan belum ada tanda tangan dan tombol upload → lanjut ke Decision 3
+→ Sudah ada: [Sistem] Menampilkan pratinjau tanda tangan beserta tombol ganti dan tombol hapus
+
+[Decision 2] Aksi yang dipilih?
+
+→ Hapus: [Pengguna] Memilih hapus → [Sistem] Menghapus tanda tangan → [Sistem] Menampilkan pesan sukses → END
+→ Ganti: lanjut ke Decision 3
+
+[Decision 3] (bersama dari cabang "Belum ada" dan "Ganti")
+[Pengguna] Memilih file gambar tanda tangan
+[Sistem] Memvalidasi file (format dan ukuran)
+[Decision 3] File valid?
+
+→ Tidak valid: [Sistem] Menampilkan pesan gagal → kembali ke Memilih file gambar tanda tangan
+→ Valid: lanjut
+
+[Pengguna] Mengunggah tanda tangan
+[Sistem] Menyimpan tanda tangan
+[Sistem] Menampilkan pratinjau tanda tangan terbaru
+[Sistem] Menampilkan pesan sukses
+
+END
