@@ -4,7 +4,8 @@ const db = require("../db"); // mysql2 pool
 
 function deriveLegacyUserType(roles = []) {
   if (roles.includes("STUDENT")) return "STUDENT";
-  if (roles.includes("LECTURER") || roles.includes("KAPRODI")) return "LECTURER";
+  if (roles.includes("LECTURER") || roles.includes("KAPRODI"))
+    return "LECTURER";
   return roles[0] ?? null;
 }
 
@@ -16,7 +17,7 @@ async function getUserRoles(userId) {
      WHERE ur.user_id = ?
        AND ur.is_active = 1
        AND r.is_active = 1`,
-    [userId]
+    [userId],
   );
   return roleRows.map((row) => row.code);
 }
@@ -34,7 +35,7 @@ exports.login = async (req, res, next) => {
 
     const [users] = await db.query(
       `SELECT * FROM users WHERE username = ? AND is_active = 1 LIMIT 1`,
-      [username]
+      [username],
     );
 
     if (users.length === 0) {
@@ -63,7 +64,7 @@ exports.login = async (req, res, next) => {
     if (roles.includes("STUDENT")) {
       const [rows] = await db.query(
         `SELECT npm, nama FROM mahasiswa WHERE npm = ? LIMIT 1`,
-        [user.npm]
+        [user.npm],
       );
       profile = rows[0] || null;
     }
@@ -71,20 +72,20 @@ exports.login = async (req, res, next) => {
     if (!profile && (roles.includes("LECTURER") || roles.includes("KAPRODI"))) {
       const [rows] = await db.query(
         `SELECT nidn, nama FROM dosen WHERE nidn = ? LIMIT 1`,
-        [user.nidn]
+        [user.nidn],
       );
       profile = rows[0] || null;
     }
 
     const token = jwt.sign(
-    {
-      sub: String(user.id),
-      roles,
-      userType: legacyUserType,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN ?? "7d" }
-  );
+      {
+        sub: String(user.id),
+        roles,
+        userType: legacyUserType,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN ?? "7d" },
+    );
 
     return res.json({
       ok: true,
@@ -96,7 +97,7 @@ exports.login = async (req, res, next) => {
           userType: legacyUserType,
           roles,
           profile,
-        }
+        },
       },
     });
   } catch (err) {
@@ -113,7 +114,7 @@ exports.me = async (req, res, next) => {
        FROM users
        WHERE id = ? AND is_active = 1
        LIMIT 1`,
-      [userId]
+      [userId],
     );
 
     if (rows.length === 0) {
@@ -128,15 +129,21 @@ exports.me = async (req, res, next) => {
     if (roles.includes("STUDENT")) {
       const [p] = await db.query(
         `SELECT npm, mahasiswa.nama, mahasiswa.sks, program_studi.nama as programStudi FROM mahasiswa LEFT JOIN program_studi ON mahasiswa.program_studi_id = program_studi.id WHERE npm = ? LIMIT 1`,
-        [user.npm]
+        [user.npm],
       );
       profile = p[0] || null;
     }
 
-    if (!profile && (roles.includes("LECTURER") || roles.includes("KAPRODI"))) {
+    if (
+      !profile &&
+      (roles.includes("LECTURER") ||
+        roles.includes("KAPRODI") ||
+        roles.includes("DEKAN") ||
+        roles.includes("SEKPRODI"))
+    ) {
       const [p] = await db.query(
         `SELECT nidn, nama FROM dosen WHERE nidn = ? LIMIT 1`,
-        [user.nidn]
+        [user.nidn],
       );
       profile = p[0] || null;
     }

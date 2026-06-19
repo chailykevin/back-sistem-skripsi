@@ -223,9 +223,12 @@ async function generateSkDocuments(conn, sk, outlineId) {
     [outlineId],
   );
   if (!pj)
-    throw Object.assign(new Error("Pengajuan disposisi pembimbing tidak ditemukan"), {
-      status: 400,
-    });
+    throw Object.assign(
+      new Error("Pengajuan disposisi pembimbing tidak ditemukan"),
+      {
+        status: 400,
+      },
+    );
 
   // Fetch program studi + fakultas
   const [[ps]] = await conn.query(
@@ -436,9 +439,7 @@ exports.initSkPenelitian = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -498,9 +499,7 @@ exports.getSkPenelitian = async (req, res, next) => {
   try {
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const [skRows] = await db.query(
@@ -548,9 +547,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     await conn.beginTransaction();
@@ -680,13 +677,11 @@ exports.submitSkPenelitian = async (req, res, next) => {
     if (rekapRows.length === 0) {
       await conn.rollback();
       txStarted = false;
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message:
-            "File transkrip/rekap nilai tidak ditemukan pada pengajuan disposisi pembimbing",
-        });
+      return res.status(400).json({
+        ok: false,
+        message:
+          "File transkrip/rekap nilai tidak ditemukan pada pengajuan disposisi pembimbing",
+      });
     }
     const rekapRow = rekapRows[0];
 
@@ -790,19 +785,15 @@ exports.reviewSkFile = async (req, res, next) => {
   let txStarted = false;
   try {
     if (!req.user.hasRole("SEKRETARIAT")) {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Only sekretariat can review SK Penelitian files",
-        });
+      return res.status(403).json({
+        ok: false,
+        message: "Only sekretariat can review SK Penelitian files",
+      });
     }
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const fileType = req.params.fileType;
@@ -887,19 +878,15 @@ exports.reviewSkPenelitian = async (req, res, next) => {
   let txStarted = false;
   try {
     if (!req.user.hasRole("SEKRETARIAT")) {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Only sekretariat can review SK Penelitian",
-        });
+      return res.status(403).json({
+        ok: false,
+        message: "Only sekretariat can review SK Penelitian",
+      });
     }
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const { action, catatanSekretariat } = req.body ?? {};
@@ -909,12 +896,10 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       action !== "REJECT" &&
       action !== "NEED_REVISION"
     ) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "action harus 'VERIFY', 'REJECT', atau 'NEED_REVISION'",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "action harus 'VERIFY', 'REJECT', atau 'NEED_REVISION'",
+      });
     }
     if (
       (action === "REJECT" || action === "NEED_REVISION") &&
@@ -1113,19 +1098,15 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
   let txStarted = false;
   try {
     if (req.user.userType !== "STUDENT") {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Only students can resubmit SK Penelitian",
-        });
+      return res.status(403).json({
+        ok: false,
+        message: "Only students can resubmit SK Penelitian",
+      });
     }
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const { files } = req.body ?? {};
@@ -1147,12 +1128,10 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
         });
       }
       if (!f?.content || !String(f.content).trim()) {
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            message: `content wajib diisi untuk ${f.fileType}`,
-          });
+        return res.status(400).json({
+          ok: false,
+          message: `content wajib diisi untuk ${f.fileType}`,
+        });
       }
       if (!f?.name || !String(f.name).trim()) {
         return res
@@ -1275,9 +1254,7 @@ exports.getSkFile = async (req, res, next) => {
   try {
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const fileType = req.params.fileType;
@@ -1351,6 +1328,59 @@ exports.listSkForSekretariat = async (req, res, next) => {
        ${filterByStatus ? "WHERE sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
       filterByStatus ? [statusParam] : [],
+    );
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.listSkForDekan = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("DEKAN")) {
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only dekan can access this endpoint" });
+    }
+
+    const [[userRow]] = await db.query(
+      `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
+      [req.user.id],
+    );
+    if (!userRow?.nidn) {
+      return res
+        .status(403)
+        .json({ ok: false, message: "Dekan NIDN tidak ditemukan" });
+    }
+
+    const statusParam = req.query?.status;
+    const filterByStatus =
+      statusParam && VALID_SK_STATUSES.includes(statusParam);
+
+    const [rows] = await db.query(
+      `SELECT
+         sk.id,
+         sk.outline_id,
+         sk.status,
+         sk.submitted_at,
+         sk.completed_at,
+         sk.created_at,
+         k.nama_mahasiswa,
+         k.judul_skripsi,
+         k.program_studi_nama,
+         k.program_studi_id,
+         (SELECT id FROM skripsi WHERE npm = k.npm ORDER BY id DESC LIMIT 1) AS skripsi_id
+       FROM pengajuan_sk_penelitian sk
+       LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
+       WHERE k.program_studi_id IN (
+         SELECT id FROM program_studi WHERE fakultas_id = (
+           SELECT id FROM fakultas WHERE dekan_nidn = ?
+         )
+       )
+       ${filterByStatus ? "AND sk.status = ?" : ""}
+       ORDER BY sk.submitted_at DESC`,
+      filterByStatus ? [userRow.nidn, statusParam] : [userRow.nidn],
     );
 
     return res.json({ ok: true, data: rows });

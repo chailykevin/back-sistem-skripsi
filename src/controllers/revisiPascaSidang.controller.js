@@ -1178,7 +1178,8 @@ exports.getHalamanDekanFile = async (req, res, next) => {
         return res.status(403).json({ ok: false, message: "Forbidden" });
     } else if (
       !req.user.hasRole("SEKRETARIAT") &&
-      !req.user.hasRole("KAPRODI")
+      !req.user.hasRole("KAPRODI") &&
+      !req.user.hasRole("DEKAN")
     ) {
       const nidn = await getLecturerNidn(req.user.id);
       if (!isRevisiParticipant(revisi, nidn)) {

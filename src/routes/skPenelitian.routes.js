@@ -3,6 +3,7 @@ const auth = require("../middlewares/auth");
 const c = require("../controllers/skPenelitian.controller");
 
 router.get("/sekretariat/sk-penelitian", auth, c.listSkForSekretariat);
+router.get("/dekan/sk-penelitian", auth, c.listSkForDekan);
 router.post("/sk-penelitian/:outlineId/init", auth, c.initSkPenelitian);
 router.get("/sk-penelitian/:outlineId", auth, c.getSkPenelitian);
 router.post("/sk-penelitian/:outlineId/submit", auth, c.submitSkPenelitian);
