@@ -365,55 +365,9 @@ async function buildHalamanPersetujuanDocxBuffer({
   });
 }
 
-async function generateAndStoreHalamanDocx(
-  queryable,
-  {
-    halamanId,
-    outlineId,
-    kartu,
-    signatures,
-    programStudiNama,
-    namaKaprodi,
-    generatedByUserId,
-  },
-) {
-  const outputBuffer = await buildHalamanPersetujuanDocxBuffer({
-    kartu,
-    signatures,
-    programStudiNama,
-    namaKaprodi,
-  });
 
-  const mimeType =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const fileName = `halaman-persetujuan-judul-${outlineId}-${Date.now()}.docx`;
-
-  const [ins] = await queryable.query(
-    `INSERT INTO halaman_persetujuan_judul_file (
-       halaman_persetujuan_judul_id,
-       file_name,
-       mime_type,
-       file_content,
-       generated_by_user_id,
-       generated_at
-     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-    [
-      halamanId,
-      fileName,
-      mimeType,
-      outputBuffer.toString("base64"),
-      generatedByUserId,
-    ],
-  );
-
-  return { id: ins.insertId, fileName, mimeType };
-}
-
-async function autoSubmitSkPenelitian(
-  conn,
-  { outlineId, kartuId, halamanPersetujuanJudulId },
-) {
-  console.log("[autoSubmitSkPenelitian] start", { outlineId, kartuId, halamanPersetujuanJudulId });
+async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
+  console.log("[autoSubmitSkPenelitian] start", { outlineId, kartuId });
 
   const [existingRows] = await conn.query(
     `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
@@ -446,17 +400,12 @@ async function autoSubmitSkPenelitian(
     `SELECT s.file_outline, s.file_outline_name FROM konsultasi_outline_submission s INNER JOIN konsultasi_outline_stage st ON st.id = s.konsultasi_outline_stage_id WHERE st.kartu_konsultasi_outline_id = ? ORDER BY s.submitted_at DESC LIMIT 1`,
     [kartuId],
   );
-  const [halamanFileRows] = await conn.query(
-    `SELECT file_content, file_name, mime_type FROM halaman_persetujuan_judul_file WHERE halaman_persetujuan_judul_id = ? ORDER BY generated_at DESC LIMIT 1`,
-    [halamanPersetujuanJudulId],
-  );
 
   console.log("[autoSubmitSkPenelitian] files found", {
     krs: krsRows.length > 0,
     rekap: rekapRows.length > 0,
     kartu: kartuFileRows.length > 0,
     outline: outlineRows.length > 0,
-    halaman: halamanFileRows.length > 0,
   });
 
   const missingFiles = [];
@@ -464,51 +413,12 @@ async function autoSubmitSkPenelitian(
   if (rekapRows.length === 0) missingFiles.push("REKAP_NILAI");
   if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
   if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
-  if (halamanFileRows.length === 0) missingFiles.push("HALAMAN_PERSETUJUAN");
   if (missingFiles.length > 0) {
     console.log("[autoSubmitSkPenelitian] skip: missing_files", missingFiles);
     return { skippedReason: "missing_files", missingFiles };
   }
 
-  const [ins] = await conn.query(
-    `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
-    [outlineId],
-  );
-  const skId = ins.insertId;
-
-  const files = [
-    { type: "KRS", name: krsRows[0].file_name, mime: null, content: krsRows[0].file_content },
-    { type: "REKAP_NILAI", name: rekapRows[0].file_name, mime: null, content: rekapRows[0].file_content },
-    { type: "KARTU_KONSULTASI_OUTLINE", name: kartuFileRows[0].file_name, mime: kartuFileRows[0].mime_type, content: kartuFileRows[0].file_content },
-    { type: "FILE_OUTLINE", name: outlineRows[0].file_outline_name, mime: null, content: outlineRows[0].file_outline },
-    { type: "HALAMAN_PERSETUJUAN", name: halamanFileRows[0].file_name, mime: halamanFileRows[0].mime_type, content: halamanFileRows[0].file_content },
-  ];
-  for (const f of files) {
-    await conn.query(
-      `INSERT INTO pengajuan_sk_penelitian_files (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status) VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
-      [skId, f.type, f.name, f.mime ?? "application/octet-stream", f.content],
-    );
-  }
-
-  console.log("[autoSubmitSkPenelitian] done", { skId });
-  return { skippedReason: null, skId };
-}
-
-async function autoGenerateHalamanPersetujuan(
-  conn,
-  { outlineId, kartu, generatedByUserId },
-) {
-  console.log("[autoGenerateHalamanPersetujuan] start", { outlineId, kartuId: kartu?.id, npm: kartu?.npm });
-
-  const [existingRows] = await conn.query(
-    `SELECT id FROM halaman_persetujuan_judul WHERE outline_id = ? LIMIT 1`,
-    [outlineId],
-  );
-  if (existingRows.length > 0) {
-    console.log("[autoGenerateHalamanPersetujuan] skip: halaman already exists", existingRows[0].id);
-    return { file: null, skippedReason: "already_exists" };
-  }
-
+  // Generate halaman persetujuan DOCX inline from users.signature_image
   const [[mahasiswaRow]] = await conn.query(
     `SELECT signature_image FROM users WHERE npm = ? LIMIT 1`,
     [kartu.npm],
@@ -535,30 +445,6 @@ async function autoGenerateHalamanPersetujuan(
      WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
     [kartu.program_studi_id],
   );
-
-  console.log("[autoGenerateHalamanPersetujuan] signatures found", {
-    mahasiswa: !!mahasiswaRow?.signature_image,
-    pembimbing2: !!p2Row?.signature_image,
-    pembimbing1: !!p1Row?.signature_image,
-    kaprodi: !!kaprodiRow?.signature_image,
-    npm: kartu.npm,
-    pembimbing2_nidn: kartu.pembimbing2_nidn,
-    pembimbing1_nidn: kartu.pembimbing1_nidn,
-    program_studi_id: kartu.program_studi_id,
-  });
-
-  const missingSigs = [
-    !mahasiswaRow?.signature_image && "MAHASISWA",
-    !p2Row?.signature_image && "PEMBIMBING_2",
-    !p1Row?.signature_image && "PEMBIMBING_1",
-    !kaprodiRow?.signature_image && "KAPRODI",
-  ].filter(Boolean);
-
-  if (missingSigs.length > 0) {
-    console.log("[autoGenerateHalamanPersetujuan] skip: missing signatures for", missingSigs);
-    return { file: null, skippedReason: "missing_signatures", missingSigs };
-  }
-
   const [[psRow]] = await conn.query(
     `SELECT ps.nama AS program_studi_nama, d.nama AS kaprodi_nama
      FROM program_studi ps
@@ -567,46 +453,47 @@ async function autoGenerateHalamanPersetujuan(
     [kartu.program_studi_id],
   );
 
-  const [ins] = await conn.query(
-    `INSERT INTO halaman_persetujuan_judul (outline_id, status) VALUES (?, 'PENDING')`,
-    [outlineId],
-  );
-  const halamanId = ins.insertId;
-
-  const signatures = [
-    { signer_role: "MAHASISWA", signature_image: mahasiswaRow.signature_image },
-    { signer_role: "PEMBIMBING_2", signature_image: p2Row.signature_image },
-    { signer_role: "PEMBIMBING_1", signature_image: p1Row.signature_image },
-    { signer_role: "KAPRODI", signature_image: kaprodiRow.signature_image },
+  const halamanSignatures = [
+    { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
+    { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
+    { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
+    { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
   ];
 
-  for (const sig of signatures) {
+  const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
+    kartu,
+    signatures: halamanSignatures,
+    programStudiNama: psRow?.program_studi_nama ?? kartu.program_studi_nama ?? "",
+    namaKaprodi: psRow?.kaprodi_nama ?? "",
+  });
+  const halamanMime =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const halamanFileName = `halaman-persetujuan-judul-${outlineId}-${Date.now()}.docx`;
+
+  const [ins] = await conn.query(
+    `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+    [outlineId],
+  );
+  const skId = ins.insertId;
+
+  const files = [
+    { type: "KRS", name: krsRows[0].file_name, mime: null, content: krsRows[0].file_content },
+    { type: "REKAP_NILAI", name: rekapRows[0].file_name, mime: null, content: rekapRows[0].file_content },
+    { type: "KARTU_KONSULTASI_OUTLINE", name: kartuFileRows[0].file_name, mime: kartuFileRows[0].mime_type, content: kartuFileRows[0].file_content },
+    { type: "FILE_OUTLINE", name: outlineRows[0].file_outline_name, mime: null, content: outlineRows[0].file_outline },
+    { type: "HALAMAN_PERSETUJUAN", name: halamanFileName, mime: halamanMime, content: halamanBuffer.toString("base64") },
+  ];
+  for (const f of files) {
     await conn.query(
-      `INSERT INTO halaman_persetujuan_judul_signatures
-         (halaman_persetujuan_judul_id, signer_role, signature_image, signed_at)
-       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
-      [halamanId, sig.signer_role, String(sig.signature_image)],
+      `INSERT INTO pengajuan_sk_penelitian_files (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status) VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      [skId, f.type, f.name, f.mime ?? "application/octet-stream", f.content],
     );
   }
 
-  const generatedFile = await generateAndStoreHalamanDocx(conn, {
-    halamanId,
-    outlineId: kartu.outline_id,
-    kartu,
-    signatures,
-    programStudiNama: psRow?.program_studi_nama ?? "",
-    namaKaprodi: psRow?.kaprodi_nama ?? "",
-    generatedByUserId,
-  });
-
-  await conn.query(
-    `UPDATE halaman_persetujuan_judul SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    [halamanId],
-  );
-
-  console.log("[autoGenerateHalamanPersetujuan] done", { halamanId, generatedFile });
-  return { file: generatedFile, skippedReason: null, halamanId };
+  console.log("[autoSubmitSkPenelitian] done", { skId });
+  return { skippedReason: null, skId };
 }
+
 
 async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
   const [rows] = await queryable.query(
@@ -2186,7 +2073,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     const kartuInfo = kartuInfoRows[0];
 
     let autoFinalizedFile = null;
-    let autoHalamanResult = null;
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
       await conn.query(
         `UPDATE kartu_konsultasi_outline
@@ -2205,31 +2091,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         generatedByUserId: req.user.id,
       });
 
-      if (kartuInfo) {
-        autoHalamanResult = await autoGenerateHalamanPersetujuan(conn, {
-          outlineId: kartuInfo.outline_id,
-          kartu: kartuInfo,
-          generatedByUserId: req.user.id,
-        });
-      }
     }
 
     let autoSkResult = null;
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
       const outlineId = kartuInfo?.outline_id ?? null;
-      let halamanId = autoHalamanResult?.halamanId ?? null;
-      if (!halamanId && outlineId) {
-        const [[hRow]] = await conn.query(
-          `SELECT id FROM halaman_persetujuan_judul WHERE outline_id = ? LIMIT 1`,
-          [outlineId],
-        );
-        halamanId = hRow?.id ?? null;
-      }
-      if (halamanId && outlineId) {
+      if (outlineId && kartuInfo) {
         autoSkResult = await autoSubmitSkPenelitian(conn, {
           outlineId,
           kartuId: stage.kartu_id,
-          halamanPersetujuanJudulId: halamanId,
+          kartu: kartuInfo,
         });
       }
     }
@@ -2281,15 +2152,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           "Outline Anda telah diterima oleh Pembimbing 1",
           "/student/outline-consultations",
         );
-        if (autoHalamanResult?.file) {
-          await insertNotification(
-            conn,
-            studentUserId,
-            "HALAMAN_PERSETUJUAN_COMPLETED",
-            "Halaman persetujuan judul skripsi Anda telah dibuat otomatis",
-            "/student/halaman-persetujuan",
-          );
-        }
         if (autoSkResult && autoSkResult.skippedReason === null) {
           await insertNotification(
             conn,
@@ -2329,7 +2191,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         decisionStatus,
         hasReviewFile,
         finalFile: autoFinalizedFile,
-        halamanPersetujuan: autoHalamanResult,
         skPenelitian: autoSkResult,
       },
     });

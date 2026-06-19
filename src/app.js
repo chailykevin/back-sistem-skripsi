@@ -43,9 +43,6 @@ app.use("/outline-submission-periods", outlineSubmissionPeriodRoutes);
 const sidangSubmissionPeriodRoutes = require("./routes/sidangSubmissionPeriod.routes");
 app.use("/sidang-submission-periods", sidangSubmissionPeriodRoutes);
 
-const halamanPersetujuanRoutes = require("./routes/halamanPersetujuan.routes");
-app.use("/", halamanPersetujuanRoutes);
-
 const skPenelitianRoutes = require("./routes/skPenelitian.routes");
 app.use("/", skPenelitianRoutes);
 

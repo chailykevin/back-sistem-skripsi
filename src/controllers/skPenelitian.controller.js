@@ -202,6 +202,44 @@ async function buildSuratKeteranganDocxBuffer({
   return outputBuffer;
 }
 
+async function buildHalamanPersetujuanDocxBuffer({
+  kartu,
+  signatures,
+  programStudiNama,
+  namaKaprodi,
+}) {
+  const templatePath = path.join(
+    __dirname,
+    "../templates/template_halaman_persetujuan_judul_desain_skripsi.docx",
+  );
+  const templateBuffer = await readFile(templatePath);
+
+  const sigMap = {};
+  for (const s of signatures) {
+    sigMap[s.signer_role] = s.signature_image;
+  }
+
+  const programStudi = programStudiNama ?? kartu.program_studi_nama ?? "";
+
+  const patches = {
+    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
+    npm: textPatch(kartu.npm),
+    program_studi1: textPatch(programStudi),
+    program_studi2: textPatch(programStudi.toUpperCase()),
+    judul_skripsi: textPatch((kartu.judul_skripsi ?? "").toUpperCase()),
+    nama_pembimbing1: textPatch(kartu.pembimbing1_nama),
+    nama_pembimbing2: textPatch(kartu.pembimbing2_nama),
+    nama_kaprodi: textPatch(namaKaprodi ?? ""),
+    tahun: textPatch(String(new Date().getFullYear())),
+    ttd_mahasiswa: signatureImagePatch(sigMap["MAHASISWA"]),
+    ttd_pembimbing2: signatureImagePatch(sigMap["PEMBIMBING_2"]),
+    ttd_pembimbing1: signatureImagePatch(sigMap["PEMBIMBING_1"]),
+    ttd_kaprodi: signatureImagePatch(sigMap["KAPRODI"]),
+  };
+
+  return patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+}
+
 async function generateSkDocuments(conn, sk, outlineId) {
   // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
   const [[kartu]] = await conn.query(
@@ -429,6 +467,8 @@ async function upsertSkFile(
 }
 
 exports.initSkPenelitian = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
   try {
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({
@@ -449,7 +489,7 @@ exports.initSkPenelitian = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const [outlineRows] = await db.query(
+    const [outlineRows] = await conn.query(
       `SELECT id FROM outline WHERE id = ? AND npm = ? AND status = 'ACCEPTED' LIMIT 1`,
       [outlineId, npm],
     );
@@ -459,18 +499,19 @@ exports.initSkPenelitian = async (req, res, next) => {
         .json({ ok: false, message: "Outline tidak ditemukan" });
     }
 
-    const [halamanRows] = await db.query(
-      `SELECT id FROM halaman_persetujuan_judul WHERE outline_id = ? AND status = 'COMPLETED' LIMIT 1`,
-      [outlineId],
+    const [kartuRows] = await conn.query(
+      `SELECT * FROM kartu_konsultasi_outline WHERE outline_id = ? AND npm = ? AND is_completed = 1 LIMIT 1`,
+      [outlineId, npm],
     );
-    if (halamanRows.length === 0) {
+    if (kartuRows.length === 0) {
       return res.status(400).json({
         ok: false,
-        message: "Halaman persetujuan judul belum selesai",
+        message: "Kartu konsultasi outline belum selesai",
       });
     }
+    const kartu = kartuRows[0];
 
-    const [existingRows] = await db.query(
+    const [existingRows] = await conn.query(
       `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
       [outlineId],
     );
@@ -480,18 +521,90 @@ exports.initSkPenelitian = async (req, res, next) => {
         .json({ ok: false, message: "SK Penelitian sudah dibuat" });
     }
 
-    const [ins] = await db.query(
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [ins] = await conn.query(
       `INSERT INTO pengajuan_sk_penelitian (outline_id, status) VALUES (?, 'DRAFT')`,
       [outlineId],
     );
+    const skId = ins.insertId;
+
+    // Generate halaman persetujuan DOCX and store directly into sk files
+    try {
+      const [[mahasiswaRow]] = await conn.query(
+        `SELECT signature_image FROM users WHERE npm = ? LIMIT 1`,
+        [kartu.npm],
+      );
+      const [[p2Row]] = await conn.query(
+        `SELECT u.signature_image FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+        [kartu.pembimbing2_nidn],
+      );
+      const [[p1Row]] = await conn.query(
+        `SELECT u.signature_image FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+        [kartu.pembimbing1_nidn],
+      );
+      const [[kaprodiRow]] = await conn.query(
+        `SELECT u.signature_image FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
+        [kartu.program_studi_id],
+      );
+      const [[psRow]] = await conn.query(
+        `SELECT ps.nama AS program_studi_nama, d.nama AS kaprodi_nama
+         FROM program_studi ps
+         LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+         WHERE ps.id = ? LIMIT 1`,
+        [kartu.program_studi_id],
+      );
+
+      const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
+        kartu,
+        signatures: [
+          { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
+          { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
+          { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
+          { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
+        ],
+        programStudiNama: psRow?.program_studi_nama ?? kartu.program_studi_nama ?? "",
+        namaKaprodi: psRow?.kaprodi_nama ?? "",
+      });
+
+      const mimeDocx =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      const halamanFileName = `halaman-persetujuan-judul-${outlineId}-${Date.now()}.docx`;
+
+      await conn.query(
+        `INSERT INTO pengajuan_sk_penelitian_files
+           (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+         VALUES (?, 'HALAMAN_PERSETUJUAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+        [skId, halamanFileName, mimeDocx, halamanBuffer.toString("base64")],
+      );
+    } catch (_) {
+      // Non-fatal: SK init still succeeds even if halaman DOCX generation fails
+    }
+
+    await conn.commit();
+    txStarted = false;
 
     return res.status(201).json({
       ok: true,
       message: "SK Penelitian dibuat",
-      data: { id: ins.insertId },
+      data: { id: skId },
     });
   } catch (err) {
+    try { if (txStarted) await conn.rollback(); } catch (_) {}
     next(err);
+  } finally {
+    conn.release();
   }
 };
 
@@ -646,26 +759,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
     }
     const outlineRow = outlineRows[0];
 
-    // System-pull Halaman Persetujuan file
-    const [halamanFileRows] = await conn.query(
-      `SELECT f.file_content, f.file_name, f.mime_type
-       FROM halaman_persetujuan_judul_file f
-       INNER JOIN halaman_persetujuan_judul h ON h.id = f.halaman_persetujuan_judul_id
-       WHERE h.outline_id = ?
-       ORDER BY f.generated_at DESC
-       LIMIT 1`,
-      [outlineId],
-    );
-    if (halamanFileRows.length === 0) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message: "File halaman persetujuan tidak ditemukan",
-      });
-    }
-    const halamanFile = halamanFileRows[0];
-
     // System-pull Rekap Nilai (Transkrip)
     const [rekapRows] = await conn.query(
       `SELECT pf.file_content, pf.file_name
@@ -722,16 +815,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
       outlineRow.file_outline,
       "SYSTEM",
     );
-    await upsertSkFile(
-      conn,
-      sk.id,
-      "HALAMAN_PERSETUJUAN",
-      halamanFile.file_name,
-      halamanFile.mime_type ?? "application/octet-stream",
-      halamanFile.file_content,
-      "SYSTEM",
-    );
-
     await conn.query(
       `UPDATE pengajuan_sk_penelitian
        SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
