@@ -692,13 +692,26 @@ exports.seedDosenDummy = async (req, res, next) => {
 
       let dekanAccount = null;
       if (dsn.isDekan) {
+        const dekanUsername = dsn.username + "_dekan";
+        await upsertUserAccount(conn, {
+          username: dekanUsername,
+          passwordHash,
+          npm: null,
+          nidn: dsn.nidn,
+        });
+        const dekanUserId = await getUserIdByUsername(conn, dekanUsername);
+        if (!dekanUserId) {
+          throw new Error(
+            `Failed to resolve dekan account for username ${dekanUsername}`,
+          );
+        }
         await upsertUserRole(conn, {
-          userId,
+          userId: dekanUserId,
           roleId: dekanRoleId,
           programStudiId: null,
           assignedByUserId,
         });
-        dekanAccount = { userId, username: dsn.username, roles: ["DEKAN"] };
+        dekanAccount = { userId: dekanUserId, username: dekanUsername, roles: ["DEKAN"] };
       }
 
       let sekretariatProdiAccount = null;
@@ -749,9 +762,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         nidn: dsn.nidn,
         nama: dsn.nama,
         password: dsn.password,
-        roles: dsn.isDekan
-          ? ["LECTURER", "PEMBIMBING", "DEKAN"]
-          : ["LECTURER", "PEMBIMBING"],
+        roles: ["LECTURER", "PEMBIMBING"],
         kaprodiAccount,
         sekretariatAccount,
         dekanAccount,
