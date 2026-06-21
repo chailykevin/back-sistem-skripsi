@@ -249,10 +249,19 @@ async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
 
 async function getKartuLogs(queryable, kartuId) {
   const [logs] = await queryable.query(
-    `SELECT stage, submission_no, reviewer_nidn, reviewer_nama, status, catatan_kartu, logged_at
-     FROM kartu_konsultasi_outline_log
-     WHERE kartu_konsultasi_outline_id = ?
-     ORDER BY logged_at ASC, id ASC
+    `SELECT
+       s.stage,
+       r.submission_no,
+       d.nama   AS reviewer_nama,
+       r.decision_status AS status,
+       r.catatan_kartu,
+       r.reviewed_at AS logged_at
+     FROM konsultasi_outline_stage s
+     JOIN konsultasi_outline_review r ON r.konsultasi_outline_stage_id = s.id
+     LEFT JOIN users u ON u.id = r.reviewer_user_id
+     LEFT JOIN dosen d ON d.nidn = u.nidn
+     WHERE s.kartu_konsultasi_outline_id = ?
+     ORDER BY r.reviewed_at ASC, r.id ASC
      LIMIT 18`,
     [kartuId],
   );
@@ -959,14 +968,6 @@ exports.getMyKartu = async (req, res, next) => {
         .json({ ok: false, message: "Consultation not found" });
     }
 
-    const [logs] = await db.query(
-      `SELECT *
-       FROM kartu_konsultasi_outline_log
-       WHERE kartu_konsultasi_outline_id = ?
-       ORDER BY logged_at ASC`,
-      [kartu.id],
-    );
-
     const [files] = await db.query(
       `SELECT id, file_type, file_name, mime_type, generated_at, is_active
        FROM kartu_konsultasi_outline_file
@@ -975,7 +976,7 @@ exports.getMyKartu = async (req, res, next) => {
       [kartu.id],
     );
 
-    return res.json({ ok: true, data: { kartu, logs, files } });
+    return res.json({ ok: true, data: { kartu, files } });
   } catch (err) {
     next(err);
   }
@@ -1302,7 +1303,6 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
       `SELECT
          id,
          kartu_konsultasi_outline_id,
-         outline_id,
          stage,
          pembimbing_nidn,
          current_status,
@@ -1624,14 +1624,6 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       [kartu.id],
     );
 
-    const [logs] = await db.query(
-      `SELECT *
-       FROM kartu_konsultasi_outline_log
-       WHERE kartu_konsultasi_outline_id = ?
-       ORDER BY logged_at ASC, id ASC`,
-      [kartu.id],
-    );
-
     const [files] = await db.query(
       `SELECT id, file_type, file_name, mime_type, generated_at, is_active
        FROM kartu_konsultasi_outline_file
@@ -1653,7 +1645,6 @@ exports.getDetailForKaprodi = async (req, res, next) => {
         latestSubmissionOverall: submissions[0] ?? null,
         submissions,
         reviews,
-        logs,
         files,
       },
     });
@@ -1682,7 +1673,6 @@ exports.getLecturerStageDetail = async (req, res, next) => {
       `SELECT
          s.id AS stage_id,
          s.kartu_konsultasi_outline_id AS stage_kartu_konsultasi_outline_id,
-         s.outline_id AS stage_outline_id,
          s.stage AS stage_name,
          s.pembimbing_nidn AS stage_pembimbing_nidn,
          d.nama AS stage_dosen_name,
@@ -1743,28 +1733,12 @@ exports.getLecturerStageDetail = async (req, res, next) => {
       [row.kartu_id],
     );
 
-    const [logRows] = await db.query(
-      `SELECT
-         id,
-         konsultasi_outline_stage_id,
-         stage,
-         submission_no,
-         status,
-         catatan_kartu,
-         logged_at
-       FROM kartu_konsultasi_outline_log
-       WHERE kartu_konsultasi_outline_id = ?
-       ORDER BY logged_at DESC`,
-      [row.kartu_id],
-    );
-
     return res.json({
       ok: true,
       data: {
         stage: {
           id: row.stage_id,
           kartuKonsultasiOutlineId: row.stage_kartu_konsultasi_outline_id,
-          outlineId: row.stage_outline_id,
           stage: row.stage_name,
           pembimbingNidn: row.stage_pembimbing_nidn,
           dosenName: row.stage_dosen_name,
@@ -1790,7 +1764,6 @@ exports.getLecturerStageDetail = async (req, res, next) => {
         latestSubmission: submissionRows[0] ?? null,
         submissions: submissionRows,
         reviews: reviewRows,
-        kartuLogs: logRows,
       },
     });
   } catch (err) {
@@ -1956,12 +1929,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       await conn.query(
         `INSERT INTO konsultasi_outline_review_file (
            konsultasi_outline_review_id,
-           file_type,
            file_content,
            file_name,
            mime_type,
            uploaded_by_user_id
-         ) VALUES (?, 'REVIEWED_OUTLINE', ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?)`,
         [
           reviewIns.insertId,
           String(reviewFile),
@@ -1971,38 +1943,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         ],
       );
     }
-
-    const [reviewerRows] = await conn.query(
-      `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
-      [nidn],
-    );
-    const reviewerNama = reviewerRows[0]?.nama ?? null;
-
-    await conn.query(
-      `INSERT INTO kartu_konsultasi_outline_log (
-         kartu_konsultasi_outline_id,
-         konsultasi_outline_stage_id,
-         konsultasi_outline_review_id,
-         stage,
-         submission_no,
-         reviewer_nidn,
-         reviewer_nama,
-         status,
-         catatan_kartu,
-         logged_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [
-        stage.kartu_id,
-        stageId,
-        reviewIns.insertId,
-        stage.stage,
-        latestSubmission.submission_no,
-        nidn,
-        reviewerNama,
-        decisionStatus,
-        String(catatanKartu).trim(),
-      ],
-    );
 
     const stageStatusAfter = decisionStatus;
     const stageFinished =
@@ -2054,14 +1994,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
              kartu_konsultasi_outline_id,
-             outline_id,
              stage,
              pembimbing_nidn,
              current_status,
              current_submission_no,
              started_at
-           ) VALUES (?, ?, 'PEMBIMBING_1', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-          [stage.kartu_id, stage.outline_id, pembimbing1Nidn],
+           ) VALUES (?, 'PEMBIMBING_1', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+          [stage.kartu_id, pembimbing1Nidn],
         );
       }
     }
@@ -2087,7 +2026,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
       autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
         kartuId: stage.kartu_id,
-        outlineId: stage.outline_id,
+        outlineId: kartuInfo?.outline_id ?? null,
         generatedByUserId: req.user.id,
       });
 

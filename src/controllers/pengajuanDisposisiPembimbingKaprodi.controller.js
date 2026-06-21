@@ -458,16 +458,14 @@ exports.review = async (req, res, next) => {
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
              kartu_konsultasi_outline_id,
-             outline_id,
              stage,
              pembimbing_nidn,
              current_status,
              current_submission_no,
              started_at
-           ) VALUES (?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+           ) VALUES (?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
           [
             insKartu.insertId,
-            snap.outline_id,
             String(snap.pembimbing2_ditetapkan_nidn).trim(),
           ],
         );

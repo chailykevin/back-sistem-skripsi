@@ -1,0 +1,1 @@
+DROP TABLE kartu_konsultasi_outline_log;
