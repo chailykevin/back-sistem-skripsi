@@ -1082,8 +1082,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         );
         if (!existingKaprodi) {
           await conn.query(
-            `INSERT INTO pengajuan_sidang_kaprodi (skripsi_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
-            [kartuSkripsiId, autoSidangId],
+            `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_sidang_id, status) VALUES (?, 'DRAFT')`,
+            [autoSidangId],
           );
         }
       }

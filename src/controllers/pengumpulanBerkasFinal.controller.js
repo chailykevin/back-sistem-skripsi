@@ -148,7 +148,8 @@ async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sek
   const [mhsRow] = await conn.query(
     `SELECT m.nama, m.npm, psk.no_hp
      FROM mahasiswa m
-     LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.skripsi_id = ?
+     LEFT JOIN pengajuan_sidang ps_ref ON ps_ref.skripsi_id = ? AND ps_ref.status = 'COMPLETED'
+     LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps_ref.id
      WHERE m.npm = ?
      LIMIT 1`,
     [pengumpulan.skripsi_id, pengumpulan.npm],
