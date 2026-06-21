@@ -447,22 +447,15 @@ exports.review = async (req, res, next) => {
       }
 
       console.log("[review] UPDATE outline id:", snap.outline_id);
-      // Write approved pembimbing data back to outline so it becomes the source of truth
       await conn.query(
         `UPDATE outline SET
            pembimbing1_nidn = ?,
-           pembimbing1_nama = ?,
            pembimbing2_nidn = ?,
-           pembimbing2_nama = ?,
-           judul_final      = ?,
            approved_at      = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
           snap.pembimbing1_ditetapkan_nidn ?? null,
-          snap.pembimbing1_nama ?? null,
           String(snap.pembimbing2_ditetapkan_nidn).trim(),
-          snap.pembimbing2_nama ?? null,
-          String(snap.judul_skripsi).trim(),
           snap.outline_id,
         ],
       );

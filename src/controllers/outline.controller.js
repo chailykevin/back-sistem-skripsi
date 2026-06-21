@@ -98,8 +98,8 @@ exports.create = async (req, res, next) => {
       const outlineId = insertResult?.insertId ?? null;
       if (outlineId) {
         await conn.query(
-          `INSERT INTO outline_details
-           (outline_id, revision_no, file_outline_mahasiswa, file_outline_mahasiswa_name)
+          `INSERT INTO outline_submissions
+           (outline_id, submission_no, file_content, file_name)
            VALUES (?, 1, ?, ?)`,
           [outlineId, fileOutline, fileOutlineName ?? null]
         );
@@ -142,7 +142,6 @@ exports.create = async (req, res, next) => {
   }
 };
 
-// Can getById retrieve max 3 latest outlines?
 exports.getById = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -172,35 +171,37 @@ exports.getById = async (req, res, next) => {
            o.latar_belakang,
            o.npm,
            o.status,
-           ofl.decision_note,
+           rev.decision_note,
            o.created_at,
            o.updated_at,
            m.nama AS mahasiswa_nama,
            m.sks AS mahasiswa_sks,
            m.program_studi_id,
            ps.nama AS program_studi_nama,
-           ofl.file_outline_mahasiswa,
-           ofl.file_outline_mahasiswa_name,
-           ofl.file_outline_kaprodi,
-           ofl.file_outline_kaprodi_name,
-           ofl.revision_no AS file_revision_no,
-           ofl.updated_at AS file_updated_at,
-           prev.decision_note AS previous_decision_note
-        FROM outline o
-        INNER JOIN mahasiswa m ON m.npm = o.npm
-        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN outline_details ofl
-          ON ofl.outline_id = o.id
-         AND ofl.revision_no = (
-            SELECT MAX(revision_no) FROM outline_details WHERE outline_id = o.id
+           sub.file_content AS file_outline_mahasiswa,
+           sub.file_name AS file_outline_mahasiswa_name,
+           rev.file_content AS file_outline_kaprodi,
+           rev.file_name AS file_outline_kaprodi_name,
+           sub.submission_no AS file_revision_no,
+           sub.submitted_at AS file_updated_at,
+           prev_rev.decision_note AS previous_decision_note
+         FROM outline o
+         INNER JOIN mahasiswa m ON m.npm = o.npm
+         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+         LEFT JOIN outline_submissions sub
+           ON sub.outline_id = o.id
+          AND sub.submission_no = (
+            SELECT MAX(submission_no) FROM outline_submissions WHERE outline_id = o.id
           )
-        LEFT JOIN outline_details prev
-          ON prev.outline_id = o.id
-         AND prev.revision_no = (
-           SELECT MAX(revision_no) - 1 FROM outline_details WHERE outline_id = o.id
-         )
-        WHERE o.id = ? AND o.npm = ?
-        LIMIT 1`,
+         LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
+         LEFT JOIN outline_submissions prev_sub
+           ON prev_sub.outline_id = o.id
+          AND prev_sub.submission_no = (
+            SELECT MAX(submission_no) - 1 FROM outline_submissions WHERE outline_id = o.id
+          )
+         LEFT JOIN outline_reviews prev_rev ON prev_rev.submission_id = prev_sub.id
+         WHERE o.id = ? AND o.npm = ?
+         LIMIT 1`,
         [id, studentNpm]
       );
       rows = r;
@@ -213,35 +214,37 @@ exports.getById = async (req, res, next) => {
            o.latar_belakang,
            o.npm,
            o.status,
-           ofl.decision_note,
+           rev.decision_note,
            o.created_at,
            o.updated_at,
            m.nama AS mahasiswa_nama,
            m.sks AS mahasiswa_sks,
            m.program_studi_id,
            ps.nama AS program_studi_nama,
-           ofl.file_outline_mahasiswa,
-           ofl.file_outline_mahasiswa_name,
-           ofl.file_outline_kaprodi,
-           ofl.file_outline_kaprodi_name,
-           ofl.revision_no AS file_revision_no,
-           ofl.updated_at AS file_updated_at,
-           prev.decision_note AS previous_decision_note
-        FROM outline o
-        INNER JOIN mahasiswa m ON m.npm = o.npm
-        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN outline_details ofl
-          ON ofl.outline_id = o.id
-         AND ofl.revision_no = (
-            SELECT MAX(revision_no) FROM outline_details WHERE outline_id = o.id
+           sub.file_content AS file_outline_mahasiswa,
+           sub.file_name AS file_outline_mahasiswa_name,
+           rev.file_content AS file_outline_kaprodi,
+           rev.file_name AS file_outline_kaprodi_name,
+           sub.submission_no AS file_revision_no,
+           sub.submitted_at AS file_updated_at,
+           prev_rev.decision_note AS previous_decision_note
+         FROM outline o
+         INNER JOIN mahasiswa m ON m.npm = o.npm
+         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+         LEFT JOIN outline_submissions sub
+           ON sub.outline_id = o.id
+          AND sub.submission_no = (
+            SELECT MAX(submission_no) FROM outline_submissions WHERE outline_id = o.id
           )
-        LEFT JOIN outline_details prev
-          ON prev.outline_id = o.id
-         AND prev.revision_no = (
-           SELECT MAX(revision_no) - 1 FROM outline_details WHERE outline_id = o.id
-         )
-        WHERE o.id = ?
-        LIMIT 1`,
+         LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
+         LEFT JOIN outline_submissions prev_sub
+           ON prev_sub.outline_id = o.id
+          AND prev_sub.submission_no = (
+            SELECT MAX(submission_no) - 1 FROM outline_submissions WHERE outline_id = o.id
+          )
+         LEFT JOIN outline_reviews prev_rev ON prev_rev.submission_id = prev_sub.id
+         WHERE o.id = ?
+         LIMIT 1`,
         [id]
       );
       rows = r;
@@ -306,27 +309,28 @@ exports.getLatestMine = async (req, res, next) => {
          o.latar_belakang,
          o.npm,
          o.status,
-         ofl.decision_note,
+         rev.decision_note,
          o.created_at,
          o.updated_at,
          m.nama AS mahasiswa_nama,
          m.sks AS mahasiswa_sks,
          m.program_studi_id,
          ps.nama AS program_studi_nama,
-         ofl.file_outline_mahasiswa,
-         ofl.file_outline_mahasiswa_name,
-         ofl.file_outline_kaprodi,
-         ofl.file_outline_kaprodi_name,
-         ofl.revision_no AS file_revision_no,
-         ofl.updated_at AS file_updated_at
+         sub.file_content AS file_outline_mahasiswa,
+         sub.file_name AS file_outline_mahasiswa_name,
+         rev.file_content AS file_outline_kaprodi,
+         rev.file_name AS file_outline_kaprodi_name,
+         sub.submission_no AS file_revision_no,
+         sub.submitted_at AS file_updated_at
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
        INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LEFT JOIN outline_details ofl
-         ON ofl.outline_id = o.id
-        AND ofl.revision_no = (
-          SELECT MAX(revision_no) FROM outline_details WHERE outline_id = o.id
+       LEFT JOIN outline_submissions sub
+         ON sub.outline_id = o.id
+        AND sub.submission_no = (
+          SELECT MAX(submission_no) FROM outline_submissions WHERE outline_id = o.id
         )
+       LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
        WHERE o.npm = ?
        ORDER BY o.updated_at DESC
        LIMIT 1`,
@@ -400,20 +404,21 @@ exports.getReviewHistory = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         d.revision_no,
-         d.file_outline_mahasiswa,
-         d.file_outline_mahasiswa_name,
-         d.file_outline_kaprodi,
-         d.file_outline_kaprodi_name,
-         d.decision_note,
-         d.updated_at,
+         sub.submission_no AS revision_no,
+         sub.file_content AS file_outline_mahasiswa,
+         sub.file_name AS file_outline_mahasiswa_name,
+         rev.file_content AS file_outline_kaprodi,
+         rev.file_name AS file_outline_kaprodi_name,
+         rev.decision_note,
+         sub.submitted_at AS updated_at,
          o.id AS outline_id,
          o.judul,
          o.status
-       FROM outline_details d
-       INNER JOIN outline o ON o.id = d.outline_id
+       FROM outline_submissions sub
+       INNER JOIN outline o ON o.id = sub.outline_id
+       LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
        WHERE o.id = ?
-       ORDER BY d.revision_no DESC`,
+       ORDER BY sub.submission_no DESC`,
       [id]
     );
 
@@ -610,70 +615,36 @@ exports.reviewByKaprodi = async (req, res, next) => {
       });
     }
 
-    // Update review Kaprodi (status + decision fields) + optional file
-    if (kaprodiFile) {
-      await db.query(
-        `UPDATE outline
-         SET
-           status = ?,
-           program_studi_id = ?
-         WHERE id = ?`,
-        [status, programStudiId, outlineId]
-      );
+    await db.query(
+      `UPDATE outline SET status = ?, program_studi_id = ? WHERE id = ?`,
+      [status, programStudiId, outlineId]
+    );
 
-      const [revRows] = await db.query(
-        `SELECT revision_no
-         FROM outline_details
-         WHERE outline_id = ?
-         ORDER BY revision_no DESC
-         LIMIT 1`,
-        [outlineId]
-      );
-      const revisionNo = revRows[0]?.revision_no ?? null;
-      if (revisionNo) {
-        await db.query(
-          `UPDATE outline_details
-           SET
-             decision_note = ?,
-             file_outline_kaprodi = ?,
-             file_outline_kaprodi_name = ?
-           WHERE outline_id = ? AND revision_no = ?`,
-          [
-            note.length ? note : null,
-            kaprodiFile,
-            kaprodiFileOutlineName ?? null,
-            outlineId,
-            revisionNo,
-          ]
-        );
-      }
-    } else {
-      await db.query(
-        `UPDATE outline
-         SET
-           status = ?,
-           program_studi_id = ?
-         WHERE id = ?`,
-        [status, programStudiId, outlineId]
-      );
+    // find latest submission then upsert review
+    const [[latestSub]] = await db.query(
+      `SELECT id FROM outline_submissions
+       WHERE outline_id = ?
+       ORDER BY submission_no DESC
+       LIMIT 1`,
+      [outlineId]
+    );
 
-      const [revRows] = await db.query(
-        `SELECT revision_no
-         FROM outline_details
-         WHERE outline_id = ?
-         ORDER BY revision_no DESC
-         LIMIT 1`,
-        [outlineId]
+    if (latestSub) {
+      await db.query(
+        `INSERT INTO outline_reviews (submission_id, decision_note, file_content, file_name, reviewed_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           decision_note = VALUES(decision_note),
+           file_content  = VALUES(file_content),
+           file_name     = VALUES(file_name),
+           reviewed_at   = VALUES(reviewed_at)`,
+        [
+          latestSub.id,
+          note.length ? note : null,
+          kaprodiFile,
+          kaprodiFile ? (kaprodiFileOutlineName ?? null) : null,
+        ]
       );
-      const revisionNo = revRows[0]?.revision_no ?? null;
-      if (revisionNo) {
-        await db.query(
-          `UPDATE outline_details
-           SET decision_note = ?
-           WHERE outline_id = ? AND revision_no = ?`,
-          [note.length ? note : null, outlineId, revisionNo]
-        );
-      }
     }
 
     if (status !== "SUBMITTED") {
@@ -804,25 +775,24 @@ exports.resubmit = async (req, res, next) => {
     // resubmit => status kembali SUBMITTED
     sets.push("status = 'SUBMITTED'");
 
-
     const sql = `UPDATE outline SET ${sets.join(", ")} WHERE id = ?`;
     params.push(outlineId);
 
     await conn.query(sql, params);
 
     if (fileVal !== null && fileVal.length > 0) {
-      const [revRows] = await conn.query(
-        `SELECT MAX(revision_no) AS max_rev
-         FROM outline_details
+      const [[maxRow]] = await conn.query(
+        `SELECT MAX(submission_no) AS max_sub
+         FROM outline_submissions
          WHERE outline_id = ?`,
         [outlineId]
       );
-      const nextRev = Number(revRows[0]?.max_rev || 0) + 1;
+      const nextSub = Number(maxRow?.max_sub || 0) + 1;
       await conn.query(
-        `INSERT INTO outline_details
-         (outline_id, revision_no, file_outline_mahasiswa, file_outline_mahasiswa_name)
+        `INSERT INTO outline_submissions
+         (outline_id, submission_no, file_content, file_name)
          VALUES (?, ?, ?, ?)`,
-        [outlineId, nextRev, fileVal, fileNameVal ?? null]
+        [outlineId, nextSub, fileVal, fileNameVal ?? null]
       );
     }
 
