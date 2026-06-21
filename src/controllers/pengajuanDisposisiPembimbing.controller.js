@@ -155,49 +155,6 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
   return mapped;
 }
 
-async function upsertSyarat(conn, pengajuanDisposisiPembimbingId, syarat) {
-  const [existing] = await conn.query(
-    `SELECT pengajuan_disposisi_pembimbing_id
-     FROM pengajuan_disposisi_pembimbing_syarat
-     WHERE pengajuan_disposisi_pembimbing_id = ?
-     LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
-  );
-
-  if (existing.length > 0) {
-    await conn.query(
-      `UPDATE pengajuan_disposisi_pembimbing_syarat
-       SET
-         syarat_transkrip = ?,
-         syarat_krs = ?,
-         syarat_metodologi_nilai_min_c = ?,
-         updated_at = CURRENT_TIMESTAMP
-       WHERE pengajuan_disposisi_pembimbing_id = ?`,
-      [
-        syarat.syarat_transkrip,
-        syarat.syarat_krs,
-        syarat.syarat_metodologi_nilai_min_c,
-        pengajuanDisposisiPembimbingId,
-      ],
-    );
-    return;
-  }
-
-  await conn.query(
-    `INSERT INTO pengajuan_disposisi_pembimbing_syarat (
-       pengajuan_disposisi_pembimbing_id,
-       syarat_transkrip,
-       syarat_krs,
-       syarat_metodologi_nilai_min_c
-     ) VALUES (?, ?, ?, ?)`,
-    [
-      pengajuanDisposisiPembimbingId,
-      syarat.syarat_transkrip,
-      syarat.syarat_krs,
-      syarat.syarat_metodologi_nilai_min_c,
-    ],
-  );
-}
 
 async function upsertFileByType(
   conn,
@@ -223,17 +180,6 @@ async function upsertFileByType(
 async function hydratePengajuanDisposisiPembimbingReadData(baseRow) {
   if (!baseRow?.id) return baseRow;
 
-  const [syaratRows] = await db.query(
-    `SELECT
-       syarat_transkrip,
-       syarat_krs,
-       syarat_metodologi_nilai_min_c
-     FROM pengajuan_disposisi_pembimbing_syarat
-     WHERE pengajuan_disposisi_pembimbing_id = ?
-     LIMIT 1`,
-    [baseRow.id],
-  );
-
   const [fileRows] = await db.query(
     `SELECT file_type, file_content, file_name
      FROM pengajuan_disposisi_pembimbing_file
@@ -241,14 +187,10 @@ async function hydratePengajuanDisposisiPembimbingReadData(baseRow) {
     [baseRow.id],
   );
 
-  const syarat = syaratRows[0] || null;
   const fileMapped = mapNewFileRowsToLegacyKeys(fileRows);
 
   return {
     ...baseRow,
-    syarat_transkrip: syarat?.syarat_transkrip ?? 0,
-    syarat_krs: syarat?.syarat_krs ?? 0,
-    syarat_metodologi_nilai_min_c: syarat?.syarat_metodologi_nilai_min_c ?? 0,
     ...fileMapped,
   };
 }
@@ -340,8 +282,9 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
          no_hp, sks_diperoleh,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
+         syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
@@ -352,16 +295,13 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         pembimbing2DiajukanNidn ?? null,
         perluSuratPengantar ? 1 : 0,
         namaPerusahaan ?? null,
+        toBit(syaratTranskrip, 0),
+        toBit(syaratKrs, 0),
+        toBit(syaratMetodologi, 0),
       ],
     );
 
     const pengajuanDisposisiPembimbingId = result.insertId;
-
-    await upsertSyarat(conn, pengajuanDisposisiPembimbingId, {
-      syarat_transkrip: toBit(syaratTranskrip, 0),
-      syarat_krs: toBit(syaratKrs, 0),
-      syarat_metodologi_nilai_min_c: toBit(syaratMetodologi, 0),
-    });
 
     const [docDataRows] = await conn.query(
       `SELECT
@@ -884,7 +824,7 @@ exports.resubmit = async (req, res, next) => {
     txStarted = true;
 
     const [rows] = await conn.query(
-      `SELECT id, status
+      `SELECT id, status, syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
        FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
@@ -945,6 +885,13 @@ exports.resubmit = async (req, res, next) => {
       sets.push("nama_perusahaan = ?");
       params.push(namaPerusahaanVal);
     }
+    const currentRow = rows[0];
+    sets.push("syarat_transkrip = ?");
+    params.push(toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0));
+    sets.push("syarat_krs = ?");
+    params.push(toBit(syaratKrs, currentRow.syarat_krs ?? 0));
+    sets.push("syarat_metodologi_nilai_min_c = ?");
+    params.push(toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0));
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
     sets.push("disposisi_at = NULL");
@@ -957,35 +904,6 @@ exports.resubmit = async (req, res, next) => {
     const sql = `UPDATE pengajuan_disposisi_pembimbing SET ${sets.join(", ")} WHERE id = ?`;
     params.push(id);
     await conn.query(sql, params);
-
-    if (
-      syaratTranskrip !== undefined ||
-      syaratKrs !== undefined ||
-      syaratMetodologi !== undefined
-    ) {
-      const [currentSyaratRows] = await conn.query(
-        `SELECT
-           syarat_transkrip,
-           syarat_krs,
-           syarat_metodologi_nilai_min_c
-         FROM pengajuan_disposisi_pembimbing_syarat
-         WHERE pengajuan_disposisi_pembimbing_id = ?
-         LIMIT 1`,
-        [id],
-      );
-      const currentSyarat = currentSyaratRows[0] || {};
-      await upsertSyarat(conn, id, {
-        syarat_transkrip: toBit(
-          syaratTranskrip,
-          currentSyarat.syarat_transkrip ?? 0,
-        ),
-        syarat_krs: toBit(syaratKrs, currentSyarat.syarat_krs ?? 0),
-        syarat_metodologi_nilai_min_c: toBit(
-          syaratMetodologi,
-          currentSyarat.syarat_metodologi_nilai_min_c ?? 0,
-        ),
-      });
-    }
 
     const [resubDocDataRows] = await conn.query(
       `SELECT

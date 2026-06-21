@@ -112,49 +112,6 @@ async function generateFormulirDoc(data) {
   return outputBuffer.toString("base64");
 }
 
-async function upsertSyarat(conn, pengajuanDisposisiPembimbingId, syarat) {
-  const [existing] = await conn.query(
-    `SELECT pengajuan_disposisi_pembimbing_id
-     FROM pengajuan_disposisi_pembimbing_syarat
-     WHERE pengajuan_disposisi_pembimbing_id = ?
-     LIMIT 1`,
-    [pengajuanDisposisiPembimbingId],
-  );
-
-  if (existing.length > 0) {
-    await conn.query(
-      `UPDATE pengajuan_disposisi_pembimbing_syarat
-       SET
-         syarat_transkrip = ?,
-         syarat_krs = ?,
-         syarat_metodologi_nilai_min_c = ?,
-         updated_at = CURRENT_TIMESTAMP
-       WHERE pengajuan_disposisi_pembimbing_id = ?`,
-      [
-        syarat.syarat_transkrip,
-        syarat.syarat_krs,
-        syarat.syarat_metodologi_nilai_min_c,
-        pengajuanDisposisiPembimbingId,
-      ],
-    );
-    return;
-  }
-
-  await conn.query(
-    `INSERT INTO pengajuan_disposisi_pembimbing_syarat (
-       pengajuan_disposisi_pembimbing_id,
-       syarat_transkrip,
-       syarat_krs,
-       syarat_metodologi_nilai_min_c
-     ) VALUES (?, ?, ?, ?)`,
-    [
-      pengajuanDisposisiPembimbingId,
-      syarat.syarat_transkrip,
-      syarat.syarat_krs,
-      syarat.syarat_metodologi_nilai_min_c,
-    ],
-  );
-}
 
 async function upsertFileByType(
   conn,
@@ -318,7 +275,7 @@ exports.review = async (req, res, next) => {
     // Pastikan pengajuan ini memang milik prodinya Kaprodi
     const [check] = await db.query(
       `
-      SELECT pj.id
+      SELECT pj.id, pj.syarat_transkrip, pj.syarat_krs, pj.syarat_metodologi_nilai_min_c
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -525,30 +482,20 @@ exports.review = async (req, res, next) => {
       syaratKrs !== undefined ||
       syaratMetodologi !== undefined
     ) {
-      console.log("[review] upserting syarat");
-      const [currentSyaratRows] = await conn.query(
-        `SELECT
-           syarat_transkrip,
-           syarat_krs,
-           syarat_metodologi_nilai_min_c
-         FROM pengajuan_disposisi_pembimbing_syarat
-         WHERE pengajuan_disposisi_pembimbing_id = ?
-         LIMIT 1`,
-        [id],
+      console.log("[review] updating syarat");
+      const currentRow = check[0];
+      await conn.query(
+        `UPDATE pengajuan_disposisi_pembimbing
+         SET syarat_transkrip = ?, syarat_krs = ?, syarat_metodologi_nilai_min_c = ?
+         WHERE id = ?`,
+        [
+          toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0),
+          toBit(syaratKrs, currentRow.syarat_krs ?? 0),
+          toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0),
+          id,
+        ],
       );
-      const currentSyarat = currentSyaratRows[0] || {};
-      await upsertSyarat(conn, id, {
-        syarat_transkrip: toBit(
-          syaratTranskrip,
-          currentSyarat.syarat_transkrip ?? 0,
-        ),
-        syarat_krs: toBit(syaratKrs, currentSyarat.syarat_krs ?? 0),
-        syarat_metodologi_nilai_min_c: toBit(
-          syaratMetodologi,
-          currentSyarat.syarat_metodologi_nilai_min_c ?? 0,
-        ),
-      });
-      console.log("[review] syarat upserted");
+      console.log("[review] syarat updated");
     }
 
     console.log("[review] fetching reviewDocRows");
@@ -556,6 +503,7 @@ exports.review = async (req, res, next) => {
       `SELECT
          pj.npm, pj.no_hp, pj.sks_diperoleh, pj.perlu_surat_pengantar, pj.nama_perusahaan,
          pj.submitted_at,
+         pj.syarat_transkrip, pj.syarat_krs, pj.syarat_metodologi_nilai_min_c,
          m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
          ps.nama AS program_studi_nama, ps.kaprodi_nidn,
          o.judul AS judul_skripsi,
@@ -585,13 +533,6 @@ exports.review = async (req, res, next) => {
     console.log("[review] reviewDocRows[0] keys:", Object.keys(rd));
 
     const keputusanMap = { APPROVED: "Diterima", NEED_REVISION: "Perlu Revisi", REJECTED: "Ditolak" };
-    const [currentSyaratForDoc] = await conn.query(
-      `SELECT syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
-       FROM pengajuan_disposisi_pembimbing_syarat WHERE pengajuan_disposisi_pembimbing_id = ? LIMIT 1`,
-      [id],
-    );
-    const syaratDoc = currentSyaratForDoc[0] ?? {};
-    console.log("[review] syaratDoc:", syaratDoc);
 
     console.log("[review] generating formulir doc");
     const reviewFormulirBase64 = await generateFormulirDoc({
@@ -613,9 +554,9 @@ exports.review = async (req, res, next) => {
       dosenPembimbing1: rd.pembimbing1_ditetapkan_nama ?? "",
       dosenPembimbing2: rd.pembimbing2_ditetapkan_nama ?? "",
       catatan: catatanKaprodi ?? null,
-      syaratTranskrip: Boolean(syaratDoc.syarat_transkrip),
-      syaratKrs: Boolean(syaratDoc.syarat_krs),
-      syaratMetodologi: Boolean(syaratDoc.syarat_metodologi_nilai_min_c),
+      syaratTranskrip: Boolean(rd.syarat_transkrip),
+      syaratKrs: Boolean(rd.syarat_krs),
+      syaratMetodologi: Boolean(rd.syarat_metodologi_nilai_min_c),
       namaKaprodi: rd.kaprodi_nama ?? "",
       kaprodiSignature: rd.kaprodi_signature,
     });
