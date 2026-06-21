@@ -243,9 +243,17 @@ async function buildHalamanPersetujuanDocxBuffer({
 async function generateSkDocuments(conn, sk, outlineId) {
   // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
   const [[kartu]] = await conn.query(
-    `SELECT k.nama_mahasiswa, k.npm, k.judul_skripsi,
-            k.pembimbing1_nama, k.pembimbing2_nama, k.program_studi_id, k.program_studi_nama
+    `SELECT k.npm, k.judul_skripsi, k.program_studi_id,
+            k.pembimbing1_nidn, k.pembimbing2_nidn,
+            m.nama AS nama_mahasiswa,
+            ps.nama AS program_studi_nama,
+            d1.nama AS pembimbing1_nama,
+            d2.nama AS pembimbing2_nama
      FROM kartu_konsultasi_outline k
+     JOIN mahasiswa m ON m.npm = k.npm
+     JOIN program_studi ps ON ps.id = k.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
      WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
@@ -500,7 +508,11 @@ exports.initSkPenelitian = async (req, res, next) => {
     }
 
     const [kartuRows] = await conn.query(
-      `SELECT * FROM kartu_konsultasi_outline WHERE outline_id = ? AND npm = ? AND is_completed = 1 LIMIT 1`,
+      `SELECT k.id, k.npm, k.outline_id, k.program_studi_id, k.pembimbing1_nidn, k.pembimbing2_nidn,
+              k.judul_skripsi, k.is_completed
+       FROM kartu_konsultasi_outline k
+       WHERE k.outline_id = ? AND k.npm = ? AND k.is_completed = 1
+       LIMIT 1`,
       [outlineId, npm],
     );
     if (kartuRows.length === 0) {
@@ -559,22 +571,33 @@ exports.initSkPenelitian = async (req, res, next) => {
         [kartu.program_studi_id],
       );
       const [[psRow]] = await conn.query(
-        `SELECT ps.nama AS program_studi_nama, d.nama AS kaprodi_nama
+        `SELECT ps.nama AS program_studi_nama, d.nama AS kaprodi_nama,
+                m.nama AS nama_mahasiswa,
+                d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
          FROM program_studi ps
          LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+         JOIN mahasiswa m ON m.npm = ?
+         LEFT JOIN dosen d1 ON d1.nidn = ?
+         LEFT JOIN dosen d2 ON d2.nidn = ?
          WHERE ps.id = ? LIMIT 1`,
-        [kartu.program_studi_id],
+        [kartu.npm, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
       );
+      const kartuForHalaman = {
+        ...kartu,
+        nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
+        pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
+        pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+      };
 
       const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-        kartu,
+        kartu: kartuForHalaman,
         signatures: [
           { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
           { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
           { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
           { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
         ],
-        programStudiNama: psRow?.program_studi_nama ?? kartu.program_studi_nama ?? "",
+        programStudiNama: psRow?.program_studi_nama ?? "",
         namaKaprodi: psRow?.kaprodi_nama ?? "",
       });
 
@@ -618,11 +641,13 @@ exports.getSkPenelitian = async (req, res, next) => {
     const [skRows] = await db.query(
       `SELECT
          sk.*,
-         k.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          k.judul_skripsi,
-         k.program_studi_nama
+         ps.nama AS program_studi_nama
        FROM pengajuan_sk_penelitian sk
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
+       LEFT JOIN mahasiswa m ON m.npm = k.npm
+       LEFT JOIN program_studi ps ON ps.id = k.program_studi_id
        WHERE sk.outline_id = ?
        LIMIT 1`,
       [outlineId],
@@ -635,7 +660,7 @@ exports.getSkPenelitian = async (req, res, next) => {
     }
 
     const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, status, created_at
+      `SELECT id, file_type, file_name, mime_type, source, status, catatan_sekretariat, created_at
        FROM pengajuan_sk_penelitian_files
        WHERE pengajuan_sk_penelitian_id = ?
        ORDER BY file_type ASC`,
@@ -886,7 +911,7 @@ exports.reviewSkFile = async (req, res, next) => {
       });
     }
 
-    const { status } = req.body ?? {};
+    const { status, catatanSekretariat } = req.body ?? {};
     if (!VALID_FILE_STATUSES.includes(status)) {
       return res.status(400).json({
         ok: false,
@@ -934,8 +959,8 @@ exports.reviewSkFile = async (req, res, next) => {
     }
 
     await conn.query(
-      `UPDATE pengajuan_sk_penelitian_files SET status = ? WHERE id = ?`,
-      [status, fileRow.id],
+      `UPDATE pengajuan_sk_penelitian_files SET status = ?, catatan_sekretariat = ? WHERE id = ?`,
+      [status, catatanSekretariat ? String(catatanSekretariat).trim() : null, fileRow.id],
     );
 
     await conn.commit();
@@ -1116,11 +1141,8 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     await generateSkDocuments(conn, sk, outlineId);
 
     const [[skripsiSource]] = await conn.query(
-      `SELECT npm, judul_skripsi AS judul, nama_mahasiswa,
-              program_studi_id, program_studi_nama,
-              pembimbing1_nidn, pembimbing1_nama,
-              pembimbing2_nidn, pembimbing2_nama,
-              outline_id
+      `SELECT npm, judul_skripsi AS judul, program_studi_id,
+              pembimbing1_nidn, pembimbing2_nidn, outline_id
        FROM kartu_konsultasi_outline
        WHERE outline_id = ?
        LIMIT 1`,
@@ -1129,21 +1151,16 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     if (skripsiSource) {
       await conn.query(
         `INSERT INTO skripsi
-           (npm, outline_id, judul, status, program_studi_id, program_studi_nama,
-            pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
-            nama_mahasiswa)
-         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?, ?, ?)`,
+           (npm, outline_id, judul, status, program_studi_id,
+            pembimbing1_nidn, pembimbing2_nidn)
+         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?)`,
         [
           skripsiSource.npm,
           skripsiSource.outline_id,
           skripsiSource.judul,
           skripsiSource.program_studi_id ?? null,
-          skripsiSource.program_studi_nama ?? null,
           skripsiSource.pembimbing1_nidn ?? null,
-          skripsiSource.pembimbing1_nama ?? null,
           skripsiSource.pembimbing2_nidn ?? null,
-          skripsiSource.pembimbing2_nama ?? null,
-          skripsiSource.nama_mahasiswa ?? null,
         ],
       );
     }
@@ -1402,11 +1419,13 @@ exports.listSkForSekretariat = async (req, res, next) => {
          sk.verified_at,
          sk.completed_at,
          sk.created_at,
-         k.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          k.judul_skripsi,
-         k.program_studi_nama
+         ps.nama AS program_studi_nama
        FROM pengajuan_sk_penelitian sk
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
+       LEFT JOIN mahasiswa m ON m.npm = k.npm
+       LEFT JOIN program_studi ps ON ps.id = k.program_studi_id
        ${filterByStatus ? "WHERE sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
       filterByStatus ? [statusParam] : [],
@@ -1448,13 +1467,15 @@ exports.listSkForDekan = async (req, res, next) => {
          sk.submitted_at,
          sk.completed_at,
          sk.created_at,
-         k.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          k.judul_skripsi,
-         k.program_studi_nama,
+         ps.nama AS program_studi_nama,
          k.program_studi_id,
          (SELECT id FROM skripsi WHERE npm = k.npm ORDER BY id DESC LIMIT 1) AS skripsi_id
        FROM pengajuan_sk_penelitian sk
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
+       LEFT JOIN mahasiswa m ON m.npm = k.npm
+       LEFT JOIN program_studi ps ON ps.id = k.program_studi_id
        WHERE k.program_studi_id IN (
          SELECT id FROM program_studi WHERE fakultas_id = (
            SELECT id FROM fakultas WHERE dekan_nidn = ?

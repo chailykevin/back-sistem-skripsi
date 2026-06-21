@@ -956,10 +956,11 @@ exports.getPengajuanSidang = async (req, res, next) => {
     }
 
     const [[mahasiswaInfo]] = await db.query(
-      `SELECT s.npm, s.nama_mahasiswa, m.sks, s.program_studi_id, s.program_studi_nama,
-              s.perlu_surat_pengantar
+      `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks, s.program_studi_id,
+              ps.nama AS program_studi_nama, s.perlu_surat_pengantar
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
        WHERE s.id = ? LIMIT 1`,
       [skripsiId],
     );
@@ -1926,13 +1927,16 @@ exports.getKaprodi = async (req, res, next) => {
     }
 
     const [[autoData]] = await db.query(
-      `SELECT s.npm, s.nama_mahasiswa, m.sks, s.program_studi_id,
-              s.program_studi_nama, s.judul AS judul_skripsi,
-              s.pembimbing1_nidn, s.pembimbing1_nama,
-              s.pembimbing2_nidn, s.pembimbing2_nama,
+      `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks, s.program_studi_id,
+              ps.nama AS program_studi_nama, s.judul AS judul_skripsi,
+              s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
+              s.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
               COALESCE(psd.ujian_ke, 0) AS ujian_ke
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN pengajuan_sidang psd ON psd.skripsi_id = s.id
          AND psd.status NOT IN ('REJECTED')
        WHERE s.id = ?
@@ -2217,17 +2221,19 @@ exports.submitKaprodi = async (req, res, next) => {
 
     // Generate LEMBAR_PERMOHONAN_UJIAN
     const [[docData]] = await conn.query(
-      `SELECT s.npm, s.nama_mahasiswa, m.sks,
+      `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks,
               ps.nama AS prodi_nama, f.nama AS fakultas_nama,
               s.judul AS judul_skripsi,
-              s.pembimbing1_nama AS dospem1_nama,
-              s.pembimbing2_nama AS dospem2_nama,
+              d1.nama AS dospem1_nama,
+              d2.nama AS dospem2_nama,
               u_kaprodi.signature_image AS kaprodi_sig,
               d_kaprodi.nama AS nama_kaprodi,
               u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
        LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
          AND u_kaprodi.is_active = 1
@@ -2797,12 +2803,13 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
          psk.reviewed_at,
          psk.created_at,
          s.npm,
-         s.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          s.program_studi_id,
          ps.nama AS program_studi_nama,
          s.judul AS judul_skripsi
        FROM pengajuan_sidang_kaprodi psk
        JOIN skripsi s ON s.id = psk.skripsi_id
+       JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY psk.submitted_at DESC`,
@@ -3010,18 +3017,20 @@ exports.submitDisposisi = async (req, res, next) => {
 
     const [[docData]] = await conn.query(
       `SELECT
-         s.npm, s.nama_mahasiswa,
+         s.npm, m.nama AS nama_mahasiswa,
          ps.nama AS prodi_nama,
          f.nama AS fakultas_nama,
          s.judul AS judul_skripsi,
-         s.pembimbing1_nama AS dospem1_nama,
-         s.pembimbing2_nama AS dospem2_nama,
+         d1.nama AS dospem1_nama,
+         d2.nama AS dospem2_nama,
          u_kaprodi.signature_image AS kaprodi_sig,
          d_kaprodi.nama AS nama_kaprodi,
          u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
        LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
          AND u_kaprodi.is_active = 1
@@ -3186,7 +3195,7 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
       `SELECT
          ps2.id AS pengajuan_sidang_id,
          psk.skripsi_id,
-         s.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          s.npm,
          ps.nama AS program_studi_nama,
          s.judul AS judul_skripsi,
@@ -3202,6 +3211,7 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
          psk.disposisi_submitted_at
        FROM pengajuan_sidang_kaprodi psk
        JOIN skripsi s ON s.id = psk.skripsi_id
+       JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
        LEFT JOIN pengajuan_sidang ps2 ON ps2.id = psk.pengajuan_sidang_id
          AND ps2.status IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED')
@@ -3277,8 +3287,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
          f.nama AS fakultas_nama,
          f.kode AS f_kode,
          s.judul AS judul_skripsi,
-         s.pembimbing1_nama, s.pembimbing1_nidn,
-         s.pembimbing2_nama, s.pembimbing2_nidn,
+         d1.nama AS pembimbing1_nama, s.pembimbing1_nidn,
+         d2.nama AS pembimbing2_nama, s.pembimbing2_nidn,
          psk.nomor_surat, psk.verified_at AS sk_verified_at,
          psk_k.penguji1_nama, psk_k.penguji1_nidn,
          psk_k.penguji2_nama, psk_k.penguji2_nidn,
@@ -3288,6 +3298,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
        JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
        JOIN fakultas f ON f.id = ps.fakultas_id
+       LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = s.outline_id
        LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = ?
        WHERE s.id = ?
