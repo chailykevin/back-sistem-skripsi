@@ -190,10 +190,21 @@ function resolveActiveStage(stages) {
 
 async function getKartuLogs(queryable, kartuId) {
   const [logs] = await queryable.query(
-    `SELECT chapter_group, stage, submission_no, reviewer_nidn, reviewer_nama, status, catatan_kartu, logged_at
-     FROM kartu_konsultasi_skripsi_log
-     WHERE kartu_konsultasi_skripsi_id = ?
-     ORDER BY logged_at ASC, id ASC`,
+    `SELECT
+       st.chapter_group,
+       st.stage,
+       rv.submission_no,
+       u.nidn          AS reviewer_nidn,
+       d.nama          AS reviewer_nama,
+       rv.decision_status AS status,
+       rv.catatan_kartu,
+       rv.reviewed_at  AS logged_at
+     FROM konsultasi_skripsi_review rv
+     JOIN konsultasi_skripsi_stage st ON st.id = rv.konsultasi_skripsi_stage_id
+     LEFT JOIN users u ON u.id = rv.reviewer_user_id
+     LEFT JOIN dosen d ON d.nidn = u.nidn
+     WHERE st.kartu_konsultasi_skripsi_id = ?
+     ORDER BY rv.reviewed_at ASC`,
     [kartuId],
   );
   return logs;
@@ -308,21 +319,15 @@ async function generateAndStoreFinalKartuDocx(
   const fileName = `kartu-penulisan-skripsi-${skripsiId}-${Date.now()}.docx`;
 
   await queryable.query(
-    `UPDATE kartu_konsultasi_skripsi_file
-     SET is_active = 0
-     WHERE kartu_konsultasi_skripsi_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1`,
-    [kartuId],
+    `UPDATE kartu_konsultasi_skripsi
+     SET docx_content = ?, docx_file_name = ?,
+         docx_mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+         generated_by_user_id = ?, generated_at = NOW()
+     WHERE id = ?`,
+    [outputBuffer.toString("base64"), fileName, generatedByUserId, kartuId],
   );
 
-  const [ins] = await queryable.query(
-    `INSERT INTO kartu_konsultasi_skripsi_file (
-       kartu_konsultasi_skripsi_id, file_type, file_content, file_name,
-       generated_by_user_id, generated_at, is_active
-     ) VALUES (?, 'FINAL_DOCX', ?, ?, ?, CURRENT_TIMESTAMP, 1)`,
-    [kartuId, outputBuffer.toString("base64"), fileName, generatedByUserId],
-  );
-
-  return { id: ins.insertId, kartuId, fileType: "FINAL_DOCX", fileName };
+  return { kartuId, fileName };
 }
 
 exports.initKartu = async (req, res, next) => {
@@ -381,9 +386,16 @@ exports.initKartu = async (req, res, next) => {
     }
 
     const [[skripsiRow]] = await conn.query(
-      `SELECT npm, judul, nama_mahasiswa, program_studi_id, program_studi_nama,
-              pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama
-       FROM skripsi WHERE id = ? AND npm = ? LIMIT 1`,
+      `SELECT s.npm, s.judul, s.program_studi_id,
+              m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+              s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
+              s.pembimbing2_nidn, d2.nama AS pembimbing2_nama
+       FROM skripsi s
+       JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
+       WHERE s.id = ? AND s.npm = ? LIMIT 1`,
       [skripsiId, npm],
     );
     if (!skripsiRow) {
@@ -423,10 +435,10 @@ exports.initKartu = async (req, res, next) => {
 
     await conn.query(
       `INSERT INTO konsultasi_skripsi_stage (
-         kartu_konsultasi_skripsi_id, skripsi_id, chapter_group, stage,
+         kartu_konsultasi_skripsi_id, chapter_group, stage,
          pembimbing_nidn, current_status, current_submission_no, started_at
-       ) VALUES (?, ?, 'BAB_1_2', 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-      [kartuId, skripsiId, skripsiRow.pembimbing2_nidn],
+       ) VALUES (?, 'BAB_1_2', 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+      [kartuId, skripsiRow.pembimbing2_nidn],
     );
 
     await conn.commit();
@@ -942,31 +954,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       );
     }
 
-    const [reviewerRows] = await conn.query(
-      `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
-      [nidn],
-    );
-    const reviewerNama = reviewerRows[0]?.nama ?? null;
-
-    await conn.query(
-      `INSERT INTO kartu_konsultasi_skripsi_log (
-         kartu_konsultasi_skripsi_id, konsultasi_skripsi_stage_id, konsultasi_skripsi_review_id,
-         chapter_group, stage, submission_no, reviewer_nidn, reviewer_nama, status, catatan_kartu, logged_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [
-        stage.kartu_id,
-        stageId,
-        reviewIns.insertId,
-        stage.chapter_group,
-        stage.stage,
-        latestSubmission.submission_no,
-        nidn,
-        reviewerNama,
-        decisionStatus,
-        String(catatanKartu).trim(),
-      ],
-    );
-
     const stageFinished =
       decisionStatus === "CONTINUE" || decisionStatus === "ACCEPTED";
     await conn.query(
@@ -1009,15 +996,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         }
         await conn.query(
           `INSERT INTO konsultasi_skripsi_stage (
-             kartu_konsultasi_skripsi_id, skripsi_id, chapter_group, stage,
+             kartu_konsultasi_skripsi_id, chapter_group, stage,
              pembimbing_nidn, current_status, current_submission_no, started_at
-           ) VALUES (?, ?, ?, 'PEMBIMBING_1', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-          [
-            stage.kartu_id,
-            stage.skripsi_id,
-            stage.chapter_group,
-            pembimbing1Nidn,
-          ],
+           ) VALUES (?, ?, 'PEMBIMBING_1', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+          [stage.kartu_id, stage.chapter_group, pembimbing1Nidn],
         );
       }
     }
@@ -1053,15 +1035,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           }
           await conn.query(
             `INSERT INTO konsultasi_skripsi_stage (
-               kartu_konsultasi_skripsi_id, skripsi_id, chapter_group, stage,
+               kartu_konsultasi_skripsi_id, chapter_group, stage,
                pembimbing_nidn, current_status, current_submission_no, started_at
-             ) VALUES (?, ?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-            [
-              stage.kartu_id,
-              stage.skripsi_id,
-              nextChapter,
-              pembimbing2Nidn,
-            ],
+             ) VALUES (?, ?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+            [stage.kartu_id, nextChapter, pembimbing2Nidn],
           );
         }
       } else {
@@ -1072,24 +1049,29 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           [stage.kartu_id],
         );
 
+        const [[kartuSkripsiRow]] = await conn.query(
+          `SELECT skripsi_id FROM kartu_konsultasi_skripsi WHERE id = ? LIMIT 1`,
+          [stage.kartu_id],
+        );
         autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
           kartuId: stage.kartu_id,
-          skripsiId: stage.skripsi_id,
+          skripsiId: kartuSkripsiRow?.skripsi_id,
           generatedByUserId: req.user.id,
         });
 
         // Auto-init pengajuan_sidang DRAFT first, then pengajuan_sidang_kaprodi linked to it
+        const kartuSkripsiId = kartuSkripsiRow?.skripsi_id;
         let [[existingSidang]] = await conn.query(
           `SELECT id FROM pengajuan_sidang
            WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
            ORDER BY id DESC LIMIT 1`,
-          [stage.skripsi_id],
+          [kartuSkripsiId],
         );
         let autoSidangId = existingSidang?.id ?? null;
         if (!autoSidangId) {
           const [sidangIns] = await conn.query(
             `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
-            [stage.skripsi_id],
+            [kartuSkripsiId],
           );
           autoSidangId = sidangIns.insertId;
         }
@@ -1101,7 +1083,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         if (!existingKaprodi) {
           await conn.query(
             `INSERT INTO pengajuan_sidang_kaprodi (skripsi_id, pengajuan_sidang_id, status) VALUES (?, ?, 'DRAFT')`,
-            [stage.skripsi_id, autoSidangId],
+            [kartuSkripsiId, autoSidangId],
           );
         }
       }
@@ -1232,7 +1214,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
 
     const [stageRows] = await db.query(
       `SELECT
-         s.id AS stage_id, s.kartu_konsultasi_skripsi_id, s.skripsi_id,
+         s.id AS stage_id, s.kartu_konsultasi_skripsi_id, k.skripsi_id,
          s.chapter_group, s.stage AS stage_name, s.pembimbing_nidn,
          d.nama AS stage_dosen_name, s.current_status, s.current_submission_no,
          s.started_at, s.finished_at,
@@ -1275,10 +1257,17 @@ exports.getLecturerStageDetail = async (req, res, next) => {
     );
 
     const [logs] = await db.query(
-      `SELECT chapter_group, stage, submission_no, status, catatan_kartu, logged_at
-       FROM kartu_konsultasi_skripsi_log
-       WHERE kartu_konsultasi_skripsi_id = ?
-       ORDER BY logged_at DESC`,
+      `SELECT
+         st.chapter_group,
+         st.stage,
+         rv.submission_no,
+         rv.decision_status AS status,
+         rv.catatan_kartu,
+         rv.reviewed_at     AS logged_at
+       FROM konsultasi_skripsi_review rv
+       JOIN konsultasi_skripsi_stage st ON st.id = rv.konsultasi_skripsi_stage_id
+       WHERE st.kartu_konsultasi_skripsi_id = ?
+       ORDER BY rv.reviewed_at DESC`,
       [row.kartu_id],
     );
 
@@ -1528,27 +1517,20 @@ exports.getFinalKartuFile = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    const [rows] = await db.query(
-      `SELECT id, file_type, file_content, file_name, generated_at
-       FROM kartu_konsultasi_skripsi_file
-       WHERE kartu_konsultasi_skripsi_id = ? AND is_active = 1 AND file_type = 'FINAL_DOCX'
-       ORDER BY generated_at DESC LIMIT 1`,
-      [kartu.id],
-    );
-    const file = rows[0] ?? null;
-    if (!file) {
+    if (!kartu.docx_content) {
       return res
         .status(404)
         .json({ ok: false, message: "Final artifact not found" });
     }
 
-    const fileBuffer = Buffer.from(file.file_content, "base64");
+    const fileBuffer = Buffer.from(kartu.docx_content, "base64");
     const mimeType =
+      kartu.docx_mime_type ??
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     res.setHeader("Content-Type", mimeType);
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${file.file_name ?? "kartu-konsultasi-skripsi.docx"}"`,
+      `attachment; filename="${kartu.docx_file_name ?? "kartu-konsultasi-skripsi.docx"}"`,
     );
     res.setHeader("Content-Length", fileBuffer.length);
     return res.send(fileBuffer);
