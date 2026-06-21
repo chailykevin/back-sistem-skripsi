@@ -429,28 +429,18 @@ exports.review = async (req, res, next) => {
         const [insKartu] = await conn.query(
           `INSERT INTO kartu_konsultasi_outline (
              outline_id,
-             nama_mahasiswa,
              npm,
              program_studi_id,
-             program_studi_nama,
-             judul_skripsi,
              pembimbing1_nidn,
-             pembimbing1_nama,
              pembimbing2_nidn,
-             pembimbing2_nama,
              is_completed
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+           ) VALUES (?, ?, ?, ?, ?, 0)`,
           [
             snap.outline_id,
-            String(snap.nama_mahasiswa).trim(),
             snap.npm,
             snap.program_studi_id,
-            String(snap.program_studi_nama).trim(),
-            String(snap.judul_skripsi).trim(),
             snap.pembimbing1_ditetapkan_nidn ?? null,
-            snap.pembimbing1_nama ?? null,
             String(snap.pembimbing2_ditetapkan_nidn).trim(),
-            snap.pembimbing2_nama ?? null,
           ],
         );
         console.log("[review] kartu_konsultasi_outline insertId:", insKartu.insertId);

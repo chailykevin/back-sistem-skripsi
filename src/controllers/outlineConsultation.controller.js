@@ -40,9 +40,32 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
 
 async function getKartuByOutlineAndStudent(outlineId, npm) {
   const [rows] = await db.query(
-    `SELECT *
-     FROM kartu_konsultasi_outline
-     WHERE outline_id = ? AND npm = ?
+    `SELECT
+       k.*,
+       m.nama              AS nama_mahasiswa,
+       ps.nama             AS program_studi_nama,
+       o.judul             AS judul_skripsi,
+       d1.nama             AS pembimbing1_nama,
+       d2.nama             AS pembimbing2_nama,
+       pu1.signature_image AS pembimbing1_signature,
+       pu2.signature_image AS pembimbing2_signature
+     FROM kartu_konsultasi_outline k
+     JOIN mahasiswa m ON m.npm = k.npm
+     JOIN program_studi ps ON ps.id = k.program_studi_id
+     JOIN outline o ON o.id = k.outline_id
+     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+       AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
+       )
+     LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+       AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
+       )
+     WHERE k.outline_id = ? AND k.npm = ?
      LIMIT 1`,
     [outlineId, npm],
   );
@@ -273,9 +296,32 @@ async function generateAndStoreFinalKartuDocx(
   { kartuId, outlineId, generatedByUserId },
 ) {
   const [kartuRows] = await queryable.query(
-    `SELECT *
-     FROM kartu_konsultasi_outline
-     WHERE id = ?
+    `SELECT
+       k.*,
+       m.nama              AS nama_mahasiswa,
+       ps.nama             AS program_studi_nama,
+       o.judul             AS judul_skripsi,
+       d1.nama             AS pembimbing1_nama,
+       d2.nama             AS pembimbing2_nama,
+       pu1.signature_image AS pembimbing1_signature,
+       pu2.signature_image AS pembimbing2_signature
+     FROM kartu_konsultasi_outline k
+     JOIN mahasiswa m ON m.npm = k.npm
+     JOIN program_studi ps ON ps.id = k.program_studi_id
+     JOIN outline o ON o.id = k.outline_id
+     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+       AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
+       )
+     LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+       AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
+       )
+     WHERE k.id = ?
      LIMIT 1`,
     [kartuId],
   );
@@ -292,43 +338,17 @@ async function generateAndStoreFinalKartuDocx(
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   const fileName = `kartu-konsultasi-outline-${outlineId}-${Date.now()}.docx`;
 
-  await queryable.query(
-    `UPDATE kartu_konsultasi_outline_file
-     SET is_active = 0
-     WHERE kartu_konsultasi_outline_id = ?
-       AND file_type = 'FINAL_DOCX'
-       AND is_active = 1`,
-    [kartu.id],
-  );
-
   const [ins] = await queryable.query(
-    `INSERT INTO kartu_konsultasi_outline_file (
-       kartu_konsultasi_outline_id,
-       file_type,
-       file_content,
-       file_name,
-       mime_type,
-       generated_by_user_id,
-       generated_at,
-       is_active
-     ) VALUES (?, 'FINAL_DOCX', ?, ?, ?, ?, CURRENT_TIMESTAMP, 1)`,
-    [
-      kartu.id,
-      outputBuffer.toString("base64"),
-      fileName,
-      mimeType,
-      generatedByUserId,
-    ],
+    `UPDATE kartu_konsultasi_outline
+     SET file_content = ?, file_name = ?, mime_type = ?, generated_by_user_id = ?, generated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [outputBuffer.toString("base64"), fileName, mimeType, generatedByUserId, kartu.id],
   );
+  void ins;
 
-  return {
-    id: ins.insertId,
-    kartuId: kartu.id,
-    fileType: "FINAL_DOCX",
-    fileName,
-    mimeType,
-  };
+  return { id: kartu.id, kartuId: kartu.id, fileType: "FINAL_DOCX", fileName, mimeType };
 }
+
 
 async function buildHalamanPersetujuanDocxBuffer({
   kartu,
@@ -402,7 +422,7 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     [outlineId],
   );
   const [kartuFileRows] = await conn.query(
-    `SELECT file_content, file_name, mime_type FROM kartu_konsultasi_outline_file WHERE kartu_konsultasi_outline_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1 ORDER BY generated_at DESC LIMIT 1`,
+    `SELECT file_content, file_name, mime_type FROM kartu_konsultasi_outline WHERE id = ? AND file_content IS NOT NULL LIMIT 1`,
     [kartuId],
   );
   const [outlineRows] = await conn.query(
@@ -455,11 +475,21 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     [kartu.program_studi_id],
   );
   const [[psRow]] = await conn.query(
-    `SELECT ps.nama AS program_studi_nama, d.nama AS kaprodi_nama
+    `SELECT
+       ps.nama AS program_studi_nama,
+       d.nama AS kaprodi_nama,
+       m.nama AS nama_mahasiswa,
+       o.judul AS judul_skripsi,
+       d1.nama AS pembimbing1_nama,
+       d2.nama AS pembimbing2_nama
      FROM program_studi ps
      LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+     JOIN mahasiswa m ON m.npm = ?
+     JOIN outline o ON o.id = ?
+     LEFT JOIN dosen d1 ON d1.nidn = ?
+     LEFT JOIN dosen d2 ON d2.nidn = ?
      WHERE ps.id = ? LIMIT 1`,
-    [kartu.program_studi_id],
+    [kartu.npm, kartu.outline_id, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
   );
 
   const halamanSignatures = [
@@ -469,10 +499,18 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
   ];
 
+  const kartuForHalaman = {
+    ...kartu,
+    nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
+    judul_skripsi: psRow?.judul_skripsi ?? "",
+    pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
+    pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+  };
+
   const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-    kartu,
+    kartu: kartuForHalaman,
     signatures: halamanSignatures,
-    programStudiNama: psRow?.program_studi_nama ?? kartu.program_studi_nama ?? "",
+    programStudiNama: psRow?.program_studi_nama ?? "",
     namaKaprodi: psRow?.kaprodi_nama ?? "",
   });
   const halamanMime =
@@ -506,9 +544,32 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
 
 async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
   const [rows] = await queryable.query(
-    `SELECT *
-     FROM kartu_konsultasi_outline
-     WHERE outline_id = ?
+    `SELECT
+       k.*,
+       m.nama              AS nama_mahasiswa,
+       ps.nama             AS program_studi_nama,
+       o.judul             AS judul_skripsi,
+       d1.nama             AS pembimbing1_nama,
+       d2.nama             AS pembimbing2_nama,
+       pu1.signature_image AS pembimbing1_signature,
+       pu2.signature_image AS pembimbing2_signature
+     FROM kartu_konsultasi_outline k
+     JOIN mahasiswa m ON m.npm = k.npm
+     JOIN program_studi ps ON ps.id = k.program_studi_id
+     JOIN outline o ON o.id = k.outline_id
+     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+       AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
+       )
+     LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+       AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
+       )
+     WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
   );
@@ -569,11 +630,12 @@ exports.listMine = async (req, res, next) => {
       `SELECT
          k.id AS kartu_id,
          k.outline_id,
-         k.judul_skripsi,
+         o.judul AS judul_skripsi,
          k.is_completed,
          k.completed_at,
          k.created_at
        FROM kartu_konsultasi_outline k
+       JOIN outline o ON o.id = k.outline_id
        WHERE k.npm = ?
        ORDER BY k.created_at DESC`,
       [npm],
@@ -968,15 +1030,11 @@ exports.getMyKartu = async (req, res, next) => {
         .json({ ok: false, message: "Consultation not found" });
     }
 
-    const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, generated_at, is_active
-       FROM kartu_konsultasi_outline_file
-       WHERE kartu_konsultasi_outline_id = ?
-       ORDER BY generated_at DESC`,
-      [kartu.id],
-    );
+    const file = kartu.file_content
+      ? { file_name: kartu.file_name, mime_type: kartu.mime_type, generated_at: kartu.generated_at }
+      : null;
 
-    return res.json({ ok: true, data: { kartu, files } });
+    return res.json({ ok: true, data: { kartu, file } });
   } catch (err) {
     next(err);
   }
@@ -992,7 +1050,8 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT *
+      `SELECT npm, pembimbing1_nidn, pembimbing2_nidn, program_studi_id,
+              file_content, file_name, mime_type, generated_at
        FROM kartu_konsultasi_outline
        WHERE outline_id = ?
        LIMIT 1`,
@@ -1030,34 +1089,17 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    const wantedType =
-      req.query?.type === "FINAL_DOCX" || req.query?.type === "FINAL_PDF"
-        ? req.query.type
-        : null;
-
-    let sql = `SELECT id, file_type, file_content, file_name, mime_type, generated_at
-       FROM kartu_konsultasi_outline_file
-       WHERE kartu_konsultasi_outline_id = ? AND is_active = 1`;
-    const params = [kartu.id];
-    if (wantedType) {
-      sql += " AND file_type = ?";
-      params.push(wantedType);
-    }
-    sql += " ORDER BY generated_at DESC LIMIT 1";
-
-    const [rows] = await db.query(sql, params);
-    const file = rows[0] ?? null;
-    if (!file) {
+    if (!kartu.file_content) {
       return res
         .status(404)
         .json({ ok: false, message: "Final artifact not found" });
     }
 
-    const fileBuffer = Buffer.from(file.file_content, "base64");
-    res.setHeader("Content-Type", file.mime_type);
+    const fileBuffer = Buffer.from(kartu.file_content, "base64");
+    res.setHeader("Content-Type", kartu.mime_type);
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${file.file_name}"`,
+      `attachment; filename="${kartu.file_name}"`,
     );
     res.setHeader("Content-Length", fileBuffer.length);
     return res.send(fileBuffer);
@@ -1233,10 +1275,10 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          latest_submission.latest_submitted_at,
          k.id AS kartu_id,
          k.outline_id,
-         k.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          k.npm,
-         k.program_studi_nama,
-         k.judul_skripsi,
+         ps.nama AS program_studi_nama,
+         o.judul AS judul_skripsi,
          k.is_completed
        FROM konsultasi_outline_stage s
        LEFT JOIN (
@@ -1248,6 +1290,9 @@ exports.listAssignedToLecturer = async (req, res, next) => {
        ) latest_submission
          ON latest_submission.konsultasi_outline_stage_id = s.id
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
+       JOIN mahasiswa m ON m.npm = k.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       JOIN outline o ON o.id = k.outline_id
        WHERE ${where.join(" AND ")}
        ORDER BY s.updated_at DESC`,
       params,
@@ -1276,19 +1321,24 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
       `SELECT
          k.id AS kartu_id,
          k.outline_id,
-         k.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          k.npm,
-         k.program_studi_nama,
-         k.judul_skripsi,
+         ps.nama AS program_studi_nama,
+         o.judul AS judul_skripsi,
          k.pembimbing1_nidn,
-         k.pembimbing1_nama,
+         d1.nama AS pembimbing1_nama,
          k.pembimbing2_nidn,
-         k.pembimbing2_nama,
+         d2.nama AS pembimbing2_nama,
          k.is_completed,
          k.completed_at,
          k.created_at,
          k.updated_at
        FROM kartu_konsultasi_outline k
+       JOIN mahasiswa m ON m.npm = k.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       JOIN outline o ON o.id = k.outline_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
        WHERE k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?
        ORDER BY k.updated_at DESC`,
       [nidn, nidn],
@@ -1419,7 +1469,7 @@ exports.listForKaprodi = async (req, res, next) => {
     if (q && String(q).trim().length > 0) {
       const queryValue = `%${String(q).trim()}%`;
       where.push(
-        "(k.nama_mahasiswa LIKE ? OR k.npm LIKE ? OR k.judul_skripsi LIKE ?)",
+        "(m.nama LIKE ? OR k.npm LIKE ? OR o.judul LIKE ?)",
       );
       params.push(queryValue, queryValue, queryValue);
     }
@@ -1428,20 +1478,25 @@ exports.listForKaprodi = async (req, res, next) => {
       `SELECT
          k.id AS kartu_id,
          k.outline_id,
-         k.nama_mahasiswa,
+         m.nama AS nama_mahasiswa,
          k.npm,
          k.program_studi_id,
-         k.program_studi_nama,
-         k.judul_skripsi,
+         ps.nama AS program_studi_nama,
+         o.judul AS judul_skripsi,
          k.pembimbing1_nidn,
-         k.pembimbing1_nama,
+         d1.nama AS pembimbing1_nama,
          k.pembimbing2_nidn,
-         k.pembimbing2_nama,
+         d2.nama AS pembimbing2_nama,
          k.is_completed,
          k.completed_at,
          k.created_at,
          k.updated_at
        FROM kartu_konsultasi_outline k
+       JOIN mahasiswa m ON m.npm = k.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       JOIN outline o ON o.id = k.outline_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
        WHERE ${where.join(" AND ")}
        ORDER BY k.updated_at DESC`,
       params,
@@ -1552,10 +1607,33 @@ exports.getDetailForKaprodi = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT *
-       FROM kartu_konsultasi_outline
-       WHERE outline_id = ?
-         AND program_studi_id IN (?)
+      `SELECT
+         k.*,
+         m.nama              AS nama_mahasiswa,
+         ps.nama             AS program_studi_nama,
+         o.judul             AS judul_skripsi,
+         d1.nama             AS pembimbing1_nama,
+         d2.nama             AS pembimbing2_nama,
+         pu1.signature_image AS pembimbing1_signature,
+         pu2.signature_image AS pembimbing2_signature
+       FROM kartu_konsultasi_outline k
+       JOIN mahasiswa m ON m.npm = k.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       JOIN outline o ON o.id = k.outline_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+       LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+         AND EXISTS (
+           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+           WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
+         )
+       LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+         AND EXISTS (
+           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+           WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
+         )
+       WHERE k.outline_id = ?
+         AND k.program_studi_id IN (?)
        LIMIT 1`,
       [outlineId, programStudiIds],
     );
@@ -1624,13 +1702,9 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       [kartu.id],
     );
 
-    const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, generated_at, is_active
-       FROM kartu_konsultasi_outline_file
-       WHERE kartu_konsultasi_outline_id = ?
-       ORDER BY generated_at DESC`,
-      [kartu.id],
-    );
+    const file = kartu.file_content
+      ? { file_name: kartu.file_name, mime_type: kartu.mime_type, generated_at: kartu.generated_at }
+      : null;
 
     const resolved = resolveActiveStage(stages, Boolean(kartu.is_completed));
 
@@ -1645,7 +1719,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
         latestSubmissionOverall: submissions[0] ?? null,
         submissions,
         reviews,
-        files,
+        file,
       },
     });
   } catch (err) {
@@ -1681,18 +1755,23 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          s.started_at AS stage_started_at,
          s.finished_at AS stage_finished_at,
          k.id AS kartu_id,
-         k.nama_mahasiswa AS kartu_nama_mahasiswa,
+         m.nama AS kartu_nama_mahasiswa,
          k.npm AS kartu_npm,
-         k.program_studi_nama AS kartu_program_studi_nama,
-         k.judul_skripsi AS kartu_judul_skripsi,
+         ps.nama AS kartu_program_studi_nama,
+         o.judul AS kartu_judul_skripsi,
          k.pembimbing1_nidn AS kartu_pembimbing1_nidn,
-         k.pembimbing1_nama AS kartu_pembimbing1_nama,
+         d1.nama AS kartu_pembimbing1_nama,
          k.pembimbing2_nidn AS kartu_pembimbing2_nidn,
-         k.pembimbing2_nama AS kartu_pembimbing2_nama,
+         d2.nama AS kartu_pembimbing2_nama,
          k.is_completed AS kartu_is_completed
        FROM konsultasi_outline_stage s
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
        LEFT JOIN dosen d ON d.nidn = s.pembimbing_nidn
+       JOIN mahasiswa m ON m.npm = k.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       JOIN outline o ON o.id = k.outline_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
        WHERE s.id = ? AND (k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?)
        LIMIT 1`,
       [stageId, nidn, nidn],
@@ -1857,7 +1936,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     const shouldRequireSignature =
       (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
       (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
-    let signatureImageValue = null;
     if (shouldRequireSignature) {
       const [[sigRow]] = await conn.query(
         `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
@@ -1872,7 +1950,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             "No saved signature found. Please upload your signature first.",
         });
       }
-      signatureImageValue = sigRow.signature_image;
     }
 
     const [subRows] = await conn.query(
@@ -1958,15 +2035,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     );
 
     if (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") {
-      await conn.query(
-        `UPDATE kartu_konsultasi_outline
-         SET
-           pembimbing2_signature = ?,
-           updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [signatureImageValue, stage.kartu_id],
-      );
-
       const [p1Rows] = await conn.query(
         `SELECT id
          FROM konsultasi_outline_stage
@@ -2006,7 +2074,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     const [kartuInfoRows] = await conn.query(
-      `SELECT * FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
+      `SELECT id, outline_id, npm, program_studi_id, pembimbing1_nidn, pembimbing2_nidn
+       FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
       [stage.kartu_id],
     );
     const kartuInfo = kartuInfoRows[0];
@@ -2016,12 +2085,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       await conn.query(
         `UPDATE kartu_konsultasi_outline
          SET
-           pembimbing1_signature = ?,
            is_completed = 1,
            completed_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [signatureImageValue, stage.kartu_id],
+        [stage.kartu_id],
       );
 
       autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
@@ -2045,11 +2113,12 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     if (kartuInfo) {
-      const [studentUserRows] = await conn.query(
-        `SELECT id FROM users WHERE npm = ? LIMIT 1`,
+      const [[studentUserRow]] = await conn.query(
+        `SELECT u.id, m.nama FROM users u JOIN mahasiswa m ON m.npm = u.npm WHERE u.npm = ? LIMIT 1`,
         [kartuInfo.npm],
       );
-      const studentUserId = studentUserRows[0]?.id ?? null;
+      const studentUserId = studentUserRow?.id ?? null;
+      const namaMahasiswaForNotif = studentUserRow?.nama ?? kartuInfo.npm;
 
       if (decisionStatus === "NEED_REVISION" && studentUserId) {
         await insertNotification(
@@ -2079,7 +2148,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             conn,
             p1UserRows[0].id,
             "OUTLINE_CONSULTATION_SUBMITTED",
-            `Outline mahasiswa ${kartuInfo.nama_mahasiswa} siap untuk direview`,
+            `Outline mahasiswa ${namaMahasiswaForNotif} siap untuk direview`,
             "/lecturer/outline-consultations",
           );
         }
@@ -2107,7 +2176,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
               conn,
               sek.id,
               "SK_SUBMITTED",
-              `Mahasiswa ${kartuInfo.nama_mahasiswa} mengajukan SK Penelitian`,
+              `Mahasiswa ${namaMahasiswaForNotif} mengajukan SK Penelitian`,
               "/sekretariat/sk-penelitian",
             );
           }

@@ -724,9 +724,8 @@ exports.submitSkPenelitian = async (req, res, next) => {
     // System-pull Kartu Konsultasi Outline DOCX
     const [kartuFileRows] = await conn.query(
       `SELECT file_content, file_name, mime_type
-       FROM kartu_konsultasi_outline_file
-       WHERE kartu_konsultasi_outline_id = ? AND file_type = 'FINAL_DOCX' AND is_active = 1
-       ORDER BY generated_at DESC
+       FROM kartu_konsultasi_outline
+       WHERE id = ? AND file_content IS NOT NULL
        LIMIT 1`,
       [kartuId],
     );
