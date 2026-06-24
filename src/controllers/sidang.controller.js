@@ -131,9 +131,31 @@ const NOTULEN_ROLE_LABEL = {
 
 async function getSidangBySkripsiId(conn, skripsiId) {
   const [[sidang]] = await conn.query(
-    `SELECT s.*, ps.ujian_ke
+    `SELECT
+       s.id, s.skripsi_id, s.pengajuan_sidang_id, s.nomor_surat,
+       m.nama AS nama_mahasiswa, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
+       s.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
+       s.created_at, s.updated_at, s.completed_at,
+       ps.ujian_ke,
+       m.npm,
+       prog.id   AS program_studi_id,
+       prog.nama AS program_studi_nama,
+       sk.judul  AS judul_skripsi,
+       sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
+       sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
+       psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
+       psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama
      FROM sidang s
      LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
+     JOIN skripsi sk ON sk.id = s.skripsi_id
+     JOIN mahasiswa m ON m.npm = sk.npm
+     JOIN program_studi prog ON prog.id = sk.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+     LEFT JOIN pengajuan_sidang_kaprodi psk_k
+            ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+     LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+     LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
      WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
     [skripsiId],
   );
@@ -151,7 +173,32 @@ exports.getSidang = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+      `SELECT
+         s.id, s.skripsi_id, s.pengajuan_sidang_id, s.nomor_surat,
+         m.nama AS nama_mahasiswa, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
+         s.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
+         s.created_at, s.updated_at, s.completed_at,
+         ps.ujian_ke,
+         m.npm,
+         prog.id   AS program_studi_id,
+         prog.nama AS program_studi_nama,
+         sk.judul  AS judul_skripsi,
+         sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
+         sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
+         psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
+         psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama
+       FROM sidang s
+       LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1122,9 +1169,9 @@ exports.getLecturerSidang = async (req, res, next) => {
       `SELECT
         s.id,
         s.skripsi_id,
-        s.npm,
-        s.nama_mahasiswa,
-        s.judul_skripsi,
+        m.npm,
+        m.nama AS nama_mahasiswa,
+        sk.judul AS judul_skripsi,
         s.status,
         s.tanggal_sidang,
         s.waktu_sidang,
@@ -1133,33 +1180,37 @@ exports.getLecturerSidang = async (req, res, next) => {
         shp.rata,
         shp.grade,
         CASE
-          WHEN s.pembimbing1_nidn = ? THEN 'PEMBIMBING_1'
-          WHEN s.pembimbing2_nidn = ? THEN 'PEMBIMBING_2'
-          WHEN s.penguji1_nidn    = ? THEN 'PENGUJI_1'
-          WHEN s.penguji2_nidn    = ? THEN 'PENGUJI_2'
+          WHEN sk.pembimbing1_nidn = ? THEN 'PEMBIMBING_1'
+          WHEN sk.pembimbing2_nidn = ? THEN 'PEMBIMBING_2'
+          WHEN psk_k.penguji1_nidn = ? THEN 'PENGUJI_1'
+          WHEN psk_k.penguji2_nidn = ? THEN 'PENGUJI_2'
         END AS caller_role,
         (sp.submitted_at IS NOT NULL) AS has_submitted_penilaian,
         (sn.submitted_at IS NOT NULL) AS has_submitted_notulen
       FROM sidang s
+      JOIN skripsi sk ON sk.id = s.skripsi_id
+      JOIN mahasiswa m ON m.npm = sk.npm
+      LEFT JOIN pengajuan_sidang_kaprodi psk_k
+             ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
       LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
       LEFT JOIN sidang_penilaian sp
         ON sp.sidang_id = s.id
         AND sp.role = CASE
-          WHEN s.pembimbing1_nidn = ? THEN 'PEMBIMBING_1'
-          WHEN s.pembimbing2_nidn = ? THEN 'PEMBIMBING_2'
-          WHEN s.penguji1_nidn    = ? THEN 'PENGUJI_1'
-          WHEN s.penguji2_nidn    = ? THEN 'PENGUJI_2'
+          WHEN sk.pembimbing1_nidn = ? THEN 'PEMBIMBING_1'
+          WHEN sk.pembimbing2_nidn = ? THEN 'PEMBIMBING_2'
+          WHEN psk_k.penguji1_nidn = ? THEN 'PENGUJI_1'
+          WHEN psk_k.penguji2_nidn = ? THEN 'PENGUJI_2'
         END
       LEFT JOIN sidang_notulen sn
         ON sn.sidang_id = s.id
         AND sn.role = CASE
-          WHEN s.penguji1_nidn = ? THEN 'PENGUJI_1'
-          WHEN s.penguji2_nidn = ? THEN 'PENGUJI_2'
+          WHEN psk_k.penguji1_nidn = ? THEN 'PENGUJI_1'
+          WHEN psk_k.penguji2_nidn = ? THEN 'PENGUJI_2'
           ELSE NULL
         END
       WHERE (
-        s.pembimbing1_nidn = ? OR s.pembimbing2_nidn = ? OR
-        s.penguji1_nidn    = ? OR s.penguji2_nidn    = ?
+        sk.pembimbing1_nidn = ? OR sk.pembimbing2_nidn = ? OR
+        psk_k.penguji1_nidn = ? OR psk_k.penguji2_nidn = ?
       )
       ${whereStatus}
       ORDER BY s.created_at DESC`,
@@ -1198,7 +1249,15 @@ exports.getBeritaAcara = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
+              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              psk_k.penguji1_nidn, psk_k.penguji2_nidn
+       FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1236,7 +1295,15 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
+              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              psk_k.penguji1_nidn, psk_k.penguji2_nidn
+       FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1285,7 +1352,15 @@ exports.getPenilaianFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
+              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              psk_k.penguji1_nidn, psk_k.penguji2_nidn
+       FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1331,7 +1406,15 @@ exports.getNotulenFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
+              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              psk_k.penguji1_nidn, psk_k.penguji2_nidn
+       FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1378,19 +1461,33 @@ exports.getSekretariatSidang = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         s.id, s.skripsi_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
-         s.program_studi_id, s.program_studi_nama, s.judul_skripsi,
+         s.id, s.skripsi_id, s.nomor_surat,
+         m.npm, m.nama AS nama_mahasiswa,
+         prog.id   AS program_studi_id,
+         prog.nama AS program_studi_nama,
+         sk.judul  AS judul_skripsi,
          ps.ujian_ke,
          s.status, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
-         s.pembimbing1_nidn, s.pembimbing1_nama, s.pembimbing2_nidn, s.pembimbing2_nama,
-         s.penguji1_nidn, s.penguji1_nama, s.penguji2_nidn, s.penguji2_nama,
+         sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
+         sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
+         psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
+         psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama,
          s.hasil_sidang, s.created_at,
          shp.rata, shp.grade
        FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
        LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
        LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
        WHERE (? IS NULL OR s.status = ?)
-         AND (? IS NULL OR s.program_studi_id = ?)
+         AND (? IS NULL OR prog.id = ?)
        ORDER BY s.created_at DESC`,
       [status ?? null, status ?? null, parsedProgramStudiId, parsedProgramStudiId],
     );

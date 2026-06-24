@@ -2045,9 +2045,7 @@ exports.updateKaprodi = async (req, res, next) => {
       statusPernikahan,
       ipk,
       semuaMkLulus,
-      penguji1Nama,
       penguji1Nidn,
-      penguji2Nama,
       penguji2Nidn,
     } = req.body ?? {};
 
@@ -2091,17 +2089,9 @@ exports.updateKaprodi = async (req, res, next) => {
       setClauses.push("semua_mk_lulus = ?");
       params.push(semuaMkLulus ? 1 : 0);
     }
-    if (penguji1Nama !== undefined) {
-      setClauses.push("penguji1_nama = ?");
-      params.push(String(penguji1Nama).trim() || null);
-    }
     if (penguji1Nidn !== undefined) {
       setClauses.push("penguji1_nidn = ?");
       params.push(String(penguji1Nidn).trim() || null);
-    }
-    if (penguji2Nama !== undefined) {
-      setClauses.push("penguji2_nama = ?");
-      params.push(String(penguji2Nama).trim() || null);
     }
     if (penguji2Nidn !== undefined) {
       setClauses.push("penguji2_nidn = ?");
@@ -2195,9 +2185,7 @@ exports.submitKaprodi = async (req, res, next) => {
     if (!kaprodi.no_hp) missingFields.push("noHp");
     if (!kaprodi.no_wa) missingFields.push("noWa");
     if (kaprodi.ipk == null) missingFields.push("ipk");
-    if (!kaprodi.penguji1_nama) missingFields.push("penguji1Nama");
     if (!kaprodi.penguji1_nidn) missingFields.push("penguji1Nidn");
-    if (!kaprodi.penguji2_nama) missingFields.push("penguji2Nama");
     if (!kaprodi.penguji2_nidn) missingFields.push("penguji2Nidn");
     if (!kaprodi.status_pernikahan) missingFields.push("statusPernikahan");
     if (missingFields.length > 0) {
@@ -2378,6 +2366,14 @@ exports.submitKaprodi = async (req, res, next) => {
     );
 
     // Generate LEMBAR_USULAN_PENGUJI
+    const [[pg1RowUsulan]] = await conn.query(
+      `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
+      [kaprodi.penguji1_nidn],
+    );
+    const [[pg2RowUsulan]] = await conn.query(
+      `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
+      [kaprodi.penguji2_nidn],
+    );
     const usulanBuffer = await buildLembarUsulanPengujiBuffer({
       prodi: docData?.prodi_nama ?? "",
       fakultas: docData?.fakultas_nama ?? "",
@@ -2387,8 +2383,8 @@ exports.submitKaprodi = async (req, res, next) => {
       namaDospem2: docData?.dospem2_nama ?? "",
       judul: docData?.judul_skripsi ?? "",
       todayDate,
-      penguji1Nama: kaprodi.penguji1_nama ?? null,
-      penguji2Nama: kaprodi.penguji2_nama ?? null,
+      penguji1Nama: pg1RowUsulan?.nama ?? null,
+      penguji2Nama: pg2RowUsulan?.nama ?? null,
       ttdMahasiswa: docData?.mahasiswa_sig ?? null,
       namaKaprodi,
     });
@@ -2891,9 +2887,7 @@ exports.updateDisposisi = async (req, res, next) => {
       waktuSidang,
       tempatSidang,
       tanggalDisposisi,
-      penguji1Nama,
       penguji1Nidn,
-      penguji2Nama,
       penguji2Nidn,
     } = req.body ?? {};
 
@@ -2905,12 +2899,8 @@ exports.updateDisposisi = async (req, res, next) => {
       updates.tempat_sidang = tempatSidang ? String(tempatSidang).trim() : null;
     if (tanggalDisposisi !== undefined)
       updates.tanggal_disposisi = tanggalDisposisi || null;
-    if (penguji1Nama !== undefined)
-      updates.penguji1_nama = penguji1Nama ? String(penguji1Nama).trim() : null;
     if (penguji1Nidn !== undefined)
       updates.penguji1_nidn = penguji1Nidn ? String(penguji1Nidn).trim() : null;
-    if (penguji2Nama !== undefined)
-      updates.penguji2_nama = penguji2Nama ? String(penguji2Nama).trim() : null;
     if (penguji2Nidn !== undefined)
       updates.penguji2_nidn = penguji2Nidn ? String(penguji2Nidn).trim() : null;
 
@@ -3006,8 +2996,8 @@ exports.submitDisposisi = async (req, res, next) => {
     if (!kaprodi.waktu_sidang) missingDisposisi.push("waktuSidang");
     if (!kaprodi.tempat_sidang) missingDisposisi.push("tempatSidang");
     if (!kaprodi.tanggal_disposisi) missingDisposisi.push("tanggalDisposisi");
-    if (!kaprodi.penguji1_nama) missingDisposisi.push("penguji1Nama");
-    if (!kaprodi.penguji2_nama) missingDisposisi.push("penguji2Nama");
+    if (!kaprodi.penguji1_nidn) missingDisposisi.push("penguji1Nidn");
+    if (!kaprodi.penguji2_nidn) missingDisposisi.push("penguji2Nidn");
     if (missingDisposisi.length > 0) {
       await conn.rollback();
       txStarted = false;
@@ -3072,6 +3062,14 @@ exports.submitDisposisi = async (req, res, next) => {
       ? String(kaprodi.waktu_sidang).substring(0, 5)
       : "";
 
+    const [[pg1RowDisposisi]] = await conn.query(
+      `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
+      [kaprodi.penguji1_nidn],
+    );
+    const [[pg2RowDisposisi]] = await conn.query(
+      `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
+      [kaprodi.penguji2_nidn],
+    );
     const usulanBuffer = await buildLembarUsulanPengujiBufferFull({
       prodi: docData?.prodi_nama ?? "",
       fakultas: docData?.fakultas_nama ?? "",
@@ -3081,8 +3079,8 @@ exports.submitDisposisi = async (req, res, next) => {
       namaDospem2: docData?.dospem2_nama ?? "",
       judul: docData?.judul_skripsi ?? "",
       todayDate: formatTanggalIndonesia(new Date()),
-      penguji1Nama: kaprodi.penguji1_nama ?? null,
-      penguji2Nama: kaprodi.penguji2_nama ?? null,
+      penguji1Nama: pg1RowDisposisi?.nama ?? null,
+      penguji2Nama: pg2RowDisposisi?.nama ?? null,
       ttdMahasiswa: docData?.mahasiswa_sig ?? null,
       namaKaprodi: docData?.nama_kaprodi ?? "",
       sidangDate: sidangDateFormatted,
@@ -3219,16 +3217,18 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
          psk.waktu_sidang,
          psk.tempat_sidang,
          psk.tanggal_disposisi,
-         psk.penguji1_nama,
          psk.penguji1_nidn,
-         psk.penguji2_nama,
+         d_pg1.nama AS penguji1_nama,
          psk.penguji2_nidn,
+         d_pg2.nama AS penguji2_nama,
          psk.disposisi_submitted_at
        FROM pengajuan_sidang_kaprodi psk
        JOIN pengajuan_sidang ps2 ON ps2.id = psk.pengajuan_sidang_id
        JOIN skripsi s ON s.id = ps2.skripsi_id
        JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi prog ON prog.id = s.program_studi_id
+       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk.penguji1_nidn
+       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk.penguji2_nidn
        WHERE ${conditions.join(" AND ")}
          AND ps2.status IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
        ORDER BY psk.disposisi_submitted_at DESC, psk.reviewed_at DESC`,
@@ -3305,8 +3305,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
          d1.nama AS pembimbing1_nama, s.pembimbing1_nidn,
          d2.nama AS pembimbing2_nama, s.pembimbing2_nidn,
          psk.nomor_surat, psk.verified_at AS sk_verified_at,
-         psk_k.penguji1_nama, psk_k.penguji1_nidn,
-         psk_k.penguji2_nama, psk_k.penguji2_nidn,
+         psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
+         psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama,
          psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
          psk_k.tanggal_disposisi
        FROM skripsi s
@@ -3317,6 +3317,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = s.outline_id
        LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = ?
+       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
        WHERE s.id = ?
        LIMIT 1`,
       [sidang.id, skripsiId],
@@ -3444,28 +3446,14 @@ exports.generateSuratUndangan = async (req, res, next) => {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
            (skripsi_id, nomor_surat, pengajuan_sidang_id,
-            npm, nama_mahasiswa, program_studi_id, program_studi_nama, judul_skripsi,
-            pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
-            penguji1_nidn, penguji1_nama, penguji2_nidn, penguji2_nama,
+            nama_mahasiswa,
             tanggal_sidang, waktu_sidang, tempat_sidang, tanggal_disposisi)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           skripsiId,
           nomorSuratSidang,
           sidang.id,
-          dataRow?.npm ?? "",
           dataRow?.nama_mahasiswa ?? "",
-          dataRow?.program_studi_id ?? null,
-          dataRow?.prodi_nama ?? "",
-          dataRow?.judul_skripsi ?? "",
-          dataRow?.pembimbing1_nidn ?? "",
-          dataRow?.pembimbing1_nama ?? "",
-          dataRow?.pembimbing2_nidn ?? "",
-          dataRow?.pembimbing2_nama ?? "",
-          dataRow?.penguji1_nidn ?? "",
-          dataRow?.penguji1_nama ?? "",
-          dataRow?.penguji2_nidn ?? "",
-          dataRow?.penguji2_nama ?? "",
           dataRow?.tanggal_sidang ?? null,
           dataRow?.waktu_sidang ?? null,
           dataRow?.tempat_sidang ?? "",

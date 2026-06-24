@@ -1,0 +1,13 @@
+ALTER TABLE sidang
+  DROP COLUMN npm,
+  DROP COLUMN program_studi_id,
+  DROP COLUMN program_studi_nama,
+  DROP COLUMN judul_skripsi,
+  DROP COLUMN pembimbing1_nidn,
+  DROP COLUMN pembimbing1_nama,
+  DROP COLUMN pembimbing2_nidn,
+  DROP COLUMN pembimbing2_nama,
+  DROP COLUMN penguji1_nidn,
+  DROP COLUMN penguji1_nama,
+  DROP COLUMN penguji2_nidn,
+  DROP COLUMN penguji2_nama;
