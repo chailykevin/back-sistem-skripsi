@@ -298,6 +298,27 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
   };
 }
 
+async function fetchKartuDenorm(queryable, kartu) {
+  const [[row]] = await queryable.query(
+    `SELECT m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+            sk.judul AS judul_skripsi,
+            d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
+            u1.signature_image AS pembimbing1_signature,
+            u2.signature_image AS pembimbing2_signature
+     FROM kartu_konsultasi_skripsi k
+     JOIN skripsi sk ON sk.id = k.skripsi_id
+     JOIN mahasiswa m ON m.npm = sk.npm
+     JOIN program_studi ps ON ps.id = k.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users u1 ON u1.nidn = k.pembimbing1_nidn AND u1.is_active = 1
+     LEFT JOIN users u2 ON u2.nidn = k.pembimbing2_nidn AND u2.is_active = 1
+     WHERE k.id = ? LIMIT 1`,
+    [kartu.id],
+  );
+  return { ...kartu, ...row };
+}
+
 async function generateAndStoreFinalKartuDocx(
   queryable,
   { kartuId, skripsiId, generatedByUserId },
@@ -315,13 +336,14 @@ async function generateAndStoreFinalKartuDocx(
 
   const logs = await getKartuLogs(queryable, kartuId);
   const extra = await fetchKartuExtra(queryable, kartuId, skripsiId);
-  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra);
+  const kartuFull = await fetchKartuDenorm(queryable, kartu);
+  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartuFull, logs, extra);
   const fileName = `kartu-penulisan-skripsi-${skripsiId}-${Date.now()}.docx`;
 
   await queryable.query(
     `UPDATE kartu_konsultasi_skripsi
-     SET docx_content = ?, docx_file_name = ?,
-         docx_mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+     SET file_content = ?, file_name = ?,
+         mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
          generated_by_user_id = ?, generated_at = NOW()
      WHERE id = ?`,
     [outputBuffer.toString("base64"), fileName, generatedByUserId, kartuId],
@@ -415,20 +437,14 @@ exports.initKartu = async (req, res, next) => {
 
     const [kartuIns] = await conn.query(
       `INSERT INTO kartu_konsultasi_skripsi (
-         skripsi_id, nama_mahasiswa, npm, program_studi_id, program_studi_nama,
-         judul_skripsi, pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         skripsi_id, npm, program_studi_id, pembimbing1_nidn, pembimbing2_nidn
+       ) VALUES (?, ?, ?, ?, ?)`,
       [
         skripsiId,
-        skripsiRow.nama_mahasiswa,
         npm,
         skripsiRow.program_studi_id,
-        skripsiRow.program_studi_nama,
-        skripsiRow.judul,
         skripsiRow.pembimbing1_nidn,
-        skripsiRow.pembimbing1_nama,
         skripsiRow.pembimbing2_nidn,
-        skripsiRow.pembimbing2_nama,
       ],
     );
     const kartuId = kartuIns.insertId;
@@ -968,13 +984,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     let autoFinalizedFile = null;
 
     if (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") {
-      await conn.query(
-        `UPDATE kartu_konsultasi_skripsi
-         SET pembimbing2_signature = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [signatureImageValue, stage.kartu_id],
-      );
-
       const [p1Rows] = await conn.query(
         `SELECT id FROM konsultasi_skripsi_stage
          WHERE kartu_konsultasi_skripsi_id = ? AND chapter_group = ? AND stage = 'PEMBIMBING_1'
@@ -1005,13 +1014,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
-      await conn.query(
-        `UPDATE kartu_konsultasi_skripsi
-         SET pembimbing1_signature = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [signatureImageValue, stage.kartu_id],
-      );
-
       const nextChapter = nextChapterGroup(stage.chapter_group);
       if (nextChapter) {
         const [nextP2Rows] = await conn.query(
@@ -1090,7 +1092,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     const [kartuInfoRows] = await conn.query(
-      `SELECT npm, nama_mahasiswa, pembimbing1_nidn FROM kartu_konsultasi_skripsi WHERE id = ? LIMIT 1`,
+      `SELECT k.npm, k.pembimbing1_nidn, m.nama AS nama_mahasiswa
+       FROM kartu_konsultasi_skripsi k
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       WHERE k.id = ? LIMIT 1`,
       [stage.kartu_id],
     );
     const kartuInfo = kartuInfoRows[0];
@@ -1218,12 +1224,19 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          s.chapter_group, s.stage AS stage_name, s.pembimbing_nidn,
          d.nama AS stage_dosen_name, s.current_status, s.current_submission_no,
          s.started_at, s.finished_at,
-         k.id AS kartu_id, k.nama_mahasiswa, k.npm, k.program_studi_nama,
-         k.judul_skripsi, k.pembimbing1_nidn, k.pembimbing1_nama,
-         k.pembimbing2_nidn, k.pembimbing2_nama, k.is_completed
+         k.id AS kartu_id, k.npm, k.program_studi_id, k.pembimbing1_nidn,
+         k.pembimbing2_nidn, k.is_completed,
+         m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+         sk.judul AS judul_skripsi,
+         d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
        FROM konsultasi_skripsi_stage s
        INNER JOIN kartu_konsultasi_skripsi k ON k.id = s.kartu_konsultasi_skripsi_id
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
        LEFT JOIN dosen d ON d.nidn = s.pembimbing_nidn
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
        WHERE s.id = ? AND (k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?)
        LIMIT 1`,
       [stageId, nidn, nidn],
@@ -1323,11 +1336,18 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
 
     const [kartuRows] = await db.query(
       `SELECT
-         k.id AS kartu_id, k.skripsi_id, k.nama_mahasiswa, k.npm,
-         k.program_studi_nama, k.judul_skripsi,
-         k.pembimbing1_nidn, k.pembimbing1_nama, k.pembimbing2_nidn, k.pembimbing2_nama,
-         k.is_completed, k.completed_at, k.created_at, k.updated_at
+         k.id AS kartu_id, k.skripsi_id, k.npm,
+         k.pembimbing1_nidn, k.pembimbing2_nidn,
+         k.is_completed, k.completed_at, k.created_at, k.updated_at,
+         m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+         sk.judul AS judul_skripsi,
+         d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
        FROM kartu_konsultasi_skripsi k
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
        WHERE k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?
        ORDER BY k.updated_at DESC`,
       [nidn, nidn],
@@ -1418,18 +1438,25 @@ exports.listForKaprodi = async (req, res, next) => {
     if (q && String(q).trim().length > 0) {
       const queryValue = `%${String(q).trim()}%`;
       where.push(
-        "(k.nama_mahasiswa LIKE ? OR k.npm LIKE ? OR k.judul_skripsi LIKE ?)",
+        "(m.nama LIKE ? OR k.npm LIKE ? OR sk.judul LIKE ?)",
       );
       params.push(queryValue, queryValue, queryValue);
     }
 
     const [kartuRows] = await db.query(
       `SELECT
-         k.id AS kartu_id, k.skripsi_id, k.nama_mahasiswa, k.npm,
-         k.program_studi_id, k.program_studi_nama, k.judul_skripsi,
-         k.pembimbing1_nidn, k.pembimbing1_nama, k.pembimbing2_nidn, k.pembimbing2_nama,
-         k.is_completed, k.completed_at, k.created_at, k.updated_at
+         k.id AS kartu_id, k.skripsi_id, k.npm,
+         k.program_studi_id, k.pembimbing1_nidn, k.pembimbing2_nidn,
+         k.is_completed, k.completed_at, k.created_at, k.updated_at,
+         m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+         sk.judul AS judul_skripsi,
+         d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
        FROM kartu_konsultasi_skripsi k
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
        WHERE ${where.join(" AND ")}
        ORDER BY k.updated_at DESC`,
       params,
@@ -1517,20 +1544,20 @@ exports.getFinalKartuFile = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    if (!kartu.docx_content) {
+    if (!kartu.file_content) {
       return res
         .status(404)
         .json({ ok: false, message: "Final artifact not found" });
     }
 
-    const fileBuffer = Buffer.from(kartu.docx_content, "base64");
+    const fileBuffer = Buffer.from(kartu.file_content, "base64");
     const mimeType =
-      kartu.docx_mime_type ??
+      kartu.mime_type ??
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     res.setHeader("Content-Type", mimeType);
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${kartu.docx_file_name ?? "kartu-konsultasi-skripsi.docx"}"`,
+      `attachment; filename="${kartu.file_name ?? "kartu-konsultasi-skripsi.docx"}"`,
     );
     res.setHeader("Content-Length", fileBuffer.length);
     return res.send(fileBuffer);
@@ -1567,11 +1594,18 @@ exports.getDetailForKaprodi = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT id, skripsi_id, is_completed, created_at,
-              nama_mahasiswa, npm, judul_skripsi, program_studi_id,
-              program_studi_nama, pembimbing1_nama, pembimbing2_nama
-       FROM kartu_konsultasi_skripsi
-       WHERE skripsi_id = ?
+      `SELECT k.id, k.skripsi_id, k.is_completed, k.created_at,
+              k.npm, k.program_studi_id,
+              m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+              sk.judul AS judul_skripsi,
+              d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
+       FROM kartu_konsultasi_skripsi k
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi ps ON ps.id = k.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+       WHERE k.skripsi_id = ?
        LIMIT 1`,
       [skripsiId],
     );
@@ -1714,7 +1748,8 @@ exports.previewKartuDocx = async (req, res, next) => {
 
     const logs = await getKartuLogs(db, kartu.id);
     const extra = await fetchKartuExtra(db, kartu.id, kartu.skripsi_id);
-    const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra);
+    const kartuFull = await fetchKartuDenorm(db, kartu);
+    const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartuFull, logs, extra);
     const fileName = `kartu-penulisan-skripsi-${skripsiId}-preview.docx`;
 
     res.setHeader(

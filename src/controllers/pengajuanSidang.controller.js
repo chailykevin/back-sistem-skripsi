@@ -818,7 +818,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
     if (!isUjianUlang) {
       // Original flow: auto-pull system files
       const [[kartuSkripsi]] = await conn.query(
-        `SELECT k.id, k.docx_content, k.docx_file_name FROM kartu_konsultasi_skripsi k WHERE k.skripsi_id = ? LIMIT 1`,
+        `SELECT k.id, k.file_content, k.file_name FROM kartu_konsultasi_skripsi k WHERE k.skripsi_id = ? LIMIT 1`,
         [skripsiId],
       );
       if (!kartuSkripsi) {
@@ -829,7 +829,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
           message: "Kartu konsultasi skripsi tidak ditemukan",
         });
       }
-      if (!kartuSkripsi.docx_content) {
+      if (!kartuSkripsi.file_content) {
         await conn.rollback();
         txStarted = false;
         return res.status(400).json({
@@ -847,9 +847,9 @@ exports.initPengajuanSidang = async (req, res, next) => {
          VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
         [
           sidangId,
-          kartuSkripsi.docx_file_name,
+          kartuSkripsi.file_name,
           MIME_DOCX,
-          kartuSkripsi.docx_content,
+          kartuSkripsi.file_content,
         ],
       );
 
@@ -1811,10 +1811,10 @@ exports.initKaprodi = async (req, res, next) => {
 
       // Auto-pull KARTU_KONSULTASI_SKRIPSI
       const [[kartuSkripsi]] = await conn.query(
-        `SELECT k.docx_content, k.docx_file_name FROM kartu_konsultasi_skripsi k WHERE k.skripsi_id = ? LIMIT 1`,
+        `SELECT k.file_content, k.file_name FROM kartu_konsultasi_skripsi k WHERE k.skripsi_id = ? LIMIT 1`,
         [skripsiId],
       );
-      if (kartuSkripsi?.docx_content) {
+      if (kartuSkripsi?.file_content) {
         await conn.query(
           `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'KARTU_KONSULTASI_SKRIPSI'`,
           [targetSidangId],
@@ -1825,9 +1825,9 @@ exports.initKaprodi = async (req, res, next) => {
            VALUES (?, 'KARTU_KONSULTASI_SKRIPSI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
           [
             targetSidangId,
-            kartuSkripsi.docx_file_name,
+            kartuSkripsi.file_name,
             MIME_DOCX,
-            kartuSkripsi.docx_content,
+            kartuSkripsi.file_content,
           ],
         );
       }

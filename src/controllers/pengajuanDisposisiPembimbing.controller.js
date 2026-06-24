@@ -256,7 +256,6 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
 
     const {
       noHp,
-      sksDiperoleh,
       pembimbing1DiajukanNidn,
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
@@ -279,18 +278,17 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     const [result] = await conn.query(
       `INSERT INTO pengajuan_disposisi_pembimbing (
          outline_id, npm, program_studi_id,
-         no_hp, sks_diperoleh,
+         no_hp,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nama_perusahaan,
          syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
         programStudiId,
         noHp ?? null,
-        sksDiperoleh ?? null,
         pembimbing1DiajukanNidn ?? null,
         pembimbing2DiajukanNidn ?? null,
         perluSuratPengantar ? 1 : 0,
@@ -328,7 +326,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       namaMahasiswa: docData.nama_mahasiswa,
       programStudiNama: docData.program_studi_nama,
       noHp: noHp ?? null,
-      sks: sksDiperoleh ?? docData.sks,
+      sks: docData.sks,
       judulSkripsi: docData.judul_skripsi,
       pembimbing1Nama: docData.pembimbing1_nama ?? pembimbing1DiajukanNidn ?? "",
       pembimbing2Nama: docData.pembimbing2_nama ?? pembimbing2DiajukanNidn ?? "",
@@ -546,7 +544,6 @@ exports.getById = async (req, res, next) => {
           pj.outline_id,
           pj.npm,
           pj.no_hp,
-          pj.sks_diperoleh,
           pj.pembimbing1_diajukan_nidn,
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
@@ -619,7 +616,6 @@ exports.getById = async (req, res, next) => {
           pj.outline_id,
           pj.npm,
           pj.no_hp,
-          pj.sks_diperoleh,
           pj.pembimbing1_diajukan_nidn,
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
@@ -699,7 +695,6 @@ exports.resubmit = async (req, res, next) => {
 
     const {
       noHp,
-      sksDiperoleh,
       pembimbing1DiajukanNidn,
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
@@ -717,21 +712,6 @@ exports.resubmit = async (req, res, next) => {
 
     const noHpVal =
       noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
-    const sksRaw =
-      sksDiperoleh !== undefined && sksDiperoleh !== null
-        ? String(sksDiperoleh).trim()
-        : null;
-    let sksVal = null;
-    if (sksRaw !== null && sksRaw.length > 0) {
-      const parsedSks = Number(sksRaw);
-      if (!Number.isFinite(parsedSks)) {
-        return res.status(400).json({
-          ok: false,
-          message: "sksDiperoleh must be a valid number",
-        });
-      }
-      sksVal = parsedSks;
-    }
     const pembimbing1Val =
       pembimbing1DiajukanNidn !== undefined && pembimbing1DiajukanNidn !== null
         ? String(pembimbing1DiajukanNidn).trim()
@@ -770,7 +750,6 @@ exports.resubmit = async (req, res, next) => {
 
     const hasMeaningfulUpdate =
       (noHpVal !== null && noHpVal.length > 0) ||
-      sksVal !== null ||
       (pembimbing1Val !== null && pembimbing1Val.length > 0) ||
       (pembimbing2Val !== null && pembimbing2Val.length > 0) ||
       perluSuratProvided ||
@@ -858,10 +837,6 @@ exports.resubmit = async (req, res, next) => {
       sets.push("no_hp = ?");
       params.push(noHpVal);
     }
-    if (sksVal !== null) {
-      sets.push("sks_diperoleh = ?");
-      params.push(sksVal);
-    }
     if (pembimbing1Val !== null && pembimbing1Val.length > 0) {
       sets.push("pembimbing1_diajukan_nidn = ?");
       params.push(pembimbing1Val);
@@ -910,7 +885,7 @@ exports.resubmit = async (req, res, next) => {
          m.nama AS nama_mahasiswa, m.sks,
          ps.nama AS program_studi_nama,
          o.judul AS judul_skripsi,
-         pj.no_hp, pj.sks_diperoleh, pj.perlu_surat_pengantar, pj.nama_perusahaan,
+         pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
          pj.pembimbing1_diajukan_nidn, pj.pembimbing2_diajukan_nidn,
          d1.nama AS pembimbing1_nama,
          d2.nama AS pembimbing2_nama,
@@ -932,7 +907,7 @@ exports.resubmit = async (req, res, next) => {
       namaMahasiswa: resubDocData.nama_mahasiswa,
       programStudiNama: resubDocData.program_studi_nama,
       noHp: resubDocData.no_hp,
-      sks: resubDocData.sks_diperoleh ?? resubDocData.sks,
+      sks: resubDocData.sks,
       judulSkripsi: resubDocData.judul_skripsi,
       pembimbing1Nama: resubDocData.pembimbing1_nama ?? resubDocData.pembimbing1_diajukan_nidn ?? "",
       pembimbing2Nama: resubDocData.pembimbing2_nama ?? resubDocData.pembimbing2_diajukan_nidn ?? "",

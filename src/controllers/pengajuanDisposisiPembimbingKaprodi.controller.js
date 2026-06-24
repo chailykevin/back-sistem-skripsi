@@ -489,7 +489,7 @@ exports.review = async (req, res, next) => {
     console.log("[review] fetching reviewDocRows");
     const [reviewDocRows] = await conn.query(
       `SELECT
-         pj.npm, pj.no_hp, pj.sks_diperoleh, pj.perlu_surat_pengantar, pj.nama_perusahaan,
+         pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
          pj.submitted_at,
          pj.syarat_transkrip, pj.syarat_krs, pj.syarat_metodologi_nilai_min_c,
          m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
@@ -528,7 +528,7 @@ exports.review = async (req, res, next) => {
       namaMahasiswa: rd.nama_mahasiswa,
       programStudiNama: rd.program_studi_nama,
       noHp: rd.no_hp,
-      sks: rd.sks_diperoleh ?? rd.mahasiswa_sks,
+      sks: rd.mahasiswa_sks,
       judulSkripsi: rd.judul_skripsi,
       pembimbing1DiajukanNama: rd.pembimbing1_diajukan_nama ?? "",
       pembimbing2DiajukanNama: rd.pembimbing2_diajukan_nama ?? "",
