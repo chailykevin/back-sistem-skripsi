@@ -69,6 +69,15 @@ function signaturePatch(signatureValue) {
   };
 }
 
+async function resolveUserId(conn, nidn) {
+  if (!nidn) return null;
+  const [[row]] = await conn.query(
+    `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+    [nidn],
+  );
+  return row?.id ?? null;
+}
+
 async function getLecturerNidn(userId) {
   const [rows] = await db.query(
     `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
@@ -122,7 +131,10 @@ const NOTULEN_ROLE_LABEL = {
 
 async function getSidangBySkripsiId(conn, skripsiId) {
   const [[sidang]] = await conn.query(
-    `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+    `SELECT s.*, ps.ujian_ke
+     FROM sidang s
+     LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
+     WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
     [skripsiId],
   );
   return sidang ?? null;
@@ -139,7 +151,7 @@ exports.getSidang = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -305,7 +317,7 @@ exports.startSidang = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -811,7 +823,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       ],
     );
 
-    // Update sidang header fields
+    // sync'd copy of sidang_hasil_penilaian.hasil_sidang — written together in one transaction
     await conn.query(
       `UPDATE sidang SET hasil_sidang = ?, catatan_penguji = ?, updated_at = NOW() WHERE id = ?`,
       [hasilSidang, catatanPenguji ?? null, sidang.id],
@@ -902,10 +914,11 @@ exports.submitHasilPenilaian = async (req, res, next) => {
           `UPDATE revisi_pasca_sidang SET sidang_id = ?, is_completed = 0, updated_at = NOW() WHERE id = ?`,
           [sidang.id, existingRevisi.id],
         );
+        const pg2UserId = await resolveUserId(conn, sidang.penguji2_nidn);
         await conn.query(
-          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, nidn, nama)
-           VALUES (?, 'PENGUJI_2', ?, ?)`,
-          [existingRevisi.id, sidang.penguji2_nidn, sidang.penguji2_nama],
+          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
+           VALUES (?, 'PENGUJI_2', ?)`,
+          [existingRevisi.id, pg2UserId],
         );
       }
     }
@@ -918,8 +931,8 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       );
       if (!existingRevisi) {
         await conn.query(
-          `INSERT INTO revisi_pasca_sidang (sidang_id, skripsi_id, npm) VALUES (?, ?, ?)`,
-          [sidang.id, skripsiId, sidang.npm],
+          `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
+          [sidang.id],
         );
       }
     }
@@ -944,7 +957,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
 async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
   try {
     const [notulenRows] = await conn.query(
-      `SELECT role, note, nidn FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
+      `SELECT role, note FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
       [sidang.id],
     );
     if (notulenRows.length === 0) return;
@@ -1185,7 +1198,7 @@ exports.getBeritaAcara = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1223,7 +1236,7 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1272,7 +1285,7 @@ exports.getPenilaianFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1318,7 +1331,7 @@ exports.getNotulenFile = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT * FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!sidang) {
@@ -1366,13 +1379,15 @@ exports.getSekretariatSidang = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          s.id, s.skripsi_id, s.nomor_surat, s.npm, s.nama_mahasiswa,
-         s.program_studi_id, s.program_studi_nama, s.judul_skripsi, s.ujian_ke,
+         s.program_studi_id, s.program_studi_nama, s.judul_skripsi,
+         ps.ujian_ke,
          s.status, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
          s.pembimbing1_nidn, s.pembimbing1_nama, s.pembimbing2_nidn, s.pembimbing2_nama,
          s.penguji1_nidn, s.penguji1_nama, s.penguji2_nidn, s.penguji2_nama,
          s.hasil_sidang, s.created_at,
          shp.rata, shp.grade
        FROM sidang s
+       LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
        LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
        WHERE (? IS NULL OR s.status = ?)
          AND (? IS NULL OR s.program_studi_id = ?)

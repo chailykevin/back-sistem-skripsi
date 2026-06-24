@@ -3444,11 +3444,11 @@ exports.generateSuratUndangan = async (req, res, next) => {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
            (skripsi_id, nomor_surat, pengajuan_sidang_id,
-            npm, nama_mahasiswa, program_studi_id, program_studi_nama, judul_skripsi, ujian_ke,
+            npm, nama_mahasiswa, program_studi_id, program_studi_nama, judul_skripsi,
             pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
             penguji1_nidn, penguji1_nama, penguji2_nidn, penguji2_nama,
             tanggal_sidang, waktu_sidang, tempat_sidang, tanggal_disposisi)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           skripsiId,
           nomorSuratSidang,
@@ -3458,7 +3458,6 @@ exports.generateSuratUndangan = async (req, res, next) => {
           dataRow?.program_studi_id ?? null,
           dataRow?.prodi_nama ?? "",
           dataRow?.judul_skripsi ?? "",
-          dataRow?.ujian_ke ?? 1,
           dataRow?.pembimbing1_nidn ?? "",
           dataRow?.pembimbing1_nama ?? "",
           dataRow?.pembimbing2_nidn ?? "",
@@ -3475,39 +3474,43 @@ exports.generateSuratUndangan = async (req, res, next) => {
       );
       const newSidangId = sidangIns.insertId;
 
+      // Resolve user_id for each participant (nullable — no account → NULL)
+      const resolveUserId = async (nidn) => {
+        if (!nidn) return null;
+        const [[u]] = await conn.query(
+          `SELECT id FROM users WHERE nidn = ? AND is_active = 1 LIMIT 1`,
+          [nidn],
+        );
+        return u?.id ?? null;
+      };
+      const [p1UserId, p2UserId, pg1UserId, pg2UserId] = await Promise.all([
+        resolveUserId(dataRow?.pembimbing1_nidn),
+        resolveUserId(dataRow?.pembimbing2_nidn),
+        resolveUserId(dataRow?.penguji1_nidn),
+        resolveUserId(dataRow?.penguji2_nidn),
+      ]);
+
       await conn.query(
-        `INSERT INTO sidang_penilaian (sidang_id, role, nidn, nama) VALUES
-           (?, 'PEMBIMBING_1', ?, ?),
-           (?, 'PEMBIMBING_2', ?, ?),
-           (?, 'PENGUJI_1', ?, ?),
-           (?, 'PENGUJI_2', ?, ?)`,
+        `INSERT INTO sidang_penilaian (sidang_id, role, user_id) VALUES
+           (?, 'PEMBIMBING_1', ?),
+           (?, 'PEMBIMBING_2', ?),
+           (?, 'PENGUJI_1', ?),
+           (?, 'PENGUJI_2', ?)`,
         [
-          newSidangId,
-          dataRow?.pembimbing1_nidn ?? "",
-          dataRow?.pembimbing1_nama ?? "",
-          newSidangId,
-          dataRow?.pembimbing2_nidn ?? "",
-          dataRow?.pembimbing2_nama ?? "",
-          newSidangId,
-          dataRow?.penguji1_nidn ?? "",
-          dataRow?.penguji1_nama ?? "",
-          newSidangId,
-          dataRow?.penguji2_nidn ?? "",
-          dataRow?.penguji2_nama ?? "",
+          newSidangId, p1UserId,
+          newSidangId, p2UserId,
+          newSidangId, pg1UserId,
+          newSidangId, pg2UserId,
         ],
       );
 
       await conn.query(
-        `INSERT INTO sidang_notulen (sidang_id, role, nidn, nama) VALUES
-           (?, 'PENGUJI_1', ?, ?),
-           (?, 'PENGUJI_2', ?, ?)`,
+        `INSERT INTO sidang_notulen (sidang_id, role, user_id) VALUES
+           (?, 'PENGUJI_1', ?),
+           (?, 'PENGUJI_2', ?)`,
         [
-          newSidangId,
-          dataRow?.penguji1_nidn ?? "",
-          dataRow?.penguji1_nama ?? "",
-          newSidangId,
-          dataRow?.penguji2_nidn ?? "",
-          dataRow?.penguji2_nama ?? "",
+          newSidangId, pg1UserId,
+          newSidangId, pg2UserId,
         ],
       );
 

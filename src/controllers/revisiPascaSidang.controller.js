@@ -76,7 +76,7 @@ async function getStudentNpm(userId) {
   return rows[0]?.npm ?? null;
 }
 
-async function getUserIdByNidn(conn, nidn) {
+async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
     `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
@@ -92,6 +92,15 @@ async function getUserIdByNpm(conn, npm) {
     [npm],
   );
   return row?.id ?? null;
+}
+
+async function getSigByUserId(conn, userId) {
+  if (!userId) return null;
+  const [[row]] = await conn.query(
+    `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
+    [userId],
+  );
+  return row?.signature_image ?? null;
 }
 
 async function getSigByNidn(conn, nidn) {
@@ -293,7 +302,10 @@ exports.initRevisi = async (req, res, next) => {
 
     // Return existing if already created
     const [[existing]] = await db.query(
-      `SELECT id, is_completed FROM revisi_pasca_sidang WHERE skripsi_id = ? LIMIT 1`,
+      `SELECT rps.id, rps.is_completed
+       FROM revisi_pasca_sidang rps
+       JOIN sidang s ON s.id = rps.sidang_id
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (existing) {
@@ -302,10 +314,11 @@ exports.initRevisi = async (req, res, next) => {
         [existing.id],
       );
       if (!existingStage && !existing.is_completed) {
-        await db.query(
-          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, nidn, nama)
-           VALUES (?, 'PENGUJI_2', ?, ?)`,
-          [existing.id, sidang.penguji2_nidn, sidang.penguji2_nama],
+        const pg2UserId = await resolveUserId(conn, sidang.penguji2_nidn);
+        await conn.query(
+          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
+           VALUES (?, 'PENGUJI_2', ?)`,
+          [existing.id, pg2UserId],
         );
       }
       return res.json({
@@ -318,16 +331,17 @@ exports.initRevisi = async (req, res, next) => {
     txStarted = true;
 
     const [result] = await conn.query(
-      `INSERT INTO revisi_pasca_sidang (sidang_id, skripsi_id, npm) VALUES (?, ?, ?)`,
-      [sidang.id, skripsiId, npm],
+      `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
+      [sidang.id],
     );
     const revisiId = result.insertId;
 
     // Create first stage lazily: PENGUJI_2
+    const pg2UserId = await resolveUserId(conn, sidang.penguji2_nidn);
     await conn.query(
-      `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, nidn, nama)
-       VALUES (?, 'PENGUJI_2', ?, ?)`,
-      [revisiId, sidang.penguji2_nidn, sidang.penguji2_nama],
+      `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
+       VALUES (?, 'PENGUJI_2', ?)`,
+      [revisiId, pg2UserId],
     );
 
     await conn.commit();
@@ -379,12 +393,12 @@ exports.submitRevisi = async (req, res, next) => {
     txStarted = true;
 
     const [[revisi]] = await conn.query(
-      `SELECT rps.*, s.nama_mahasiswa,
+      `SELECT rps.*, s.npm, s.nama_mahasiswa,
               s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn,
               s.pembimbing1_nama, s.pembimbing2_nama, s.penguji1_nama, s.penguji2_nama
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE rps.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -453,10 +467,9 @@ exports.submitRevisi = async (req, res, next) => {
       [nextSubmissionNo, activeStage.id],
     );
 
-    const signerUserId = await getUserIdByNidn(conn, activeStage.nidn);
     await insertNotification(
       conn,
-      signerUserId,
+      activeStage.user_id,
       "REVISI_PASCA_SIDANG",
       `Mahasiswa ${revisi.nama_mahasiswa} telah mengunggah revisi dan menunggu review Anda`,
       `/revisi-pasca-sidang/${skripsiId}`,
@@ -531,7 +544,7 @@ exports.reviewRevisi = async (req, res, next) => {
               s.hasil_sidang
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE rps.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -562,7 +575,7 @@ exports.reviewRevisi = async (req, res, next) => {
         .status(409)
         .json({ ok: false, message: "Tidak ada tahap aktif saat ini" });
     }
-    if (activeStage.nidn !== nidn) {
+    if (activeStage.user_id !== req.user.id) {
       await conn.rollback();
       txStarted = false;
       return res
@@ -632,7 +645,7 @@ exports.reviewRevisi = async (req, res, next) => {
             [revisi.sidang_id, activeStage.signer_role],
           );
           if (notulenRow && notulenRow.submitted_at) {
-            const sigImage = await getSigByNidn(conn, activeStage.nidn);
+            const sigImage = await getSigByUserId(conn, activeStage.user_id);
             const templateBuffer = await readFile(
               path.join(__dirname, "../templates/template_notulen_penguji.docx"),
             );
@@ -678,12 +691,12 @@ exports.reviewRevisi = async (req, res, next) => {
 
       if (nextRole) {
         const nextNidn = getNidnForRole(revisi, nextRole);
-        const nextNama = getNamaForRole(revisi, nextRole);
+        const nextUserId = await resolveUserId(conn, nextNidn);
 
         await conn.query(
-          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, nidn, nama)
-           VALUES (?, ?, ?, ?)`,
-          [revisi.id, nextRole, nextNidn, nextNama],
+          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
+           VALUES (?, ?, ?)`,
+          [revisi.id, nextRole, nextUserId],
         );
 
         const studentUserId = await getUserIdByNpm(conn, revisi.mahasiswa_npm);
@@ -695,10 +708,9 @@ exports.reviewRevisi = async (req, res, next) => {
           `/revisi-pasca-sidang/${skripsiId}`,
         );
 
-        const nextSignerUserId = await getUserIdByNidn(conn, nextNidn);
         await insertNotification(
           conn,
-          nextSignerUserId,
+          nextUserId,
           "REVISI_PASCA_SIDANG",
           `Mahasiswa ${revisi.nama_mahasiswa} akan mengunggah revisi untuk ditandatangani`,
           `/revisi-pasca-sidang/${skripsiId}`,
@@ -820,7 +832,7 @@ exports.getRevisi = async (req, res, next) => {
               s.hasil_sidang
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE rps.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -847,7 +859,7 @@ exports.getRevisi = async (req, res, next) => {
     }
 
     const [stages] = await db.query(
-      `SELECT id, signer_role, nidn, nama, current_status, current_submission_no, started_at, finished_at
+      `SELECT id, signer_role, user_id, current_status, current_submission_no, started_at, finished_at
        FROM revisi_pasca_sidang_stages
        WHERE revisi_id = ?
        ORDER BY FIELD(signer_role, 'PENGUJI_2', 'PENGUJI_1', 'PEMBIMBING_2', 'PEMBIMBING_1')`,
@@ -908,7 +920,7 @@ exports.getRevisi = async (req, res, next) => {
       [revisi.id],
     );
 
-    const { npm: _npm, mahasiswa_npm, ...revisiBase } = revisi;
+    const { mahasiswa_npm, ...revisiBase } = revisi;
 
     return res.json({
       ok: true,
@@ -948,8 +960,8 @@ exports.getLecturerRevisi = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         rps.id, rps.skripsi_id, rps.npm, rps.is_completed,
-         s.nama_mahasiswa, s.judul_skripsi, s.tanggal_sidang,
+         rps.id, rps.is_completed,
+         s.skripsi_id, s.npm, s.nama_mahasiswa, s.judul_skripsi, s.tanggal_sidang,
          s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn,
          CASE
            WHEN s.penguji2_nidn    = ? THEN 'PENGUJI_2'
@@ -1032,10 +1044,10 @@ exports.getSubmissionFile = async (req, res, next) => {
     }
 
     const [[revisi]] = await db.query(
-      `SELECT rps.id, rps.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
+      `SELECT rps.id, s.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE rps.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -1101,10 +1113,10 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
     }
 
     const [[revisi]] = await db.query(
-      `SELECT rps.id, rps.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
+      `SELECT rps.id, s.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE rps.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -1159,10 +1171,10 @@ exports.getHalamanDekanFile = async (req, res, next) => {
     }
 
     const [[revisi]] = await db.query(
-      `SELECT rps.id, rps.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
+      `SELECT rps.id, s.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE rps.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
