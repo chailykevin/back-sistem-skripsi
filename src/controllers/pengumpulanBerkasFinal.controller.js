@@ -69,11 +69,11 @@ async function getLecturerNidn(userId) {
   return rows[0]?.nidn ?? null;
 }
 
-async function getSigByNidn(conn, nidn) {
-  if (!nidn) return null;
+async function getSigByUserId(conn, userId) {
+  if (!userId) return null;
   const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
-    [nidn],
+    `SELECT signature_image FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    [userId],
   );
   return row?.signature_image ?? null;
 }
@@ -96,7 +96,7 @@ async function getSigByRole(conn, role, userIdForRole) {
   return row?.signature_image ?? null;
 }
 
-async function getUserIdByNidn(conn, nidn) {
+async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
     `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
@@ -136,7 +136,7 @@ async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
             rps.id as revisi_id, rps.is_completed as revisi_completed
      FROM skripsi sk
      LEFT JOIN sidang s ON s.skripsi_id = sk.id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = sk.id)
-     LEFT JOIN revisi_pasca_sidang rps ON rps.skripsi_id = sk.id
+     LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
      WHERE sk.id = ?
      LIMIT 1`,
     [skripsiId],
@@ -184,10 +184,10 @@ async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sek
 
   const [sigMhs, sigPb1, sigPb2, sigPg1, sigPg2] = await Promise.all([
     getSigByNpm(conn, pengumpulan.npm),
-    getSigByNidn(conn, confMap["PEMBIMBING_1"]?.nidn ?? null),
-    getSigByNidn(conn, confMap["PEMBIMBING_2"]?.nidn ?? null),
-    getSigByNidn(conn, confMap["PENGUJI_1"]?.nidn ?? null),
-    getSigByNidn(conn, confMap["PENGUJI_2"]?.nidn ?? null),
+    getSigByUserId(conn, confMap["PEMBIMBING_1"]?.user_id ?? null),
+    getSigByUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
+    getSigByUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
+    getSigByUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
   ]);
 
   const tanggalDibuat = formatTanggal(new Date());
@@ -271,7 +271,10 @@ exports.initPengumpulan = async (req, res, next) => {
 
     // Prerequisite: revisi_pasca_sidang.is_completed = 1
     const [[revisiRow]] = await conn.query(
-      `SELECT id, is_completed FROM revisi_pasca_sidang WHERE skripsi_id = ? LIMIT 1`,
+      `SELECT rps.id, rps.is_completed
+       FROM revisi_pasca_sidang rps
+       JOIN sidang s ON s.id = rps.sidang_id
+       WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
     if (!revisiRow || !revisiRow.is_completed) {
@@ -300,8 +303,8 @@ exports.initPengumpulan = async (req, res, next) => {
     }
 
     const [result] = await conn.query(
-      `INSERT INTO pengumpulan_berkas_final (skripsi_id, npm, status) VALUES (?, ?, 'DRAFT')`,
-      [skripsiId, npm],
+      `INSERT INTO pengumpulan_berkas_final (skripsi_id, status) VALUES (?, 'DRAFT')`,
+      [skripsiId],
     );
 
     await conn.commit(); txStarted = false;
@@ -338,10 +341,12 @@ exports.submitPengumpulan = async (req, res, next) => {
     txStarted = true;
 
     const [[pengumpulan]] = await conn.query(
-      `SELECT pbf.id, pbf.status, pbf.npm, s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
+      `SELECT pbf.id, pbf.status, sk.npm,
+              s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
        FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
-       WHERE pbf.skripsi_id = ? AND pbf.npm = ?
+       WHERE pbf.skripsi_id = ? AND sk.npm = ?
        LIMIT 1`,
       [skripsiId, npm],
     );
@@ -386,24 +391,26 @@ exports.submitPengumpulan = async (req, res, next) => {
       [pengumpulan.id],
     );
 
+    const [pb1UserId, pb2UserId, pg1UserId, pg2UserId] = await Promise.all([
+      resolveUserId(conn, pengumpulan.pembimbing1_nidn),
+      resolveUserId(conn, pengumpulan.pembimbing2_nidn),
+      resolveUserId(conn, pengumpulan.penguji1_nidn),
+      resolveUserId(conn, pengumpulan.penguji2_nidn),
+    ]);
     const confirmRows = [
-      { role: "PERPUSTAKAAN", nidn: null, userId: perpustakaanUserId },
-      { role: "LPPM", nidn: null, userId: lppmUserId },
-      { role: "PEMBIMBING_1", nidn: pengumpulan.pembimbing1_nidn, userId: null },
-      { role: "PEMBIMBING_2", nidn: pengumpulan.pembimbing2_nidn, userId: null },
-      { role: "PENGUJI_1", nidn: pengumpulan.penguji1_nidn, userId: null },
-      { role: "PENGUJI_2", nidn: pengumpulan.penguji2_nidn, userId: null },
+      { role: "PERPUSTAKAAN", userId: perpustakaanUserId },
+      { role: "LPPM",         userId: lppmUserId },
+      { role: "PEMBIMBING_1", userId: pb1UserId },
+      { role: "PEMBIMBING_2", userId: pb2UserId },
+      { role: "PENGUJI_1",    userId: pg1UserId },
+      { role: "PENGUJI_2",    userId: pg2UserId },
     ];
 
     for (const row of confirmRows) {
-      let resolvedUserId = row.userId;
-      if (!resolvedUserId && row.nidn) {
-        resolvedUserId = await getUserIdByNidn(conn, row.nidn);
-      }
       await conn.query(
-        `INSERT INTO pengumpulan_berkas_final_confirmations (pengumpulan_id, recipient_role, nidn, user_id)
-         VALUES (?, ?, ?, ?)`,
-        [pengumpulan.id, row.role, row.nidn ?? null, resolvedUserId ?? null],
+        `INSERT INTO pengumpulan_berkas_final_confirmations (pengumpulan_id, recipient_role, user_id)
+         VALUES (?, ?, ?)`,
+        [pengumpulan.id, row.role, row.userId ?? null],
       );
     }
 
@@ -416,14 +423,10 @@ exports.submitPengumpulan = async (req, res, next) => {
     // Notify all 6 recipients
     const link = `/pengumpulan-berkas-final/${skripsiId}`;
     for (const row of confirmRows) {
-      let targetUserId = row.userId;
-      if (!targetUserId && row.nidn) {
-        targetUserId = await getUserIdByNidn(conn, row.nidn);
-      }
-      if (targetUserId) {
+      if (row.userId) {
         await insertNotification(
           conn,
-          targetUserId,
+          row.userId,
           "PENGUMPULAN_BERKAS_FINAL",
           `Mahasiswa dengan npm ${npm} telah mengunggah berkas final skripsi. Silakan konfirmasi penerimaan.`,
           link,
@@ -457,10 +460,11 @@ exports.confirmPengumpulan = async (req, res, next) => {
     txStarted = true;
 
     const [[pengumpulan]] = await conn.query(
-      `SELECT pbf.id, pbf.status, pbf.npm, pbf.skripsi_id,
+      `SELECT pbf.id, pbf.status, pbf.skripsi_id, sk.npm,
               s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn,
               s.program_studi_id
        FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
        WHERE pbf.skripsi_id = ?
        LIMIT 1`,
@@ -531,7 +535,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
     if (Number(confirmed) === Number(total)) {
       // All confirmed — generate Surat Pernyataan Penyerahan
       const allConfs = await conn.query(
-        `SELECT recipient_role, nidn, user_id, confirmed_at
+        `SELECT recipient_role, user_id, confirmed_at
          FROM pengumpulan_berkas_final_confirmations
          WHERE pengumpulan_id = ?`,
         [pengumpulan.id],
@@ -570,7 +574,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
           [pengumpulan.program_studi_id],
         );
         if (psRow?.sekprodi_nidn) {
-          const sekprodiUserId = await getUserIdByNidn(conn, psRow.sekprodi_nidn);
+          const sekprodiUserId = await resolveUserId(conn, psRow.sekprodi_nidn);
           if (sekprodiUserId) {
             await insertNotification(
               conn,
@@ -637,10 +641,11 @@ exports.signPengumpulan = async (req, res, next) => {
     txStarted = true;
 
     const [[pengumpulan]] = await conn.query(
-      `SELECT pbf.id, pbf.status, pbf.npm, pbf.skripsi_id,
+      `SELECT pbf.id, pbf.status, pbf.skripsi_id, sk.npm,
               s.program_studi_id, s.pembimbing1_nidn, s.pembimbing2_nidn,
               s.penguji1_nidn, s.penguji2_nidn
        FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
        WHERE pbf.skripsi_id = ?
        LIMIT 1`,
@@ -694,7 +699,7 @@ exports.signPengumpulan = async (req, res, next) => {
 
     // Regenerate document with sekprodi signature
     const allConfs = await conn.query(
-      `SELECT recipient_role, nidn, user_id, confirmed_at
+      `SELECT recipient_role, user_id, confirmed_at
        FROM pengumpulan_berkas_final_confirmations
        WHERE pengumpulan_id = ?`,
       [pengumpulan.id],
@@ -754,11 +759,12 @@ exports.getPengumpulan = async (req, res, next) => {
     const userRoles = req.user.roles ?? [];
 
     const [[pengumpulan]] = await db.query(
-      `SELECT pbf.id, pbf.skripsi_id, pbf.npm, pbf.status, pbf.is_completed,
-              pbf.created_at, pbf.updated_at,
+      `SELECT pbf.id, pbf.skripsi_id, pbf.status, pbf.is_completed,
+              pbf.created_at, pbf.updated_at, sk.npm,
               s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn,
               s.program_studi_id
        FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
        WHERE pbf.skripsi_id = ?
        LIMIT 1`,
@@ -787,7 +793,7 @@ exports.getPengumpulan = async (req, res, next) => {
     }
 
     const [confirmations] = await db.query(
-      `SELECT id, recipient_role, nidn, user_id, confirmed_at
+      `SELECT id, recipient_role, user_id, confirmed_at
        FROM pengumpulan_berkas_final_confirmations
        WHERE pengumpulan_id = ?
        ORDER BY FIELD(recipient_role, 'PERPUSTAKAAN','LPPM','PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')`,
@@ -822,7 +828,6 @@ exports.getPengumpulan = async (req, res, next) => {
         confirmations: confirmations.map((c) => ({
           id: c.id,
           recipientRole: c.recipient_role,
-          nidn: c.nidn,
           userId: c.user_id,
           confirmedAt: c.confirmed_at,
         })),
@@ -855,9 +860,10 @@ exports.getFile = async (req, res, next) => {
     const userRoles = req.user.roles ?? [];
 
     const [[pengumpulan]] = await db.query(
-      `SELECT pbf.id, pbf.npm,
+      `SELECT pbf.id, sk.npm,
               s.pembimbing1_nidn, s.pembimbing2_nidn, s.penguji1_nidn, s.penguji2_nidn
        FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
        WHERE pbf.skripsi_id = ?
        LIMIT 1`,
@@ -911,8 +917,9 @@ exports.listForLecturer = async (req, res, next) => {
 
     const statusFilter = req.query.status;
 
+    const callerUserId = await resolveUserId(db, nidn);
     const [rows] = await db.query(
-      `SELECT pbf.id, pbf.skripsi_id, pbf.npm, pbf.status, pbf.is_completed,
+      `SELECT pbf.id, pbf.skripsi_id, sk.npm, pbf.status, pbf.is_completed,
               pbf.created_at, pbf.updated_at,
               m.nama as nama_mahasiswa,
               sk.judul as judul_skripsi,
@@ -926,16 +933,16 @@ exports.listForLecturer = async (req, res, next) => {
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
        INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
-       LEFT JOIN mahasiswa m ON m.npm = pbf.npm
+       LEFT JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengumpulan_berkas_final_confirmations conf
          ON conf.pengumpulan_id = pbf.id
-         AND conf.nidn = ?
+         AND conf.user_id = ?
        WHERE s.pembimbing1_nidn = ?
           OR s.pembimbing2_nidn = ?
           OR s.penguji1_nidn    = ?
           OR s.penguji2_nidn    = ?
        ORDER BY pbf.created_at DESC`,
-      [nidn, nidn, nidn, nidn, nidn, nidn, nidn, nidn, nidn],
+      [nidn, nidn, nidn, nidn, callerUserId ?? null, nidn, nidn, nidn, nidn],
     );
 
     const filtered = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
@@ -986,7 +993,7 @@ exports.listForSekretariatProdi = async (req, res, next) => {
     }
 
     const [rows] = await db.query(
-      `SELECT pbf.id, pbf.skripsi_id, pbf.npm, pbf.status, pbf.is_completed,
+      `SELECT pbf.id, pbf.skripsi_id, sk.npm, pbf.status, pbf.is_completed,
               pbf.created_at, pbf.updated_at,
               m.nama as nama_mahasiswa,
               sk.judul as judul_skripsi,
@@ -995,7 +1002,7 @@ exports.listForSekretariatProdi = async (req, res, next) => {
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
        INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
-       LEFT JOIN mahasiswa m ON m.npm = pbf.npm
+       LEFT JOIN mahasiswa m ON m.npm = sk.npm
        WHERE s.program_studi_id = ?
        ORDER BY pbf.created_at DESC`,
       [psRow.id],
@@ -1033,14 +1040,14 @@ async function listForInstitutionRole(roleCode, recipientRole, req, res, next) {
     const statusFilter = req.query.status;
 
     const [rows] = await db.query(
-      `SELECT pbf.id, pbf.skripsi_id, pbf.npm, pbf.status, pbf.is_completed,
+      `SELECT pbf.id, pbf.skripsi_id, sk.npm, pbf.status, pbf.is_completed,
               pbf.created_at, pbf.updated_at,
               m.nama as nama_mahasiswa,
               sk.judul as judul_skripsi,
               conf.confirmed_at as caller_confirmed_at
        FROM pengumpulan_berkas_final pbf
-       LEFT JOIN mahasiswa m ON m.npm = pbf.npm
-       LEFT JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       LEFT JOIN mahasiswa m ON m.npm = sk.npm
        INNER JOIN pengumpulan_berkas_final_confirmations conf
          ON conf.pengumpulan_id = pbf.id AND conf.recipient_role = ?
        WHERE pbf.status != 'DRAFT'
