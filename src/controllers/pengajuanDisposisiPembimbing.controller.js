@@ -398,7 +398,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         kaprodiUserRows[0].id,
         "TITLE_SUBMITTED",
         `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
-        "/kaprodi/proposal/pengajuan-disposisi-pembimbing",
+        "/kaprodi/pengajuan-outline/pengajuan-disposisi-pembimbing",
       );
     }
 
@@ -980,7 +980,7 @@ exports.resubmit = async (req, res, next) => {
           resubKaprodiRows[0].id,
           "TITLE_RESUBMITTED",
           `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
-          "/kaprodi/proposal/pengajuan-disposisi-pembimbing",
+          "/kaprodi/pengajuan-outline/pengajuan-disposisi-pembimbing",
         );
       }
     }
