@@ -132,10 +132,11 @@ async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
             s.id as sidang_id,
             sk.pembimbing1_nidn, sk.pembimbing2_nidn,
             psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-            s.nama_mahasiswa, sk.judul AS judul_skripsi,
+            m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi,
             prog.id AS program_studi_id, prog.nama AS program_studi_nama,
             rps.id as revisi_id, rps.is_completed as revisi_completed
      FROM skripsi sk
+     JOIN mahasiswa m ON m.npm = sk.npm
      LEFT JOIN sidang s ON s.skripsi_id = sk.id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = sk.id)
      LEFT JOIN pengajuan_sidang_kaprodi psk_k
             ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
@@ -552,8 +553,10 @@ exports.confirmPengumpulan = async (req, res, next) => {
       const confirmations = allConfs[0];
 
       const sidangRows = await conn.query(
-        `SELECT s.nama_mahasiswa
+        `SELECT m.nama AS nama_mahasiswa
          FROM sidang s
+         JOIN skripsi sk ON sk.id = s.skripsi_id
+         JOIN mahasiswa m ON m.npm = sk.npm
          WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
         [skripsiId],
       );
@@ -721,8 +724,10 @@ exports.signPengumpulan = async (req, res, next) => {
     const confirmations = allConfs[0];
 
     const sidangRows = await conn.query(
-      `SELECT s.nama_mahasiswa
+      `SELECT m.nama AS nama_mahasiswa
        FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
        WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );

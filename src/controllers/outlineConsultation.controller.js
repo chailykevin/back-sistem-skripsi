@@ -38,10 +38,14 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
-async function getKartuByOutlineAndStudent(outlineId, npm) {
+async function getKartuByOutlineId(outlineId) {
   const [rows] = await db.query(
     `SELECT
        k.*,
+       o.pembimbing1_nidn  AS pembimbing1_nidn,
+       o.pembimbing2_nidn  AS pembimbing2_nidn,
+       o.program_studi_id  AS program_studi_id,
+       m.npm               AS npm,
        m.nama              AS nama_mahasiswa,
        ps.nama             AS program_studi_nama,
        o.judul             AS judul_skripsi,
@@ -50,24 +54,24 @@ async function getKartuByOutlineAndStudent(outlineId, npm) {
        pu1.signature_image AS pembimbing1_signature,
        pu2.signature_image AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
-     JOIN mahasiswa m ON m.npm = k.npm
-     JOIN program_studi ps ON ps.id = k.program_studi_id
      JOIN outline o ON o.id = k.outline_id
-     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+     JOIN mahasiswa m ON m.npm = o.npm
+     JOIN program_studi ps ON ps.id = o.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
        AND EXISTS (
          SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
        )
-     LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
        AND EXISTS (
          SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
        )
-     WHERE k.outline_id = ? AND k.npm = ?
+     WHERE k.outline_id = ?
      LIMIT 1`,
-    [outlineId, npm],
+    [outlineId],
   );
   return rows[0] ?? null;
 }
@@ -298,6 +302,9 @@ async function generateAndStoreFinalKartuDocx(
   const [kartuRows] = await queryable.query(
     `SELECT
        k.*,
+       o.pembimbing1_nidn  AS pembimbing1_nidn,
+       o.pembimbing2_nidn  AS pembimbing2_nidn,
+       o.program_studi_id  AS program_studi_id,
        m.nama              AS nama_mahasiswa,
        ps.nama             AS program_studi_nama,
        o.judul             AS judul_skripsi,
@@ -306,17 +313,17 @@ async function generateAndStoreFinalKartuDocx(
        pu1.signature_image AS pembimbing1_signature,
        pu2.signature_image AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
-     JOIN mahasiswa m ON m.npm = k.npm
-     JOIN program_studi ps ON ps.id = k.program_studi_id
      JOIN outline o ON o.id = k.outline_id
-     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+     JOIN mahasiswa m ON m.npm = o.npm
+     JOIN program_studi ps ON ps.id = o.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
        AND EXISTS (
          SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
        )
-     LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
        AND EXISTS (
          SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
@@ -449,8 +456,10 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
 
   // Generate halaman persetujuan DOCX inline from users.signature_image
   const [[mahasiswaRow]] = await conn.query(
-    `SELECT signature_image FROM users WHERE npm = ? LIMIT 1`,
-    [kartu.npm],
+    `SELECT u.signature_image FROM users u
+     JOIN outline o ON o.npm = u.npm
+     WHERE o.id = ? LIMIT 1`,
+    [kartu.outline_id],
   );
   const [[p2Row]] = await conn.query(
     `SELECT u.signature_image FROM users u
@@ -484,12 +493,12 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
        d2.nama AS pembimbing2_nama
      FROM program_studi ps
      LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
-     JOIN mahasiswa m ON m.npm = ?
      JOIN outline o ON o.id = ?
+     JOIN mahasiswa m ON m.npm = o.npm
      LEFT JOIN dosen d1 ON d1.nidn = ?
      LEFT JOIN dosen d2 ON d2.nidn = ?
      WHERE ps.id = ? LIMIT 1`,
-    [kartu.npm, kartu.outline_id, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
+    [kartu.outline_id, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
   );
 
   const halamanSignatures = [
@@ -546,6 +555,9 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
   const [rows] = await queryable.query(
     `SELECT
        k.*,
+       o.pembimbing1_nidn  AS pembimbing1_nidn,
+       o.pembimbing2_nidn  AS pembimbing2_nidn,
+       o.program_studi_id  AS program_studi_id,
        m.nama              AS nama_mahasiswa,
        ps.nama             AS program_studi_nama,
        o.judul             AS judul_skripsi,
@@ -554,17 +566,17 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
        pu1.signature_image AS pembimbing1_signature,
        pu2.signature_image AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
-     JOIN mahasiswa m ON m.npm = k.npm
-     JOIN program_studi ps ON ps.id = k.program_studi_id
      JOIN outline o ON o.id = k.outline_id
-     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+     JOIN mahasiswa m ON m.npm = o.npm
+     JOIN program_studi ps ON ps.id = o.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
        AND EXISTS (
          SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
        )
-     LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
        AND EXISTS (
          SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
          WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
@@ -636,7 +648,7 @@ exports.listMine = async (req, res, next) => {
          k.created_at
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
-       WHERE k.npm = ?
+       WHERE o.npm = ?
        ORDER BY k.created_at DESC`,
       [npm],
     );
@@ -697,11 +709,14 @@ exports.getMyDetail = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const kartu = await getKartuByOutlineAndStudent(outlineId, npm);
+    const kartu = await getKartuByOutlineId(outlineId);
     if (!kartu) {
       return res
         .status(404)
         .json({ ok: false, message: "Consultation not found" });
+    }
+    if (!npm || npm !== kartu.npm) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [stages] = await db.query(
@@ -810,9 +825,10 @@ exports.submitMyOutline = async (req, res, next) => {
     txStarted = true;
 
     const [kartuRows] = await conn.query(
-      `SELECT *
-       FROM kartu_konsultasi_outline
-       WHERE outline_id = ? AND npm = ?
+      `SELECT k.*
+       FROM kartu_konsultasi_outline k
+       JOIN outline o ON o.id = k.outline_id
+       WHERE k.outline_id = ? AND o.npm = ?
        LIMIT 1
        FOR UPDATE`,
       [outlineId, npm],
@@ -969,11 +985,14 @@ exports.getMyReviewHistory = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const kartu = await getKartuByOutlineAndStudent(outlineId, npm);
+    const kartu = await getKartuByOutlineId(outlineId);
     if (!kartu) {
       return res
         .status(404)
         .json({ ok: false, message: "Consultation not found" });
+    }
+    if (npm !== kartu.npm) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [rows] = await db.query(
@@ -1023,11 +1042,14 @@ exports.getMyKartu = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
-    const kartu = await getKartuByOutlineAndStudent(outlineId, npm);
+    const kartu = await getKartuByOutlineId(outlineId);
     if (!kartu) {
       return res
         .status(404)
         .json({ ok: false, message: "Consultation not found" });
+    }
+    if (npm !== kartu.npm) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const file = kartu.file_content
@@ -1050,10 +1072,11 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT npm, pembimbing1_nidn, pembimbing2_nidn, program_studi_id,
-              file_content, file_name, mime_type, generated_at
-       FROM kartu_konsultasi_outline
-       WHERE outline_id = ?
+      `SELECT o.npm AS npm, o.pembimbing1_nidn, o.pembimbing2_nidn, o.program_studi_id,
+              k.file_content, k.file_name, k.mime_type, k.generated_at
+       FROM kartu_konsultasi_outline k
+       JOIN outline o ON o.id = k.outline_id
+       WHERE k.outline_id = ?
        LIMIT 1`,
       [outlineId],
     );
@@ -1276,7 +1299,7 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          k.id AS kartu_id,
          k.outline_id,
          m.nama AS nama_mahasiswa,
-         k.npm,
+         m.npm,
          ps.nama AS program_studi_nama,
          o.judul AS judul_skripsi,
          k.is_completed
@@ -1290,9 +1313,9 @@ exports.listAssignedToLecturer = async (req, res, next) => {
        ) latest_submission
          ON latest_submission.konsultasi_outline_stage_id = s.id
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
-       JOIN mahasiswa m ON m.npm = k.npm
-       JOIN program_studi ps ON ps.id = k.program_studi_id
        JOIN outline o ON o.id = k.outline_id
+       JOIN mahasiswa m ON m.npm = o.npm
+       JOIN program_studi ps ON ps.id = o.program_studi_id
        WHERE ${where.join(" AND ")}
        ORDER BY s.updated_at DESC`,
       params,
@@ -1322,24 +1345,24 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
          k.id AS kartu_id,
          k.outline_id,
          m.nama AS nama_mahasiswa,
-         k.npm,
+         m.npm,
          ps.nama AS program_studi_nama,
          o.judul AS judul_skripsi,
-         k.pembimbing1_nidn,
+         o.pembimbing1_nidn,
          d1.nama AS pembimbing1_nama,
-         k.pembimbing2_nidn,
+         o.pembimbing2_nidn,
          d2.nama AS pembimbing2_nama,
          k.is_completed,
          k.completed_at,
          k.created_at,
          k.updated_at
        FROM kartu_konsultasi_outline k
-       JOIN mahasiswa m ON m.npm = k.npm
-       JOIN program_studi ps ON ps.id = k.program_studi_id
        JOIN outline o ON o.id = k.outline_id
-       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
-       WHERE k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?
+       JOIN mahasiswa m ON m.npm = o.npm
+       JOIN program_studi ps ON ps.id = o.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+       WHERE o.pembimbing1_nidn = ? OR o.pembimbing2_nidn = ?
        ORDER BY k.updated_at DESC`,
       [nidn, nidn],
     );
@@ -1463,13 +1486,13 @@ exports.listForKaprodi = async (req, res, next) => {
     }
 
     const { stage, status, q } = req.query || {};
-    const where = ["k.program_studi_id IN (?)"];
+    const where = ["o.program_studi_id IN (?)"];
     const params = [programStudiIds];
 
     if (q && String(q).trim().length > 0) {
       const queryValue = `%${String(q).trim()}%`;
       where.push(
-        "(m.nama LIKE ? OR k.npm LIKE ? OR o.judul LIKE ?)",
+        "(m.nama LIKE ? OR m.npm LIKE ? OR o.judul LIKE ?)",
       );
       params.push(queryValue, queryValue, queryValue);
     }
@@ -1479,24 +1502,24 @@ exports.listForKaprodi = async (req, res, next) => {
          k.id AS kartu_id,
          k.outline_id,
          m.nama AS nama_mahasiswa,
-         k.npm,
-         k.program_studi_id,
+         m.npm,
+         o.program_studi_id,
          ps.nama AS program_studi_nama,
          o.judul AS judul_skripsi,
-         k.pembimbing1_nidn,
+         o.pembimbing1_nidn,
          d1.nama AS pembimbing1_nama,
-         k.pembimbing2_nidn,
+         o.pembimbing2_nidn,
          d2.nama AS pembimbing2_nama,
          k.is_completed,
          k.completed_at,
          k.created_at,
          k.updated_at
        FROM kartu_konsultasi_outline k
-       JOIN mahasiswa m ON m.npm = k.npm
-       JOIN program_studi ps ON ps.id = k.program_studi_id
        JOIN outline o ON o.id = k.outline_id
-       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+       JOIN mahasiswa m ON m.npm = o.npm
+       JOIN program_studi ps ON ps.id = o.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
        WHERE ${where.join(" AND ")}
        ORDER BY k.updated_at DESC`,
       params,
@@ -1609,6 +1632,9 @@ exports.getDetailForKaprodi = async (req, res, next) => {
     const [kartuRows] = await db.query(
       `SELECT
          k.*,
+         o.pembimbing1_nidn  AS pembimbing1_nidn,
+         o.pembimbing2_nidn  AS pembimbing2_nidn,
+         o.program_studi_id  AS program_studi_id,
          m.nama              AS nama_mahasiswa,
          ps.nama             AS program_studi_nama,
          o.judul             AS judul_skripsi,
@@ -1617,23 +1643,23 @@ exports.getDetailForKaprodi = async (req, res, next) => {
          pu1.signature_image AS pembimbing1_signature,
          pu2.signature_image AS pembimbing2_signature
        FROM kartu_konsultasi_outline k
-       JOIN mahasiswa m ON m.npm = k.npm
-       JOIN program_studi ps ON ps.id = k.program_studi_id
        JOIN outline o ON o.id = k.outline_id
-       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
-       LEFT JOIN users pu1 ON pu1.nidn = k.pembimbing1_nidn
+       JOIN mahasiswa m ON m.npm = o.npm
+       JOIN program_studi ps ON ps.id = o.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+       LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
          AND EXISTS (
            SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
            WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
          )
-       LEFT JOIN users pu2 ON pu2.nidn = k.pembimbing2_nidn
+       LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
          AND EXISTS (
            SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
            WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
          )
        WHERE k.outline_id = ?
-         AND k.program_studi_id IN (?)
+         AND o.program_studi_id IN (?)
        LIMIT 1`,
       [outlineId, programStudiIds],
     );
@@ -1756,23 +1782,23 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          s.finished_at AS stage_finished_at,
          k.id AS kartu_id,
          m.nama AS kartu_nama_mahasiswa,
-         k.npm AS kartu_npm,
+         m.npm AS kartu_npm,
          ps.nama AS kartu_program_studi_nama,
          o.judul AS kartu_judul_skripsi,
-         k.pembimbing1_nidn AS kartu_pembimbing1_nidn,
+         o.pembimbing1_nidn AS kartu_pembimbing1_nidn,
          d1.nama AS kartu_pembimbing1_nama,
-         k.pembimbing2_nidn AS kartu_pembimbing2_nidn,
+         o.pembimbing2_nidn AS kartu_pembimbing2_nidn,
          d2.nama AS kartu_pembimbing2_nama,
          k.is_completed AS kartu_is_completed
        FROM konsultasi_outline_stage s
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
        LEFT JOIN dosen d ON d.nidn = s.pembimbing_nidn
-       JOIN mahasiswa m ON m.npm = k.npm
-       JOIN program_studi ps ON ps.id = k.program_studi_id
        JOIN outline o ON o.id = k.outline_id
-       LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
-       WHERE s.id = ? AND (k.pembimbing1_nidn = ? OR k.pembimbing2_nidn = ?)
+       JOIN mahasiswa m ON m.npm = o.npm
+       JOIN program_studi ps ON ps.id = o.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+       WHERE s.id = ? AND (o.pembimbing1_nidn = ? OR o.pembimbing2_nidn = ?)
        LIMIT 1`,
       [stageId, nidn, nidn],
     );
@@ -2045,9 +2071,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       );
       if (p1Rows.length === 0) {
         const [kRows] = await conn.query(
-          `SELECT pembimbing1_nidn
-           FROM kartu_konsultasi_outline
-           WHERE id = ?
+          `SELECT o.pembimbing1_nidn
+           FROM kartu_konsultasi_outline k
+           JOIN outline o ON o.id = k.outline_id
+           WHERE k.id = ?
            LIMIT 1`,
           [stage.kartu_id],
         );
@@ -2074,8 +2101,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     const [kartuInfoRows] = await conn.query(
-      `SELECT id, outline_id, npm, program_studi_id, pembimbing1_nidn, pembimbing2_nidn
-       FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
+      `SELECT k.id, k.outline_id, o.npm, o.program_studi_id, o.pembimbing1_nidn, o.pembimbing2_nidn
+       FROM kartu_konsultasi_outline k
+       JOIN outline o ON o.id = k.outline_id
+       WHERE k.id = ? LIMIT 1`,
       [stage.kartu_id],
     );
     const kartuInfo = kartuInfoRows[0];

@@ -1,5 +1,10 @@
 ALTER TABLE sidang
   DROP COLUMN npm,
+  DROP COLUMN nama_mahasiswa,
+  DROP COLUMN tanggal_sidang,
+  DROP COLUMN waktu_sidang,
+  DROP COLUMN tempat_sidang,
+  DROP COLUMN tanggal_disposisi,
   DROP COLUMN program_studi_id,
   DROP COLUMN program_studi_nama,
   DROP COLUMN judul_skripsi,

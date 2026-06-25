@@ -3445,20 +3445,9 @@ exports.generateSuratUndangan = async (req, res, next) => {
     if (!existingSidang) {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
-           (skripsi_id, nomor_surat, pengajuan_sidang_id,
-            nama_mahasiswa,
-            tanggal_sidang, waktu_sidang, tempat_sidang, tanggal_disposisi)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          skripsiId,
-          nomorSuratSidang,
-          sidang.id,
-          dataRow?.nama_mahasiswa ?? "",
-          dataRow?.tanggal_sidang ?? null,
-          dataRow?.waktu_sidang ?? null,
-          dataRow?.tempat_sidang ?? "",
-          dataRow?.tanggal_disposisi ?? null,
-        ],
+           (skripsi_id, nomor_surat, pengajuan_sidang_id)
+         VALUES (?, ?, ?)`,
+        [skripsiId, nomorSuratSidang, sidang.id],
       );
       const newSidangId = sidangIns.insertId;
 

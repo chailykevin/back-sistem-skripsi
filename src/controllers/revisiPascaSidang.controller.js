@@ -399,7 +399,7 @@ exports.submitRevisi = async (req, res, next) => {
 
     const [[revisi]] = await conn.query(
       `SELECT rps.*,
-              m.npm, s.nama_mahasiswa,
+              m.npm, m.nama AS nama_mahasiswa,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
@@ -554,10 +554,10 @@ exports.reviewRevisi = async (req, res, next) => {
 
     const [[revisi]] = await conn.query(
       `SELECT rps.*,
-              s.nama_mahasiswa, m.npm AS mahasiswa_npm,
+              m.nama AS nama_mahasiswa, m.npm AS mahasiswa_npm,
               sk.judul AS judul_skripsi,
               prog.id AS program_studi_id, prog.nama AS program_studi_nama,
-              s.tanggal_sidang,
+              psk_k.tanggal_sidang,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
@@ -667,12 +667,12 @@ exports.reviewRevisi = async (req, res, next) => {
         try {
           const [[notulenRow]] = await conn.query(
             `SELECT sn.*,
-                    m.npm, s.nama_mahasiswa,
+                    m.npm, m.nama AS nama_mahasiswa,
                     prog.nama AS program_studi_nama,
                     sk.judul AS judul_skripsi,
                     d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
                     d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
-                    s.tanggal_sidang
+                    psk_k.tanggal_sidang
              FROM sidang_notulen sn
              JOIN sidang s ON s.id = sn.sidang_id
              JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -873,7 +873,7 @@ exports.getRevisi = async (req, res, next) => {
       `SELECT rps.*,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-              s.nama_mahasiswa, m.npm AS mahasiswa_npm,
+              m.nama AS nama_mahasiswa, m.npm AS mahasiswa_npm,
               sk.judul AS judul_skripsi,
               s.status AS sidang_status, s.hasil_sidang
        FROM revisi_pasca_sidang rps
@@ -1011,7 +1011,7 @@ exports.getLecturerRevisi = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          rps.id, rps.is_completed,
-         s.skripsi_id, m.npm, s.nama_mahasiswa, sk.judul AS judul_skripsi, s.tanggal_sidang,
+         s.skripsi_id, m.npm, m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi, psk_k.tanggal_sidang,
          sk.pembimbing1_nidn, sk.pembimbing2_nidn,
          psk_k.penguji1_nidn, psk_k.penguji2_nidn,
          CASE

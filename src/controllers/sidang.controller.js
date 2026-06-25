@@ -133,8 +133,8 @@ async function getSidangBySkripsiId(conn, skripsiId) {
   const [[sidang]] = await conn.query(
     `SELECT
        s.id, s.skripsi_id, s.pengajuan_sidang_id, s.nomor_surat,
-       m.nama AS nama_mahasiswa, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
-       s.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
+       m.nama AS nama_mahasiswa, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
+       psk_k.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
        s.created_at, s.updated_at, s.completed_at,
        ps.ujian_ke,
        m.npm,
@@ -175,8 +175,8 @@ exports.getSidang = async (req, res, next) => {
     const [[sidang]] = await db.query(
       `SELECT
          s.id, s.skripsi_id, s.pengajuan_sidang_id, s.nomor_surat,
-         m.nama AS nama_mahasiswa, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
-         s.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
+         m.nama AS nama_mahasiswa, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
+         psk_k.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
          s.created_at, s.updated_at, s.completed_at,
          ps.ujian_ke,
          m.npm,
@@ -242,7 +242,7 @@ exports.getSidang = async (req, res, next) => {
     );
 
     const [files] = await db.query(
-      `SELECT id, file_type, file_name, created_at FROM sidang_files WHERE sidang_id = ?`,
+      `SELECT id, file_name, created_at FROM sidang_files WHERE sidang_id = ?`,
       [sidang.id],
     );
 
@@ -1129,11 +1129,11 @@ async function generateAndStoreBeritaAcara(
   const fileName = `Berita_Acara_${sidang.npm}.docx`;
 
   await conn.query(
-    `DELETE FROM sidang_files WHERE sidang_id = ? AND file_type = 'BERITA_ACARA'`,
+    `DELETE FROM sidang_files WHERE sidang_id = ?`,
     [sidang.id],
   );
   await conn.query(
-    `INSERT INTO sidang_files (sidang_id, file_type, file_name, file_content) VALUES (?, 'BERITA_ACARA', ?, ?)`,
+    `INSERT INTO sidang_files (sidang_id, file_name, file_content) VALUES (?, ?, ?)`,
     [sidang.id, fileName, fileBase64],
   );
 }
@@ -1173,9 +1173,9 @@ exports.getLecturerSidang = async (req, res, next) => {
         m.nama AS nama_mahasiswa,
         sk.judul AS judul_skripsi,
         s.status,
-        s.tanggal_sidang,
-        s.waktu_sidang,
-        s.tempat_sidang,
+        psk_k.tanggal_sidang,
+        psk_k.waktu_sidang,
+        psk_k.tempat_sidang,
         s.hasil_sidang,
         shp.rata,
         shp.grade,
@@ -1273,7 +1273,7 @@ exports.getBeritaAcara = async (req, res, next) => {
     }
 
     const [[fileRow]] = await db.query(
-      `SELECT file_name, file_content FROM sidang_files WHERE sidang_id = ? AND file_type = 'BERITA_ACARA' LIMIT 1`,
+      `SELECT file_name, file_content FROM sidang_files WHERE sidang_id = ? LIMIT 1`,
       [sidang.id],
     );
     if (!fileRow) {
@@ -1467,7 +1467,7 @@ exports.getSekretariatSidang = async (req, res, next) => {
          prog.nama AS program_studi_nama,
          sk.judul  AS judul_skripsi,
          ps.ujian_ke,
-         s.status, s.tanggal_sidang, s.waktu_sidang, s.tempat_sidang,
+         s.status, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
          sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
          sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
          psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
