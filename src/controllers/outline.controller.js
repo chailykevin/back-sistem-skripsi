@@ -22,7 +22,7 @@ exports.create = async (req, res, next) => {
     // ambil npm mahasiswa dari user login
     const [users] = await db.query(
       `SELECT npm FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
 
     if (users.length === 0 || !users[0].npm) {
@@ -47,12 +47,12 @@ exports.create = async (req, res, next) => {
       `SELECT id, status
        FROM outline
        WHERE npm = ?`,
-      [npm]
+      [npm],
     );
 
     // boleh lanjut hanya jika belum pernah submit, atau semua outline lama REJECTED
     const hasNonRejected = existingOutlines.some(
-      (outline) => String(outline.status || "").toUpperCase() !== "REJECTED"
+      (outline) => String(outline.status || "").toUpperCase() !== "REJECTED",
     );
 
     if (hasNonRejected) {
@@ -65,7 +65,7 @@ exports.create = async (req, res, next) => {
     // block if student has an active IN_PROGRESS skripsi
     const [[activeSkripsi]] = await db.query(
       `SELECT id FROM skripsi WHERE npm = ? AND status = 'IN_PROGRESS' LIMIT 1`,
-      [npm]
+      [npm],
     );
     if (activeSkripsi) {
       return res.status(409).json({
@@ -78,7 +78,7 @@ exports.create = async (req, res, next) => {
 
     const [mahasiswaRows] = await db.query(
       `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
-      [npm]
+      [npm],
     );
     const namaMahasiswa = mahasiswaRows[0]?.nama ?? npm;
 
@@ -92,7 +92,7 @@ exports.create = async (req, res, next) => {
         `INSERT INTO outline
          (judul, latar_belakang, npm, status, program_studi_id, submission_period_id)
          VALUES (?, ?, ?, 'SUBMITTED', ?, ?)`,
-        [judul, latarBelakang, npm, programStudiId, submissionPeriodId]
+        [judul, latarBelakang, npm, programStudiId, submissionPeriodId],
       );
 
       const outlineId = insertResult?.insertId ?? null;
@@ -101,7 +101,7 @@ exports.create = async (req, res, next) => {
           `INSERT INTO outline_submissions
            (outline_id, submission_no, file_content, file_name)
            VALUES (?, 1, ?, ?)`,
-          [outlineId, fileOutline, fileOutlineName ?? null]
+          [outlineId, fileOutline, fileOutlineName ?? null],
         );
       }
 
@@ -112,7 +112,7 @@ exports.create = async (req, res, next) => {
          JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
          WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
          LIMIT 1`,
-        [programStudiId]
+        [programStudiId],
       );
       if (kaprodiUserRows[0]?.id) {
         await insertNotification(
@@ -120,14 +120,16 @@ exports.create = async (req, res, next) => {
           kaprodiUserRows[0].id,
           "OUTLINE_SUBMITTED",
           `Mahasiswa ${namaMahasiswa} mengajukan outline baru`,
-          "/kaprodi/outline"
+          "/kaprodi/pengajuan-outline/outlines",
         );
       }
 
       await conn.commit();
       txStarted = false;
     } catch (err) {
-      try { if (txStarted) await conn.rollback(); } catch (_) {}
+      try {
+        if (txStarted) await conn.rollback();
+      } catch (_) {}
       conn.release();
       throw err;
     }
@@ -154,11 +156,13 @@ exports.getById = async (req, res, next) => {
     if (req.user.hasRole("STUDENT")) {
       const [urows] = await db.query(
         `SELECT npm FROM users WHERE id = ? LIMIT 1`,
-        [req.user.id]
+        [req.user.id],
       );
       studentNpm = urows[0]?.npm ?? null;
       if (!studentNpm) {
-        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "Mahasiswa tidak valid" });
       }
     }
 
@@ -202,7 +206,7 @@ exports.getById = async (req, res, next) => {
          LEFT JOIN outline_reviews prev_rev ON prev_rev.submission_id = prev_sub.id
          WHERE o.id = ? AND o.npm = ?
          LIMIT 1`,
-        [id, studentNpm]
+        [id, studentNpm],
       );
       rows = r;
     } else {
@@ -245,7 +249,7 @@ exports.getById = async (req, res, next) => {
          LEFT JOIN outline_reviews prev_rev ON prev_rev.submission_id = prev_sub.id
          WHERE o.id = ?
          LIMIT 1`,
-        [id]
+        [id],
       );
       rows = r;
     }
@@ -267,7 +271,7 @@ exports.getById = async (req, res, next) => {
            AND id <> ?
            AND status = 'REJECTED'
          ORDER BY created_at DESC`,
-        [rows[0].npm, id]
+        [rows[0].npm, id],
       );
 
       return res.json({
@@ -294,12 +298,14 @@ exports.getLatestMine = async (req, res, next) => {
 
     const [urows] = await db.query(
       `SELECT npm FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
     const npm = urows[0]?.npm ?? null;
 
     if (!npm) {
-      return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     const [rows] = await db.query(
@@ -334,7 +340,7 @@ exports.getLatestMine = async (req, res, next) => {
        WHERE o.npm = ?
        ORDER BY o.updated_at DESC
        LIMIT 1`,
-      [npm]
+      [npm],
     );
 
     if (!rows || rows.length === 0) {
@@ -359,27 +365,31 @@ exports.getReviewHistory = async (req, res, next) => {
     if (req.user.hasRole("STUDENT")) {
       const [urows] = await db.query(
         `SELECT npm FROM users WHERE id = ? LIMIT 1`,
-        [req.user.id]
+        [req.user.id],
       );
       targetNpm = urows[0]?.npm ?? null;
       if (!targetNpm) {
-        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "Mahasiswa tidak valid" });
       }
     }
 
     if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [urows] = await db.query(
         `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [req.user.id]
+        [req.user.id],
       );
       const nidn = urows[0]?.nidn ?? null;
       if (!nidn) {
-        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+        return res
+          .status(400)
+          .json({ ok: false, message: "Dosen tidak valid" });
       }
 
       const [prodiRows] = await db.query(
         `SELECT id FROM program_studi WHERE kaprodi_nidn = ? LIMIT 1`,
-        [nidn]
+        [nidn],
       );
       if (prodiRows.length === 0) {
         return res.status(403).json({
@@ -394,10 +404,12 @@ exports.getReviewHistory = async (req, res, next) => {
          INNER JOIN mahasiswa m ON m.npm = o.npm
          WHERE o.id = ? AND m.program_studi_id = ?
          LIMIT 1`,
-        [id, prodiRows[0].id]
+        [id, prodiRows[0].id],
       );
       if (orows.length === 0) {
-        return res.status(404).json({ ok: false, message: "Outline not found" });
+        return res
+          .status(404)
+          .json({ ok: false, message: "Outline not found" });
       }
       targetNpm = orows[0].npm;
     }
@@ -419,7 +431,7 @@ exports.getReviewHistory = async (req, res, next) => {
        LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
        WHERE o.id = ?
        ORDER BY sub.submission_no DESC`,
-      [id]
+      [id],
     );
 
     return res.json({ ok: true, data: rows });
@@ -441,7 +453,7 @@ exports.listForKaprodi = async (req, res, next) => {
     // ambil nidn dari user login
     const [urows] = await db.query(
       `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
 
     const nidn = urows[0]?.nidn ?? null;
@@ -458,7 +470,7 @@ exports.listForKaprodi = async (req, res, next) => {
        FROM program_studi
        WHERE kaprodi_nidn = ?
        LIMIT 1`,
-      [nidn]
+      [nidn],
     );
 
     if (prodiRows.length === 0) {
@@ -513,7 +525,7 @@ exports.listForKaprodi = async (req, res, next) => {
        ) latest ON latest.npm = o.npm AND latest.max_id = o.id
        ${whereSql}
        ORDER BY o.created_at DESC`,
-      params
+      params,
     );
 
     return res.json({
@@ -542,7 +554,8 @@ exports.reviewByKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid outline id" });
     }
 
-    const { status, decisionNote, kaprodiFileOutline, kaprodiFileOutlineName } = req.body;
+    const { status, decisionNote, kaprodiFileOutline, kaprodiFileOutlineName } =
+      req.body;
 
     const allowed = ["SUBMITTED", "NEED_REVISION", "REJECTED", "ACCEPTED"];
     if (!status || !allowed.includes(status)) {
@@ -569,7 +582,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
        FROM users
        WHERE id = ? AND is_active = 1
        LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
 
     const lecturerUser = urows[0] || null;
@@ -586,7 +599,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
        FROM program_studi
        WHERE kaprodi_nidn = ?
        LIMIT 1`,
-      [lecturerUser.nidn]
+      [lecturerUser.nidn],
     );
 
     if (prodiRows.length === 0) {
@@ -605,7 +618,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
        INNER JOIN mahasiswa m ON m.npm = o.npm
        WHERE o.id = ? AND m.program_studi_id = ?
        LIMIT 1`,
-      [outlineId, programStudiId]
+      [outlineId, programStudiId],
     );
 
     if (orows.length === 0) {
@@ -617,7 +630,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
 
     await db.query(
       `UPDATE outline SET status = ?, program_studi_id = ? WHERE id = ?`,
-      [status, programStudiId, outlineId]
+      [status, programStudiId, outlineId],
     );
 
     // find latest submission then upsert review
@@ -626,7 +639,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
        WHERE outline_id = ?
        ORDER BY submission_no DESC
        LIMIT 1`,
-      [outlineId]
+      [outlineId],
     );
 
     if (latestSub) {
@@ -643,7 +656,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
           note.length ? note : null,
           kaprodiFile,
           kaprodiFile ? (kaprodiFileOutlineName ?? null) : null,
-        ]
+        ],
       );
     }
 
@@ -653,7 +666,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
          JOIN mahasiswa m ON m.npm = o.npm
          JOIN users u ON u.npm = o.npm
          WHERE o.id = ? LIMIT 1`,
-        [outlineId]
+        [outlineId],
       );
       const studentUserId = oStudentRows[0]?.id ?? null;
       if (studentUserId) {
@@ -669,7 +682,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
         };
         await db.query(
           `INSERT INTO notifications (user_id, type, message, link) VALUES (?, ?, ?, ?)`,
-          [studentUserId, typeMap[status], msgMap[status], "/student/outline"]
+          [studentUserId, typeMap[status], msgMap[status], "/student/outline"],
         );
       }
     }
@@ -702,9 +715,11 @@ exports.resubmit = async (req, res, next) => {
     const { judul, latarBelakang, fileOutline, fileOutlineName } = req.body;
 
     const judulVal = judul !== undefined ? String(judul).trim() : null;
-    const latarVal = latarBelakang !== undefined ? String(latarBelakang).trim() : null;
+    const latarVal =
+      latarBelakang !== undefined ? String(latarBelakang).trim() : null;
     const fileVal = fileOutline !== undefined ? String(fileOutline) : null;
-    const fileNameVal = fileOutlineName !== undefined ? String(fileOutlineName).trim() : null;
+    const fileNameVal =
+      fileOutlineName !== undefined ? String(fileOutlineName).trim() : null;
 
     if (
       (judulVal === null || judulVal.length === 0) &&
@@ -714,14 +729,15 @@ exports.resubmit = async (req, res, next) => {
     ) {
       return res.status(400).json({
         ok: false,
-        message: "At least one of judul, latarBelakang, or fileOutline must be provided",
+        message:
+          "At least one of judul, latarBelakang, or fileOutline must be provided",
       });
     }
 
     // ambil npm dari user login
     const [urows] = await conn.query(
       `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-      [req.user.id]
+      [req.user.id],
     );
     const npm = urows[0]?.npm ?? null;
 
@@ -746,7 +762,7 @@ exports.resubmit = async (req, res, next) => {
        FROM outline
        WHERE id = ? AND npm = ?
        LIMIT 1`,
-      [outlineId, npm]
+      [outlineId, npm],
     );
 
     if (orows.length === 0) {
@@ -785,20 +801,20 @@ exports.resubmit = async (req, res, next) => {
         `SELECT MAX(submission_no) AS max_sub
          FROM outline_submissions
          WHERE outline_id = ?`,
-        [outlineId]
+        [outlineId],
       );
       const nextSub = Number(maxRow?.max_sub || 0) + 1;
       await conn.query(
         `INSERT INTO outline_submissions
          (outline_id, submission_no, file_content, file_name)
          VALUES (?, ?, ?, ?)`,
-        [outlineId, nextSub, fileVal, fileNameVal ?? null]
+        [outlineId, nextSub, fileVal, fileNameVal ?? null],
       );
     }
 
     const [mRows] = await conn.query(
       `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
-      [npm]
+      [npm],
     );
     const namaMahasiswa = mRows[0]?.nama ?? npm;
 
@@ -809,7 +825,7 @@ exports.resubmit = async (req, res, next) => {
        JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
        WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
        LIMIT 1`,
-      [programStudiId]
+      [programStudiId],
     );
     if (kaprodiUserRows[0]?.id) {
       await insertNotification(
@@ -817,7 +833,7 @@ exports.resubmit = async (req, res, next) => {
         kaprodiUserRows[0].id,
         "OUTLINE_RESUBMITTED",
         `Mahasiswa ${namaMahasiswa} mengajukan ulang outline`,
-        "/kaprodi/outline"
+        "/kaprodi/pengajuan-outline/outlines",
       );
     }
 
