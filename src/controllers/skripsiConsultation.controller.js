@@ -338,7 +338,11 @@ async function generateAndStoreFinalKartuDocx(
   const logs = await getKartuLogs(queryable, kartuId);
   const extra = await fetchKartuExtra(queryable, kartuId, skripsiId);
   const kartuFull = await fetchKartuDenorm(queryable, kartu);
-  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartuFull, logs, extra);
+  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
+    kartuFull,
+    logs,
+    extra,
+  );
   const fileName = `kartu-penulisan-skripsi-${skripsiId}-${Date.now()}.docx`;
 
   await queryable.query(
@@ -363,9 +367,7 @@ exports.initKartu = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -424,9 +426,7 @@ exports.initKartu = async (req, res, next) => {
     if (!skripsiRow) {
       await conn.rollback();
       txStarted = false;
-      return res
-        .status(404)
-        .json({ ok: false, message: "Skripsi not found" });
+      return res.status(404).json({ ok: false, message: "Skripsi not found" });
     }
     if (!skripsiRow.pembimbing1_nidn || !skripsiRow.pembimbing2_nidn) {
       await conn.rollback();
@@ -476,9 +476,7 @@ exports.getMyDetail = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -489,9 +487,16 @@ exports.getMyDetail = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT k.*, sk.npm, sk.program_studi_id, sk.pembimbing1_nidn, sk.pembimbing2_nidn
+      `SELECT k.*, sk.npm, sk.judul AS judul_skripsi, sk.program_studi_id,
+              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+              d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi ps ON ps.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
        WHERE k.skripsi_id = ? AND sk.npm = ? LIMIT 1`,
       [skripsiId, npm],
     );
@@ -565,9 +570,7 @@ exports.submitMyChapter = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { fileContent, fileName } = req.body || {};
@@ -594,8 +597,9 @@ exports.submitMyChapter = async (req, res, next) => {
     txStarted = true;
 
     const [kartuRows] = await conn.query(
-      `SELECT * FROM kartu_konsultasi_skripsi
-       WHERE skripsi_id = ? AND npm = ?
+      `SELECT k.* FROM kartu_konsultasi_skripsi k
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       WHERE k.skripsi_id = ? AND sk.npm = ?
        LIMIT 1 FOR UPDATE`,
       [skripsiId, npm],
     );
@@ -1438,9 +1442,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     if (q && String(q).trim().length > 0) {
       const queryValue = `%${String(q).trim()}%`;
-      where.push(
-        "(m.nama LIKE ? OR sk.npm LIKE ? OR sk.judul LIKE ?)",
-      );
+      where.push("(m.nama LIKE ? OR sk.npm LIKE ? OR sk.judul LIKE ?)");
       params.push(queryValue, queryValue, queryValue);
     }
 
@@ -1511,9 +1513,7 @@ exports.getFinalKartuFile = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [kartuRows] = await db.query(
@@ -1586,9 +1586,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -1717,9 +1715,7 @@ exports.previewKartuDocx = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [kartuRows] = await db.query(
@@ -1763,7 +1759,11 @@ exports.previewKartuDocx = async (req, res, next) => {
     const logs = await getKartuLogs(db, kartu.id);
     const extra = await fetchKartuExtra(db, kartu.id, kartu.skripsi_id);
     const kartuFull = await fetchKartuDenorm(db, kartu);
-    const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(kartuFull, logs, extra);
+    const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
+      kartuFull,
+      logs,
+      extra,
+    );
     const fileName = `kartu-penulisan-skripsi-${skripsiId}-preview.docx`;
 
     res.setHeader(

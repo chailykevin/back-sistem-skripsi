@@ -1682,6 +1682,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
          o.pembimbing2_nidn  AS pembimbing2_nidn,
          o.program_studi_id  AS program_studi_id,
          m.nama              AS nama_mahasiswa,
+         m.npm               AS npm,
          ps.nama             AS program_studi_nama,
          o.judul             AS judul_skripsi,
          d1.nama             AS pembimbing1_nama,

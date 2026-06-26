@@ -25,9 +25,18 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
   return rows.map((r) => Number(r.id)).filter((id) => Number.isFinite(id) && id > 0);
 }
 
-const SELECT_COLS = `id, npm, judul, status, program_studi_id, program_studi_nama,
-  pembimbing1_nidn, pembimbing1_nama, pembimbing2_nidn, pembimbing2_nama,
-  nama_mahasiswa, completed_at, created_at, updated_at`;
+const SELECT_COLS = `s.id, s.npm, s.judul, s.status, s.program_studi_id,
+  ps.nama AS program_studi_nama,
+  s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
+  s.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
+  m.nama AS nama_mahasiswa,
+  s.completed_at, s.created_at, s.updated_at`;
+
+const SELECT_JOINS = `FROM skripsi s
+  LEFT JOIN mahasiswa m ON m.npm = s.npm
+  LEFT JOIN program_studi ps ON ps.id = s.program_studi_id
+  LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+  LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn`;
 
 exports.getMySkripsi = async (req, res, next) => {
   try {
@@ -38,7 +47,7 @@ exports.getMySkripsi = async (req, res, next) => {
     if (!npm) return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
 
     const [rows] = await db.query(
-      `SELECT ${SELECT_COLS} FROM skripsi WHERE npm = ? ORDER BY created_at DESC`,
+      `SELECT ${SELECT_COLS} ${SELECT_JOINS} WHERE s.npm = ? ORDER BY s.created_at DESC`,
       [npm],
     );
     return res.json({ ok: true, data: rows });
@@ -56,9 +65,9 @@ exports.getLecturerSkripsi = async (req, res, next) => {
     if (!nidn) return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
 
     const [rows] = await db.query(
-      `SELECT ${SELECT_COLS} FROM skripsi
-       WHERE pembimbing1_nidn = ? OR pembimbing2_nidn = ?
-       ORDER BY created_at DESC`,
+      `SELECT ${SELECT_COLS} ${SELECT_JOINS}
+       WHERE s.pembimbing1_nidn = ? OR s.pembimbing2_nidn = ?
+       ORDER BY s.created_at DESC`,
       [nidn, nidn],
     );
     return res.json({ ok: true, data: rows });
@@ -81,9 +90,9 @@ exports.getKaprodiSkripsi = async (req, res, next) => {
     }
 
     const [rows] = await db.query(
-      `SELECT ${SELECT_COLS} FROM skripsi
-       WHERE program_studi_id IN (?)
-       ORDER BY created_at DESC`,
+      `SELECT ${SELECT_COLS} ${SELECT_JOINS}
+       WHERE s.program_studi_id IN (?)
+       ORDER BY s.created_at DESC`,
       [programStudiIds],
     );
     return res.json({ ok: true, data: rows });
@@ -102,9 +111,9 @@ exports.getSekretariatSkripsi = async (req, res, next) => {
     const filterByStatus = statusParam && VALID_STATUSES.includes(statusParam);
 
     const [rows] = await db.query(
-      `SELECT ${SELECT_COLS} FROM skripsi
-       ${filterByStatus ? "WHERE status = ?" : ""}
-       ORDER BY created_at DESC`,
+      `SELECT ${SELECT_COLS} ${SELECT_JOINS}
+       ${filterByStatus ? "WHERE s.status = ?" : ""}
+       ORDER BY s.created_at DESC`,
       filterByStatus ? [statusParam] : [],
     );
     return res.json({ ok: true, data: rows });

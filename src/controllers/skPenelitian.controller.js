@@ -244,7 +244,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
   // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
   const [[kartu]] = await conn.query(
     `SELECT o.npm, o.judul AS judul_skripsi, o.program_studi_id,
-            k.pembimbing1_nidn, k.pembimbing2_nidn,
+            o.pembimbing1_nidn, o.pembimbing2_nidn,
             m.nama AS nama_mahasiswa,
             ps.nama AS program_studi_nama,
             d1.nama AS pembimbing1_nama,
@@ -253,8 +253,8 @@ async function generateSkDocuments(conn, sk, outlineId) {
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
-     LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
-     LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
+     LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
      WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
@@ -509,7 +509,7 @@ exports.initSkPenelitian = async (req, res, next) => {
     }
 
     const [kartuRows] = await conn.query(
-      `SELECT k.id, o.npm, k.outline_id, o.program_studi_id, k.pembimbing1_nidn, k.pembimbing2_nidn,
+      `SELECT k.id, o.npm, k.outline_id, o.program_studi_id, o.pembimbing1_nidn, o.pembimbing2_nidn,
               o.judul AS judul_skripsi, k.is_completed
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
@@ -643,6 +643,7 @@ exports.getSkPenelitian = async (req, res, next) => {
     const [skRows] = await db.query(
       `SELECT
          sk.*,
+         o.npm,
          m.nama AS nama_mahasiswa,
          o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama
@@ -1145,7 +1146,7 @@ exports.reviewSkPenelitian = async (req, res, next) => {
 
     const [[skripsiSource]] = await conn.query(
       `SELECT o.npm, o.judul AS judul, o.program_studi_id,
-              k.pembimbing1_nidn, k.pembimbing2_nidn, k.outline_id
+              o.pembimbing1_nidn, o.pembimbing2_nidn, k.outline_id
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
        WHERE k.outline_id = ?
