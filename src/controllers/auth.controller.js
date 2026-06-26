@@ -136,10 +136,12 @@ exports.me = async (req, res, next) => {
 
     if (
       !profile &&
+      user.nidn &&
       (roles.includes("LECTURER") ||
         roles.includes("KAPRODI") ||
         roles.includes("DEKAN") ||
-        roles.includes("SEKPRODI"))
+        roles.includes("SEKPRODI") ||
+        roles.includes("SEKRETARIAT"))
     ) {
       const [p] = await db.query(
         `SELECT nidn, nama FROM dosen WHERE nidn = ? LIMIT 1`,
