@@ -243,15 +243,16 @@ async function buildHalamanPersetujuanDocxBuffer({
 async function generateSkDocuments(conn, sk, outlineId) {
   // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
   const [[kartu]] = await conn.query(
-    `SELECT k.npm, k.judul_skripsi, k.program_studi_id,
+    `SELECT o.npm, o.judul AS judul_skripsi, o.program_studi_id,
             k.pembimbing1_nidn, k.pembimbing2_nidn,
             m.nama AS nama_mahasiswa,
             ps.nama AS program_studi_nama,
             d1.nama AS pembimbing1_nama,
             d2.nama AS pembimbing2_nama
      FROM kartu_konsultasi_outline k
-     JOIN mahasiswa m ON m.npm = k.npm
-     JOIN program_studi ps ON ps.id = k.program_studi_id
+     JOIN outline o ON o.id = k.outline_id
+     JOIN mahasiswa m ON m.npm = o.npm
+     JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = k.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = k.pembimbing2_nidn
      WHERE k.outline_id = ?
@@ -336,8 +337,8 @@ async function generateSkDocuments(conn, sk, outlineId) {
   const [[{ seq }]] = await conn.query(
     `SELECT COUNT(*) AS seq
      FROM pengajuan_sk_penelitian psk
-     JOIN kartu_konsultasi_outline k ON k.outline_id = psk.outline_id
-     WHERE k.program_studi_id = ?
+     JOIN outline o ON o.id = psk.outline_id
+     WHERE o.program_studi_id = ?
        AND psk.nomor_surat IS NOT NULL
        AND YEAR(psk.completed_at) = ?
        AND MONTH(psk.completed_at) = ?`,
@@ -508,10 +509,11 @@ exports.initSkPenelitian = async (req, res, next) => {
     }
 
     const [kartuRows] = await conn.query(
-      `SELECT k.id, k.npm, k.outline_id, k.program_studi_id, k.pembimbing1_nidn, k.pembimbing2_nidn,
-              k.judul_skripsi, k.is_completed
+      `SELECT k.id, o.npm, k.outline_id, o.program_studi_id, k.pembimbing1_nidn, k.pembimbing2_nidn,
+              o.judul AS judul_skripsi, k.is_completed
        FROM kartu_konsultasi_outline k
-       WHERE k.outline_id = ? AND k.npm = ? AND k.is_completed = 1
+       JOIN outline o ON o.id = k.outline_id
+       WHERE k.outline_id = ? AND o.npm = ? AND k.is_completed = 1
        LIMIT 1`,
       [outlineId, npm],
     );
@@ -642,12 +644,13 @@ exports.getSkPenelitian = async (req, res, next) => {
       `SELECT
          sk.*,
          m.nama AS nama_mahasiswa,
-         k.judul_skripsi,
+         o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama
        FROM pengajuan_sk_penelitian sk
+       JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
-       LEFT JOIN mahasiswa m ON m.npm = k.npm
-       LEFT JOIN program_studi ps ON ps.id = k.program_studi_id
+       LEFT JOIN mahasiswa m ON m.npm = o.npm
+       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
        WHERE sk.outline_id = ?
        LIMIT 1`,
       [outlineId],
@@ -1141,10 +1144,11 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     await generateSkDocuments(conn, sk, outlineId);
 
     const [[skripsiSource]] = await conn.query(
-      `SELECT npm, judul_skripsi AS judul, program_studi_id,
-              pembimbing1_nidn, pembimbing2_nidn, outline_id
-       FROM kartu_konsultasi_outline
-       WHERE outline_id = ?
+      `SELECT o.npm, o.judul AS judul, o.program_studi_id,
+              k.pembimbing1_nidn, k.pembimbing2_nidn, k.outline_id
+       FROM kartu_konsultasi_outline k
+       JOIN outline o ON o.id = k.outline_id
+       WHERE k.outline_id = ?
        LIMIT 1`,
       [outlineId],
     );
@@ -1420,12 +1424,13 @@ exports.listSkForSekretariat = async (req, res, next) => {
          sk.completed_at,
          sk.created_at,
          m.nama AS nama_mahasiswa,
-         k.judul_skripsi,
+         o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama
        FROM pengajuan_sk_penelitian sk
+       JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
-       LEFT JOIN mahasiswa m ON m.npm = k.npm
-       LEFT JOIN program_studi ps ON ps.id = k.program_studi_id
+       LEFT JOIN mahasiswa m ON m.npm = o.npm
+       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
        ${filterByStatus ? "WHERE sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
       filterByStatus ? [statusParam] : [],
@@ -1468,15 +1473,16 @@ exports.listSkForDekan = async (req, res, next) => {
          sk.completed_at,
          sk.created_at,
          m.nama AS nama_mahasiswa,
-         k.judul_skripsi,
+         o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama,
-         k.program_studi_id,
-         (SELECT id FROM skripsi WHERE npm = k.npm ORDER BY id DESC LIMIT 1) AS skripsi_id
+         o.program_studi_id,
+         (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1) AS skripsi_id
        FROM pengajuan_sk_penelitian sk
+       JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
-       LEFT JOIN mahasiswa m ON m.npm = k.npm
-       LEFT JOIN program_studi ps ON ps.id = k.program_studi_id
-       WHERE k.program_studi_id IN (
+       LEFT JOIN mahasiswa m ON m.npm = o.npm
+       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
+       WHERE o.program_studi_id IN (
          SELECT id FROM program_studi WHERE fakultas_id = (
            SELECT id FROM fakultas WHERE dekan_nidn = ?
          )
