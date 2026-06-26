@@ -714,7 +714,7 @@ exports.review = async (req, res, next) => {
               pUserRows[0].id,
               "ASSIGNED_AS_PEMBIMBING",
               assignMsg,
-              "/lecturer/outline-consultations",
+              "/pembimbing/outline-consultations",
             );
           }
         }

@@ -349,13 +349,24 @@ async function generateAndStoreFinalKartuDocx(
     `UPDATE kartu_konsultasi_outline
      SET file_content = ?, file_name = ?, mime_type = ?, generated_by_user_id = ?, generated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [outputBuffer.toString("base64"), fileName, mimeType, generatedByUserId, kartu.id],
+    [
+      outputBuffer.toString("base64"),
+      fileName,
+      mimeType,
+      generatedByUserId,
+      kartu.id,
+    ],
   );
   void ins;
 
-  return { id: kartu.id, kartuId: kartu.id, fileType: "FINAL_DOCX", fileName, mimeType };
+  return {
+    id: kartu.id,
+    kartuId: kartu.id,
+    fileType: "FINAL_DOCX",
+    fileName,
+    mimeType,
+  };
 }
-
 
 async function buildHalamanPersetujuanDocxBuffer({
   kartu,
@@ -401,7 +412,6 @@ async function buildHalamanPersetujuanDocxBuffer({
   });
 }
 
-
 async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   console.log("[autoSubmitSkPenelitian] start", { outlineId, kartuId });
 
@@ -410,7 +420,10 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     [outlineId],
   );
   if (existingRows.length > 0) {
-    console.log("[autoSubmitSkPenelitian] skip: already_exists", existingRows[0].id);
+    console.log(
+      "[autoSubmitSkPenelitian] skip: already_exists",
+      existingRows[0].id,
+    );
     return { skippedReason: "already_exists" };
   }
 
@@ -498,14 +511,31 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
      LEFT JOIN dosen d1 ON d1.nidn = ?
      LEFT JOIN dosen d2 ON d2.nidn = ?
      WHERE ps.id = ? LIMIT 1`,
-    [kartu.outline_id, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
+    [
+      kartu.outline_id,
+      kartu.pembimbing1_nidn,
+      kartu.pembimbing2_nidn,
+      kartu.program_studi_id,
+    ],
   );
 
   const halamanSignatures = [
-    { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
-    { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
-    { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
-    { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
+    {
+      signer_role: "MAHASISWA",
+      signature_image: mahasiswaRow?.signature_image ?? null,
+    },
+    {
+      signer_role: "PEMBIMBING_2",
+      signature_image: p2Row?.signature_image ?? null,
+    },
+    {
+      signer_role: "PEMBIMBING_1",
+      signature_image: p1Row?.signature_image ?? null,
+    },
+    {
+      signer_role: "KAPRODI",
+      signature_image: kaprodiRow?.signature_image ?? null,
+    },
   ];
 
   const kartuForHalaman = {
@@ -533,11 +563,36 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   const skId = ins.insertId;
 
   const files = [
-    { type: "KRS", name: krsRows[0].file_name, mime: null, content: krsRows[0].file_content },
-    { type: "REKAP_NILAI", name: rekapRows[0].file_name, mime: null, content: rekapRows[0].file_content },
-    { type: "KARTU_KONSULTASI_OUTLINE", name: kartuFileRows[0].file_name, mime: kartuFileRows[0].mime_type, content: kartuFileRows[0].file_content },
-    { type: "FILE_OUTLINE", name: outlineRows[0].file_outline_name, mime: null, content: outlineRows[0].file_outline },
-    { type: "HALAMAN_PERSETUJUAN", name: halamanFileName, mime: halamanMime, content: halamanBuffer.toString("base64") },
+    {
+      type: "KRS",
+      name: krsRows[0].file_name,
+      mime: null,
+      content: krsRows[0].file_content,
+    },
+    {
+      type: "REKAP_NILAI",
+      name: rekapRows[0].file_name,
+      mime: null,
+      content: rekapRows[0].file_content,
+    },
+    {
+      type: "KARTU_KONSULTASI_OUTLINE",
+      name: kartuFileRows[0].file_name,
+      mime: kartuFileRows[0].mime_type,
+      content: kartuFileRows[0].file_content,
+    },
+    {
+      type: "FILE_OUTLINE",
+      name: outlineRows[0].file_outline_name,
+      mime: null,
+      content: outlineRows[0].file_outline,
+    },
+    {
+      type: "HALAMAN_PERSETUJUAN",
+      name: halamanFileName,
+      mime: halamanMime,
+      content: halamanBuffer.toString("base64"),
+    },
   ];
   for (const f of files) {
     await conn.query(
@@ -549,7 +604,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   console.log("[autoSubmitSkPenelitian] done", { skId });
   return { skippedReason: null, skId };
 }
-
 
 async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
   const [rows] = await queryable.query(
@@ -697,9 +751,7 @@ exports.getMyDetail = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -796,9 +848,7 @@ exports.submitMyOutline = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const { fileOutline, fileOutlineName } = req.body || {};
@@ -937,7 +987,7 @@ exports.submitMyOutline = async (req, res, next) => {
         pUserRows[0].id,
         "OUTLINE_CONSULTATION_SUBMITTED",
         `Mahasiswa ${namaMahasiswa} mengumpulkan file outline untuk dikonsultasikan`,
-        "/lecturer/outline-consultations",
+        "/pembimbing/outline-consultations",
       );
     }
 
@@ -973,9 +1023,7 @@ exports.getMyReviewHistory = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1030,9 +1078,7 @@ exports.getMyKartu = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1052,11 +1098,17 @@ exports.getMyKartu = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
+    const logs = await getKartuLogs(db, kartu.id);
+
     const file = kartu.file_content
-      ? { file_name: kartu.file_name, mime_type: kartu.mime_type, generated_at: kartu.generated_at }
+      ? {
+          file_name: kartu.file_name,
+          mime_type: kartu.mime_type,
+          generated_at: kartu.generated_at,
+        }
       : null;
 
-    return res.json({ ok: true, data: { kartu, file } });
+    return res.json({ ok: true, data: { kartu, logs, file } });
   } catch (err) {
     next(err);
   }
@@ -1066,9 +1118,7 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
   try {
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const [kartuRows] = await db.query(
@@ -1135,9 +1185,7 @@ exports.previewKartuDocx = async (req, res, next) => {
   try {
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const { kartu, error } = await getAuthorizedKartuForDocument(
@@ -1183,9 +1231,7 @@ exports.finalizeKartu = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const outputType = req.body?.outputType ?? "FINAL_DOCX";
@@ -1491,9 +1537,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     if (q && String(q).trim().length > 0) {
       const queryValue = `%${String(q).trim()}%`;
-      where.push(
-        "(m.nama LIKE ? OR m.npm LIKE ? OR o.judul LIKE ?)",
-      );
+      where.push("(m.nama LIKE ? OR m.npm LIKE ? OR o.judul LIKE ?)");
       params.push(queryValue, queryValue, queryValue);
     }
 
@@ -1616,9 +1660,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
 
     const outlineId = Number(req.params.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid outlineId" });
+      return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -1733,7 +1775,11 @@ exports.getDetailForKaprodi = async (req, res, next) => {
     );
 
     const file = kartu.file_content
-      ? { file_name: kartu.file_name, mime_type: kartu.mime_type, generated_at: kartu.generated_at }
+      ? {
+          file_name: kartu.file_name,
+          mime_type: kartu.mime_type,
+          generated_at: kartu.generated_at,
+        }
       : null;
 
     const resolved = resolveActiveStage(stages, Boolean(kartu.is_completed));
@@ -1844,6 +1890,8 @@ exports.getLecturerStageDetail = async (req, res, next) => {
       [row.kartu_id],
     );
 
+    const kartuLogs = await getKartuLogs(db, row.kartu_id);
+
     return res.json({
       ok: true,
       data: {
@@ -1875,6 +1923,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
         latestSubmission: submissionRows[0] ?? null,
         submissions: submissionRows,
         reviews: reviewRows,
+        kartuLogs,
       },
     });
   } catch (err) {
@@ -2132,7 +2181,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         outlineId: kartuInfo?.outline_id ?? null,
         generatedByUserId: req.user.id,
       });
-
     }
 
     let autoSkResult = null;
@@ -2184,7 +2232,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             p1UserRows[0].id,
             "OUTLINE_CONSULTATION_SUBMITTED",
             `Outline mahasiswa ${namaMahasiswaForNotif} siap untuk direview`,
-            "/lecturer/outline-consultations",
+            "/pembimbing/outline-consultations",
           );
         }
       } else if (decisionStatus === "ACCEPTED" && studentUserId) {
