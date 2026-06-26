@@ -686,7 +686,12 @@ exports.reviewByKaprodi = async (req, res, next) => {
         };
         await db.query(
           `INSERT INTO notifications (user_id, type, message, link) VALUES (?, ?, ?, ?)`,
-          [studentUserId, typeMap[status], msgMap[status], "/student/outline"],
+          [
+            studentUserId,
+            typeMap[status],
+            msgMap[status],
+            "/student/pengajuan-outline",
+          ],
         );
       }
     }
