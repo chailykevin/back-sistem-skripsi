@@ -2811,12 +2811,16 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
          m.nama AS nama_mahasiswa,
          s.program_studi_id,
          ps.nama AS program_studi_nama,
-         s.judul AS judul_skripsi
+         s.judul AS judul_skripsi,
+         pengajuan_sidang.sidang_submission_period_id AS submission_period_id,
+         ssp.tahun_akademik AS period_tahun_akademik,
+         ssp.periode_akademik AS period_periode_akademik
        FROM pengajuan_sidang_kaprodi psk
        JOIN pengajuan_sidang ON pengajuan_sidang.id = psk.pengajuan_sidang_id
        JOIN skripsi s ON s.id = pengajuan_sidang.skripsi_id
        JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
+       LEFT JOIN sidang_submission_period ssp ON ssp.id = pengajuan_sidang.sidang_submission_period_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY psk.submitted_at DESC`,
       params,

@@ -1451,13 +1451,18 @@ exports.listForKaprodi = async (req, res, next) => {
          k.is_completed, k.completed_at, k.created_at, k.updated_at,
          m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
          sk.judul AS judul_skripsi,
-         d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
+         d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
+         o.submission_period_id,
+         osp.tahun_akademik AS period_tahun_akademik,
+         osp.periode_akademik AS period_periode_akademik
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
        JOIN program_studi ps ON ps.id = sk.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+       LEFT JOIN outline o ON o.id = sk.outline_id
+       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        WHERE ${where.join(" AND ")}
        ORDER BY k.updated_at DESC`,
       params,

@@ -515,7 +515,10 @@ exports.listForKaprodi = async (req, res, next) => {
          o.npm,
          m.nama AS mahasiswa_nama,
          m.sks AS mahasiswa_sks,
-         m.program_studi_id
+         m.program_studi_id,
+         o.submission_period_id,
+         osp.tahun_akademik AS period_tahun_akademik,
+         osp.periode_akademik AS period_periode_akademik
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
        INNER JOIN (
@@ -523,6 +526,7 @@ exports.listForKaprodi = async (req, res, next) => {
          FROM outline
          GROUP BY npm
        ) latest ON latest.npm = o.npm AND latest.max_id = o.id
+       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        ${whereSql}
        ORDER BY o.created_at DESC`,
       params,

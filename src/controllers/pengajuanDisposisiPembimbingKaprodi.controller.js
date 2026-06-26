@@ -168,11 +168,15 @@ exports.listForKaprodi = async (req, res, next) => {
         m.npm,
         m.nama AS nama_mahasiswa,
         m.sks AS mahasiswa_sks,
-        ps.nama AS program_studi
+        ps.nama AS program_studi,
+        o.submission_period_id,
+        osp.tahun_akademik AS period_tahun_akademik,
+        osp.periode_akademik AS period_periode_akademik
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN outline o ON o.id = pj.outline_id
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+      LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
       WHERE ps.kaprodi_nidn = ?
       ORDER BY pj.submitted_at DESC
       `,
