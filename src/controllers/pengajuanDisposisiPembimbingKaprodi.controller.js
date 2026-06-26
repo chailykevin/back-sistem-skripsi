@@ -7,8 +7,18 @@ const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
 const BULAN_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
 ];
 
 function formatDateId(date) {
@@ -31,22 +41,29 @@ function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue == null) return null;
   const raw = String(signatureValue).trim();
   if (!raw) return null;
-  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  const dataUrlMatch = raw.match(
+    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
+  );
   if (dataUrlMatch) {
     try {
       const mimeType = dataUrlMatch[1].toLowerCase();
       const type = mimeType === "jpeg" ? "jpg" : mimeType;
       return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
   }
   const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 = /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
+  const looksLikeBase64 =
+    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
   if (looksLikeBase64) {
     try {
       const buffer = Buffer.from(normalized, "base64");
       const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
       return { buffer, type };
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
   }
   return null;
 }
@@ -57,24 +74,51 @@ function signatureImagePatch(signatureValue) {
   try {
     return {
       type: PatchType.PARAGRAPH,
-      children: [new ImageRun({ type: decoded.type, data: decoded.buffer, transformation: { width: 160, height: 60 } })],
+      children: [
+        new ImageRun({
+          type: decoded.type,
+          data: decoded.buffer,
+          transformation: { width: 160, height: 60 },
+        }),
+      ],
     };
-  } catch (_) { return textPatch(""); }
+  } catch (_) {
+    return textPatch("");
+  }
 }
 
 async function generateFormulirDoc(data) {
   const {
-    npm, namaMahasiswa, programStudiNama, noHp, sks, judulSkripsi,
-    pembimbing1DiajukanNama, pembimbing2DiajukanNama,
-    perluSuratPengantar, namaPerusahaan, studentSignature, submittedAt,
-    programStudiNamaUpper, disposisiDate, keputusan,
-    dosenPembimbing1, dosenPembimbing2, catatan,
-    syaratTranskrip, syaratKrs, syaratMetodologi,
-    namaKaprodi, kaprodiSignature,
+    npm,
+    namaMahasiswa,
+    programStudiNama,
+    noHp,
+    sks,
+    judulSkripsi,
+    pembimbing1DiajukanNama,
+    pembimbing2DiajukanNama,
+    perluSuratPengantar,
+    namaPerusahaan,
+    studentSignature,
+    submittedAt,
+    programStudiNamaUpper,
+    disposisiDate,
+    keputusan,
+    dosenPembimbing1,
+    dosenPembimbing2,
+    catatan,
+    syaratTranskrip,
+    syaratKrs,
+    syaratMetodologi,
+    namaKaprodi,
+    kaprodiSignature,
   } = data;
 
   const templateBuffer = await readFile(
-    path.join(__dirname, "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx"),
+    path.join(
+      __dirname,
+      "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
+    ),
   );
 
   const patches = {
@@ -88,13 +132,14 @@ async function generateFormulirDoc(data) {
     calon_dosen_pembimbing_1: textPatch(pembimbing1DiajukanNama ?? ""),
     calon_dosen_pembimbing_2: textPatch(pembimbing2DiajukanNama ?? ""),
     perlu_surat_pengantar: textPatch(
-      perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak"
+      perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak",
     ),
     nama_perusahaan: textPatch(namaPerusahaan || "-"),
     today_date: textPatch(formatDateId(submittedAt ?? new Date())),
     signature: signatureImagePatch(studentSignature),
     nama_program_studi: textPatch(
-      programStudiNamaUpper ?? (programStudiNama ? String(programStudiNama).toUpperCase() : "")
+      programStudiNamaUpper ??
+        (programStudiNama ? String(programStudiNama).toUpperCase() : ""),
     ),
     disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
     keputusan: textPatch(keputusan ?? ""),
@@ -108,10 +153,13 @@ async function generateFormulirDoc(data) {
     kaprodi_signature: signatureImagePatch(kaprodiSignature),
   };
 
-  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  const outputBuffer = await patchDocument({
+    outputType: "nodebuffer",
+    data: templateBuffer,
+    patches,
+  });
   return outputBuffer.toString("base64");
 }
-
 
 async function upsertFileByType(
   conn,
@@ -201,7 +249,8 @@ exports.listForKaprodi = async (req, res, next) => {
       }
       for (const row of rows) {
         const fileData = fileMap.get(row.id) || {};
-        row.file_pengajuan_disposisi_pembimbing = fileData.file_pengajuan_disposisi_pembimbing ?? null;
+        row.file_pengajuan_disposisi_pembimbing =
+          fileData.file_pengajuan_disposisi_pembimbing ?? null;
         row.file_pengajuan_disposisi_pembimbing_name =
           fileData.file_pengajuan_disposisi_pembimbing_name ?? null;
       }
@@ -217,7 +266,10 @@ exports.review = async (req, res, next) => {
   let conn;
   let txStarted = false;
   try {
-    console.log("[review] START — params:", req.params, "body:", { ...req.body, fileContent: undefined });
+    console.log("[review] START — params:", req.params, "body:", {
+      ...req.body,
+      fileContent: undefined,
+    });
 
     if (!req.user.hasRole("LECTURER", "KAPRODI")) {
       return res.status(403).json({ ok: false, message: "Only Kaprodi" });
@@ -238,7 +290,15 @@ exports.review = async (req, res, next) => {
       syaratMetodologi,
     } = req.body || {};
 
-    console.log("[review] parsed body:", { status, pembimbing1DitapkanNidn, pembimbing2DitapkanNidn, catatanKaprodi, syaratTranskrip, syaratKrs, syaratMetodologi });
+    console.log("[review] parsed body:", {
+      status,
+      pembimbing1DitapkanNidn,
+      pembimbing2DitapkanNidn,
+      catatanKaprodi,
+      syaratTranskrip,
+      syaratKrs,
+      syaratMetodologi,
+    });
 
     if (!["APPROVED", "NEED_REVISION", "REJECTED"].includes(status)) {
       return res.status(400).json({ ok: false, message: "Invalid status" });
@@ -306,7 +366,12 @@ exports.review = async (req, res, next) => {
 
     let consultationInitialized = false;
 
-    console.log("[review] UPDATE pengajuan_disposisi_pembimbing id:", id, "status:", status);
+    console.log(
+      "[review] UPDATE pengajuan_disposisi_pembimbing id:",
+      id,
+      "status:",
+      status,
+    );
     await conn.query(
       `
       UPDATE pengajuan_disposisi_pembimbing
@@ -363,7 +428,8 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message: "Failed to resolve snapshot data for consultation initialization",
+          message:
+            "Failed to resolve snapshot data for consultation initialization",
         });
       }
       if (!snap.program_studi_id) {
@@ -374,7 +440,10 @@ exports.review = async (req, res, next) => {
           message: "Missing required snapshot data: program_studi_id",
         });
       }
-      if (!snap.program_studi_nama || String(snap.program_studi_nama).trim().length === 0) {
+      if (
+        !snap.program_studi_nama ||
+        String(snap.program_studi_nama).trim().length === 0
+      ) {
         await conn.rollback();
         txStarted = false;
         return res.status(409).json({
@@ -382,7 +451,10 @@ exports.review = async (req, res, next) => {
           message: "Missing required snapshot data: program_studi_nama",
         });
       }
-      if (!snap.judul_skripsi || String(snap.judul_skripsi).trim().length === 0) {
+      if (
+        !snap.judul_skripsi ||
+        String(snap.judul_skripsi).trim().length === 0
+      ) {
         await conn.rollback();
         txStarted = false;
         return res.status(409).json({
@@ -390,7 +462,10 @@ exports.review = async (req, res, next) => {
           message: "Missing required snapshot data: judul_skripsi",
         });
       }
-      if (!snap.nama_mahasiswa || String(snap.nama_mahasiswa).trim().length === 0) {
+      if (
+        !snap.nama_mahasiswa ||
+        String(snap.nama_mahasiswa).trim().length === 0
+      ) {
         await conn.rollback();
         txStarted = false;
         return res.status(409).json({
@@ -398,12 +473,16 @@ exports.review = async (req, res, next) => {
           message: "Missing required snapshot data: nama_mahasiswa",
         });
       }
-      if (!snap.pembimbing2_ditetapkan_nidn || String(snap.pembimbing2_ditetapkan_nidn).trim().length === 0) {
+      if (
+        !snap.pembimbing2_ditetapkan_nidn ||
+        String(snap.pembimbing2_ditetapkan_nidn).trim().length === 0
+      ) {
         await conn.rollback();
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message: "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
+          message:
+            "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
         });
       }
 
@@ -429,12 +508,18 @@ exports.review = async (req, res, next) => {
       console.log("[review] existing kartu rows:", kartuRows.length);
 
       if (kartuRows.length === 0) {
-        console.log("[review] INSERT kartu_konsultasi_outline — outline_id:", snap.outline_id);
+        console.log(
+          "[review] INSERT kartu_konsultasi_outline — outline_id:",
+          snap.outline_id,
+        );
         const [insKartu] = await conn.query(
           `INSERT INTO kartu_konsultasi_outline (outline_id, is_completed) VALUES (?, 0)`,
           [snap.outline_id],
         );
-        console.log("[review] kartu_konsultasi_outline insertId:", insKartu.insertId);
+        console.log(
+          "[review] kartu_konsultasi_outline insertId:",
+          insKartu.insertId,
+        );
 
         await conn.query(
           `INSERT INTO konsultasi_outline_stage (
@@ -445,10 +530,7 @@ exports.review = async (req, res, next) => {
              current_submission_no,
              started_at
            ) VALUES (?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-          [
-            insKartu.insertId,
-            String(snap.pembimbing2_ditetapkan_nidn).trim(),
-          ],
+          [insKartu.insertId, String(snap.pembimbing2_ditetapkan_nidn).trim()],
         );
         console.log("[review] konsultasi_outline_stage inserted");
 
@@ -470,7 +552,10 @@ exports.review = async (req, res, next) => {
         [
           toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0),
           toBit(syaratKrs, currentRow.syarat_krs ?? 0),
-          toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0),
+          toBit(
+            syaratMetodologi,
+            currentRow.syarat_metodologi_nilai_min_c ?? 0,
+          ),
           id,
         ],
       );
@@ -511,7 +596,11 @@ exports.review = async (req, res, next) => {
     const rd = reviewDocRows[0] ?? {};
     console.log("[review] reviewDocRows[0] keys:", Object.keys(rd));
 
-    const keputusanMap = { APPROVED: "Diterima", NEED_REVISION: "Perlu Revisi", REJECTED: "Ditolak" };
+    const keputusanMap = {
+      APPROVED: "Diterima",
+      NEED_REVISION: "Perlu Revisi",
+      REJECTED: "Ditolak",
+    };
 
     console.log("[review] generating formulir doc");
     const reviewFormulirBase64 = await generateFormulirDoc({
@@ -527,7 +616,9 @@ exports.review = async (req, res, next) => {
       namaPerusahaan: rd.nama_perusahaan ?? null,
       studentSignature: rd.student_signature,
       submittedAt: rd.submitted_at ? new Date(rd.submitted_at) : new Date(),
-      programStudiNamaUpper: rd.program_studi_nama ? String(rd.program_studi_nama).toUpperCase() : "",
+      programStudiNamaUpper: rd.program_studi_nama
+        ? String(rd.program_studi_nama).toUpperCase()
+        : "",
       disposisiDate: new Date(),
       keputusan: keputusanMap[status] ?? status,
       dosenPembimbing1: rd.pembimbing1_ditetapkan_nama ?? "",
@@ -539,7 +630,10 @@ exports.review = async (req, res, next) => {
       namaKaprodi: rd.kaprodi_nama ?? "",
       kaprodiSignature: rd.kaprodi_signature,
     });
-    console.log("[review] formulir doc generated, length:", reviewFormulirBase64?.length);
+    console.log(
+      "[review] formulir doc generated, length:",
+      reviewFormulirBase64?.length,
+    );
 
     console.log("[review] calling upsertFileByType — pengajuanId:", id);
     await upsertFileByType(
@@ -560,7 +654,12 @@ exports.review = async (req, res, next) => {
       [id],
     );
     const reviewed = reviewedRows[0];
-    console.log("[review] reviewed row:", reviewed ? { npm: reviewed.npm, nama_mahasiswa: reviewed.nama_mahasiswa } : null);
+    console.log(
+      "[review] reviewed row:",
+      reviewed
+        ? { npm: reviewed.npm, nama_mahasiswa: reviewed.nama_mahasiswa }
+        : null,
+    );
     if (reviewed) {
       const [studentUserRows] = await conn.query(
         `SELECT id FROM users WHERE npm = ? LIMIT 1`,
@@ -575,7 +674,8 @@ exports.review = async (req, res, next) => {
           APPROVED: "TITLE_APPROVED",
         };
         const msgMap = {
-          NEED_REVISION: "Pengajuan disposisi pembimbing Anda memerlukan revisi",
+          NEED_REVISION:
+            "Pengajuan disposisi pembimbing Anda memerlukan revisi",
           REJECTED: "Pengajuan disposisi pembimbing Anda ditolak",
           APPROVED: "Pengajuan disposisi pembimbing Anda disetujui",
         };
@@ -584,7 +684,7 @@ exports.review = async (req, res, next) => {
           studentUserId,
           typeMap[status],
           msgMap[status],
-          "/student/proposal",
+          "/student/pengajuan-outline",
         );
         console.log("[review] student notification inserted");
       }
@@ -596,7 +696,10 @@ exports.review = async (req, res, next) => {
           reviewed.pembimbing2_ditetapkan_nidn,
         ]) {
           if (!nidn) continue;
-          console.log("[review] inserting pembimbing notification for nidn:", nidn);
+          console.log(
+            "[review] inserting pembimbing notification for nidn:",
+            nidn,
+          );
           const [pUserRows] = await conn.query(
             `SELECT u.id FROM users u
              JOIN user_roles ur ON ur.user_id = u.id
