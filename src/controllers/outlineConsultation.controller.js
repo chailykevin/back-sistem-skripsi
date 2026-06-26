@@ -1737,6 +1737,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       : null;
 
     const resolved = resolveActiveStage(stages, Boolean(kartu.is_completed));
+    const logs = await getKartuLogs(db, kartu.id);
 
     return res.json({
       ok: true,
@@ -1749,6 +1750,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
         latestSubmissionOverall: submissions[0] ?? null,
         submissions,
         reviews,
+        logs,
         file,
       },
     });
