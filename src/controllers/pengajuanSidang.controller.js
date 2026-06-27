@@ -1770,6 +1770,29 @@ exports.initKaprodi = async (req, res, next) => {
       }
     }
 
+    // Guard: if the entire flow is already COMPLETED (no active sidang exists but a
+    // completed one does with a linked kaprodi row), return the existing kaprodi id
+    // instead of creating a spurious new DRAFT pengajuan_sidang.
+    if (!activeSidang) {
+      const [[completedSidang]] = await conn.query(
+        `SELECT id FROM pengajuan_sidang WHERE skripsi_id = ? AND status = 'COMPLETED' ORDER BY id DESC LIMIT 1`,
+        [skripsiId],
+      );
+      if (completedSidang) {
+        const [[existingKaprodi]] = await conn.query(
+          `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+          [completedSidang.id],
+        );
+        if (existingKaprodi) {
+          return res.status(200).json({
+            ok: true,
+            message: "Pengajuan Sidang Kaprodi sudah ada",
+            data: { id: existingKaprodi.id },
+          });
+        }
+      }
+    }
+
     const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
 
     // Gate by period for original flow only (ujian ulang is exempt)
