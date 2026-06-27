@@ -1748,7 +1748,7 @@ exports.initKaprodi = async (req, res, next) => {
     }
 
     // Find the current active pengajuan_sidang for this student
-    const [[activeSidang]] = await conn.query(
+    let [[activeSidang]] = await conn.query(
       `SELECT id, ujian_ke FROM pengajuan_sidang
        WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
        ORDER BY id DESC LIMIT 1`,
@@ -1783,15 +1783,17 @@ exports.initKaprodi = async (req, res, next) => {
       }
     }
 
-    if (!activeSidang) {
-      return res.status(500).json({
-        ok: false,
-        message: "Pengajuan Sidang belum dibuat",
-      });
-    }
-
     await conn.beginTransaction();
     txStarted = true;
+
+    // Auto-create pengajuan_sidang DRAFT if missing (auto-init from konsultasi may have been skipped)
+    if (!activeSidang) {
+      const [sidangIns] = await conn.query(
+        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
+        [skripsiId],
+      );
+      activeSidang = { id: sidangIns.insertId, ujian_ke: 1 };
+    }
 
     const [ins] = await conn.query(
       `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_sidang_id, status) VALUES (?, 'DRAFT')`,
@@ -2428,7 +2430,7 @@ exports.submitKaprodi = async (req, res, next) => {
           ku.id,
           "SIDANG_KAPRODI_SUBMITTED",
           `Mahasiswa ${namaMahasiswa} mengajukan permohonan sidang skripsi`,
-          "/kaprodi/pengajuan-sidang-kaprodi",
+          "/kaprodi/pengajuan-sidang",
         );
       }
     }
