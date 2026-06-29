@@ -296,23 +296,18 @@ exports.initPengumpulan = async (req, res, next) => {
       return res.status(409).json({ ok: false, message: "Sidang terakhir belum dinyatakan lulus" });
     }
 
-    // Return existing if already exists
-    const [[existing]] = await conn.query(
-      `SELECT id, status, is_completed FROM pengumpulan_berkas_final WHERE skripsi_id = ? LIMIT 1`,
+    await conn.query(
+      `INSERT IGNORE INTO pengumpulan_berkas_final (skripsi_id, status) VALUES (?, 'DRAFT')`,
       [skripsiId],
     );
-    if (existing) {
-      await conn.rollback(); txStarted = false;
-      return res.json({ ok: true, data: { id: existing.id, status: existing.status, is_completed: existing.is_completed } });
-    }
 
-    const [result] = await conn.query(
-      `INSERT INTO pengumpulan_berkas_final (skripsi_id, status) VALUES (?, 'DRAFT')`,
+    const [[row]] = await conn.query(
+      `SELECT id, status, is_completed FROM pengumpulan_berkas_final WHERE skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
 
     await conn.commit(); txStarted = false;
-    return res.status(201).json({ ok: true, data: { id: result.insertId, status: "DRAFT", is_completed: 0 } });
+    return res.json({ ok: true, data: { id: row.id, status: row.status, is_completed: row.is_completed } });
   } catch (err) {
     try { if (txStarted) await conn.rollback(); } catch (_) {}
     next(err);
@@ -783,10 +778,19 @@ exports.getPengumpulan = async (req, res, next) => {
       `SELECT pbf.id, pbf.skripsi_id, pbf.status, pbf.is_completed,
               pbf.created_at, pbf.updated_at, sk.npm,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              sk.judul AS judul_skripsi,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-              sk.program_studi_id
+              sk.program_studi_id,
+              m.nama AS nama_mahasiswa,
+              prog.nama AS program_studi_nama,
+              d1.nama AS pembimbing1_nama,
+              d2.nama AS pembimbing2_nama
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
@@ -845,6 +849,11 @@ exports.getPengumpulan = async (req, res, next) => {
         id: pengumpulan.id,
         skripsiId: pengumpulan.skripsi_id,
         npm: pengumpulan.npm,
+        namaMahasiswa: pengumpulan.nama_mahasiswa ?? null,
+        judulSkripsi: pengumpulan.judul_skripsi ?? null,
+        programStudiNama: pengumpulan.program_studi_nama ?? null,
+        pembimbing1Nama: pengumpulan.pembimbing1_nama ?? null,
+        pembimbing2Nama: pengumpulan.pembimbing2_nama ?? null,
         status: pengumpulan.status,
         isCompleted: !!pengumpulan.is_completed,
         createdAt: pengumpulan.created_at,

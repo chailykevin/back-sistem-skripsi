@@ -574,7 +574,7 @@ exports.reviewRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -605,7 +605,13 @@ exports.reviewRevisi = async (req, res, next) => {
         .status(409)
         .json({ ok: false, message: "Tidak ada tahap aktif saat ini" });
     }
-    if (activeStage.user_id !== req.user.id) {
+    // Compare by NIDN so that any account sharing the same NIDN can review
+    // (resolveUserId picks the lowest-id account, but the caller may be on a different account)
+    const [[stageUserRow]] = await conn.query(
+      `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
+      [activeStage.user_id],
+    );
+    if (!stageUserRow || stageUserRow.nidn !== nidn) {
       await conn.rollback();
       txStarted = false;
       return res
@@ -875,13 +881,23 @@ exports.getRevisi = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               m.nama AS nama_mahasiswa, m.npm AS mahasiswa_npm,
               sk.judul AS judul_skripsi,
+              ps.nama AS program_studi_nama,
+              d1.nama AS pembimbing1_nama,
+              d2.nama AS pembimbing2_nama,
+              dq1.nama AS penguji1_nama,
+              dq2.nama AS penguji2_nama,
               s.status AS sidang_status, s.hasil_sidang
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
        JOIN skripsi sk ON sk.id = s.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi ps ON ps.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN dosen dq1 ON dq1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen dq2 ON dq2.nidn = psk_k.penguji2_nidn
        WHERE s.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );

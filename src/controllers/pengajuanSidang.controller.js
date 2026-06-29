@@ -2837,6 +2837,7 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
          s.program_studi_id,
          ps.nama AS program_studi_nama,
          s.judul AS judul_skripsi,
+         pengajuan_sidang.ujian_ke,
          pengajuan_sidang.sidang_submission_period_id AS submission_period_id,
          ssp.tahun_akademik AS period_tahun_akademik,
          ssp.periode_akademik AS period_periode_akademik

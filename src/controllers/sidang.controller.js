@@ -172,35 +172,7 @@ exports.getSidang = async (req, res, next) => {
         .json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const [[sidang]] = await db.query(
-      `SELECT
-         s.id, s.skripsi_id, s.pengajuan_sidang_id, s.nomor_surat,
-         m.nama AS nama_mahasiswa, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
-         psk_k.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
-         s.created_at, s.updated_at, s.completed_at,
-         ps.ujian_ke,
-         m.npm,
-         prog.id   AS program_studi_id,
-         prog.nama AS program_studi_nama,
-         sk.judul  AS judul_skripsi,
-         sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
-         sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
-         psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
-         psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama
-       FROM sidang s
-       LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       JOIN program_studi prog ON prog.id = sk.program_studi_id
-       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
-       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const sidang = await getSidangBySkripsiId(db, skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -363,10 +335,7 @@ exports.startSidang = async (req, res, next) => {
         .json({ ok: false, message: "Hanya dosen yang dapat memulai sidang" });
     }
 
-    const [[sidang]] = await db.query(
-      `SELECT s.*, ps.ujian_ke FROM sidang s LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const sidang = await getSidangBySkripsiId(db, skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -397,6 +366,33 @@ exports.startSidang = async (req, res, next) => {
       `UPDATE sidang SET status = 'ONGOING', updated_at = NOW() WHERE id = ?`,
       [sidang.id],
     );
+
+    const sidangLink = `/sidang/${skripsiId}`;
+    const [[studentUserRow]] = await db.query(
+      `SELECT id FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
+      [sidang.npm],
+    );
+    if (studentUserRow) {
+      await insertNotification(
+        db,
+        studentUserRow.id,
+        "SIDANG_STARTED",
+        "Sidang skripsi Anda telah dimulai.",
+        sidangLink,
+      );
+    }
+    const lecturerMsg = `Sidang skripsi ${sidang.nama_mahasiswa} telah dimulai.`;
+    for (const lecNidn of [
+      sidang.pembimbing1_nidn,
+      sidang.pembimbing2_nidn,
+      sidang.penguji1_nidn,
+      sidang.penguji2_nidn,
+    ]) {
+      const lecId = await resolveUserId(db, lecNidn);
+      if (lecId) {
+        await insertNotification(db, lecId, "SIDANG_STARTED", lecturerMsg, sidangLink);
+      }
+    }
 
     return res.json({ ok: true, message: "Sidang berhasil dimulai" });
   } catch (err) {
@@ -472,6 +468,19 @@ exports.submitNotulen = async (req, res, next) => {
        WHERE sidang_id = ? AND role = ?`,
       [note, sidang.id, role],
     );
+
+    const callerNama =
+      role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama;
+    const pembimbing1UserId = await resolveUserId(conn, sidang.pembimbing1_nidn);
+    if (pembimbing1UserId) {
+      await insertNotification(
+        conn,
+        pembimbing1UserId,
+        "SIDANG_NOTULEN_SUBMITTED",
+        `${callerNama} telah mengumpulkan notulen sidang ${sidang.nama_mahasiswa}.`,
+        `/sidang/${skripsiId}`,
+      );
+    }
 
     await conn.commit();
     txStarted = false;
@@ -683,6 +692,25 @@ exports.submitPenilaian = async (req, res, next) => {
         role,
       ],
     );
+
+    if (role !== "PEMBIMBING_1") {
+      const callerNama =
+        role === "PEMBIMBING_2"
+          ? sidang.pembimbing2_nama
+          : role === "PENGUJI_1"
+            ? sidang.penguji1_nama
+            : sidang.penguji2_nama;
+      const pembimbing1UserId = await resolveUserId(conn, sidang.pembimbing1_nidn);
+      if (pembimbing1UserId) {
+        await insertNotification(
+          conn,
+          pembimbing1UserId,
+          "SIDANG_PENILAIAN_SUBMITTED",
+          `${callerNama} telah mengumpulkan penilaian sidang ${sidang.nama_mahasiswa}.`,
+          `/sidang/${skripsiId}`,
+        );
+      }
+    }
 
     await conn.commit();
     txStarted = false;
@@ -981,6 +1009,36 @@ exports.submitHasilPenilaian = async (req, res, next) => {
           `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
           [sidang.id],
         );
+      }
+    }
+
+    // Notify student + all 4 participants of LULUS / TIDAK_LULUS result
+    const notifType = hasilSidang === "LULUS" ? "SIDANG_LULUS" : "SIDANG_TIDAK_LULUS";
+    const sidangLink = `/sidang/${skripsiId}`;
+    const [[studentRow]] = await conn.query(
+      `SELECT id FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
+      [sidang.npm],
+    );
+    if (studentRow) {
+      const studentMsg =
+        hasilSidang === "LULUS"
+          ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi dengan nilai ${rata.toFixed(2)} (${grade}).`
+          : "Anda dinyatakan TIDAK LULUS dalam sidang skripsi. Anda dapat mengikuti ujian ulang.";
+      await insertNotification(conn, studentRow.id, notifType, studentMsg, sidangLink);
+    }
+    const lecturerMsg =
+      hasilSidang === "LULUS"
+        ? `Sidang skripsi ${sidang.nama_mahasiswa} telah selesai dengan hasil LULUS (nilai: ${rata.toFixed(2)}, grade: ${grade}).`
+        : `Sidang skripsi ${sidang.nama_mahasiswa} telah selesai dengan hasil TIDAK LULUS.`;
+    for (const lecNidn of [
+      sidang.pembimbing1_nidn,
+      sidang.pembimbing2_nidn,
+      sidang.penguji1_nidn,
+      sidang.penguji2_nidn,
+    ]) {
+      const lecId = await resolveUserId(conn, lecNidn);
+      if (lecId) {
+        await insertNotification(conn, lecId, notifType, lecturerMsg, sidangLink);
       }
     }
 
