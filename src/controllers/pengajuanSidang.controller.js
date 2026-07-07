@@ -145,6 +145,36 @@ function signatureImagePatch(signatureValue) {
   }
 }
 
+async function buildSuratPenyelesaianDocxBuffer({
+  namaMahasiswa,
+  npm,
+  alamat,
+  noHp,
+  judulSkripsi,
+  ttdKaprodi,
+  namaKaprodi,
+  ttdMahasiswa,
+  prodi,
+}) {
+  const templatePath = path.join(
+    __dirname,
+    "../templates/template_penyelesaian_skripsi.docx",
+  );
+  const templateBuffer = await readFile(templatePath);
+  const patches = {
+    nama_mahasiswa: textPatch(namaMahasiswa),
+    npm: textPatch(npm),
+    alamat: textPatch(alamat),
+    no_hp: textPatch(noHp),
+    judul_skripsi: textPatch(judulSkripsi),
+    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
+    nama_kaprodi: textPatch(namaKaprodi),
+    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
+    prodi: textPatch(prodi),
+  };
+  return patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+}
+
 async function buildLembarPermohonanUjianBuffer({
   todayDate,
   fakultas,
@@ -1948,7 +1978,13 @@ exports.getKaprodi = async (req, res, next) => {
       });
     }
     const [[kaprodi]] = await db.query(
-      `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+      `SELECT psk.*,
+              dpg1.nama AS penguji1_nama,
+              dpg2.nama AS penguji2_nama
+       FROM pengajuan_sidang_kaprodi psk
+       LEFT JOIN dosen dpg1 ON dpg1.nidn = psk.penguji1_nidn
+       LEFT JOIN dosen dpg2 ON dpg2.nidn = psk.penguji2_nidn
+       WHERE psk.pengajuan_sidang_id = ? LIMIT 1`,
       [activeSidangForGet.id],
     );
     if (!kaprodi) {
@@ -1996,7 +2032,7 @@ exports.getKaprodi = async (req, res, next) => {
     return res.json({
       ok: true,
       data: {
-        kaprodi,
+        kaprodi: { ...kaprodi, ujian_ke: activeSidangForGet.ujian_ke ?? null },
         auto: autoData
           ? {
               npm: autoData.npm,
@@ -2430,6 +2466,46 @@ exports.submitKaprodi = async (req, res, next) => {
         usulanBase64,
       ],
     );
+
+    // Regenerate SURAT_PENYELESAIAN_SKRIPSI now that alamat and no_hp are available
+    const [[skRow]] = await conn.query(
+      `SELECT psk.id FROM pengajuan_sk_penelitian psk
+       WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
+       LIMIT 1`,
+      [skripsiId],
+    );
+    if (skRow) {
+      const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
+        namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+        npm: docData?.npm ?? npm,
+        alamat: kaprodi.alamat ?? "",
+        noHp: kaprodi.no_hp ?? "",
+        judulSkripsi: docData?.judul_skripsi ?? "",
+        ttdKaprodi: docData?.kaprodi_sig ?? null,
+        namaKaprodi,
+        ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+        prodi: docData?.prodi_nama ?? "",
+      });
+      const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
+      const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.docx`;
+      await conn.query(
+        `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
+        [skRow.id],
+      );
+      await conn.query(
+        `INSERT INTO pengajuan_sk_penelitian_files
+           (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+         VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+        [skRow.id, penyelesaianFileName, MIME_DOCX, penyelesaianBase64],
+      );
+      // Also update the copy already attached to pengajuan_sidang_files
+      await conn.query(
+        `UPDATE pengajuan_sidang_files
+         SET file_content = ?, file_name = ?, mime_type = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+        [penyelesaianBase64, penyelesaianFileName, MIME_DOCX, existingSidang.id],
+      );
+    }
 
     const [[mahasiswaRow]] = await conn.query(
       `SELECT m.nama, m.program_studi_id FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,

@@ -301,7 +301,7 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
 
 async function fetchKartuDenorm(queryable, kartu) {
   const [[row]] = await queryable.query(
-    `SELECT m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
+    `SELECT m.npm AS npm, m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
             sk.judul AS judul_skripsi,
             d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
             u1.signature_image AS pembimbing1_signature,

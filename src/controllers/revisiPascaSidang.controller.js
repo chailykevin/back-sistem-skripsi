@@ -249,7 +249,7 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
       ttd_pembimbing2: signaturePatch(sig2),
       nama_dekan: textPatch(dekanNama),
       ttd_dekan: signaturePatch(sigDekan),
-      prodi: textPatch(sidangRow.program_studi_nama),
+      prodi: textPatch((sidangRow.program_studi_nama ?? "").toUpperCase()),
       tahun_penulisan: textPatch(String(tahun)),
     },
   });

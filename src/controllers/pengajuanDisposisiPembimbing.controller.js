@@ -481,7 +481,7 @@ exports.getLatestMine = async (req, res, next) => {
          pj.*,
          o.judul AS outline_judul,
          m.nama AS mahasiswa_nama,
-         m.sks AS mahasiswa_sks,
+         m.sks AS sks_diperoleh,
          ps.id AS program_studi_id,
          ps.nama AS program_studi_nama,
          d1.nama AS pembimbing1_diajukan_nama,
@@ -561,7 +561,7 @@ exports.getById = async (req, res, next) => {
           o.judul AS outline_judul,
 
           m.nama AS mahasiswa_nama,
-          m.sks AS mahasiswa_sks,
+          m.sks AS sks_diperoleh,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
           dkap.nama AS kaprodi_nama,
@@ -633,7 +633,7 @@ exports.getById = async (req, res, next) => {
           o.judul AS outline_judul,
 
           m.nama AS mahasiswa_nama,
-          m.sks AS mahasiswa_sks,
+          m.sks AS sks_diperoleh,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
           dkap.nama AS kaprodi_nama,

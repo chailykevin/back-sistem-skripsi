@@ -305,6 +305,7 @@ async function generateAndStoreFinalKartuDocx(
        o.pembimbing1_nidn  AS pembimbing1_nidn,
        o.pembimbing2_nidn  AS pembimbing2_nidn,
        o.program_studi_id  AS program_studi_id,
+       m.npm               AS npm,
        m.nama              AS nama_mahasiswa,
        ps.nama             AS program_studi_nama,
        o.judul             AS judul_skripsi,
@@ -330,6 +331,7 @@ async function generateAndStoreFinalKartuDocx(
        )
      WHERE k.id = ?
      LIMIT 1`,
+
     [kartuId],
   );
   const kartu = kartuRows[0] ?? null;
@@ -708,7 +710,29 @@ exports.listMine = async (req, res, next) => {
     );
 
     if (kartuRows.length === 0) {
-      return res.json({ ok: true, data: [] });
+      // Check eligibility so the frontend can show an init button
+      const [eligRows] = await db.query(
+        `SELECT o.id AS outline_id, o.status AS outline_status,
+                pdp.status AS pengajuan_status
+         FROM outline o
+         LEFT JOIN pengajuan_disposisi_pembimbing pdp ON pdp.outline_id = o.id AND pdp.npm = o.npm
+         WHERE o.npm = ?
+         ORDER BY pdp.id DESC LIMIT 1`,
+        [npm],
+      );
+      const elig = eligRows[0] ?? null;
+      const canInit =
+        elig &&
+        elig.outline_status === "ACCEPTED" &&
+        elig.pengajuan_status === "APPROVED";
+      return res.json({
+        ok: true,
+        data: [],
+        meta: {
+          can_init: Boolean(canInit),
+          outline_id: canInit ? elig.outline_id : null,
+        },
+      });
     }
 
     const kartuIds = kartuRows.map((r) => r.kartu_id);
@@ -1304,7 +1328,105 @@ exports.finalizeKartu = async (req, res, next) => {
 
 exports.getKartuFiles = rebuildNotice("getKartuFiles");
 
-exports.initFromApprovedPengajuan = rebuildNotice("initFromApprovedPengajuan");
+exports.initFromApprovedPengajuan = async (req, res, next) => {
+  const outlineId = Number(req.params.outlineId);
+  if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    return res.status(400).json({ ok: false, message: "Invalid outlineId" });
+  }
+
+  if (req.user.userType !== "STUDENT") {
+    return res.status(403).json({ ok: false, message: "Only students" });
+  }
+
+  const npm = await getStudentNpm(req.user.id);
+  if (!npm) {
+    return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+  }
+
+  const conn = await db.getConnection();
+  let txStarted = false;
+  try {
+    // Verify outline belongs to student and is ACCEPTED
+    const [outlineRows] = await conn.query(
+      `SELECT o.id, o.status, o.pembimbing1_nidn, o.pembimbing2_nidn
+       FROM outline o
+       WHERE o.id = ? AND o.npm = ?
+       LIMIT 1`,
+      [outlineId, npm],
+    );
+    if (outlineRows.length === 0) {
+      return res.status(404).json({ ok: false, message: "Outline tidak ditemukan" });
+    }
+    const outline = outlineRows[0];
+    if (outline.status !== "ACCEPTED") {
+      return res.status(409).json({
+        ok: false,
+        message: "Outline belum disetujui oleh Kaprodi",
+      });
+    }
+
+    // Verify pengajuan_disposisi_pembimbing is APPROVED for this outline
+    const [pengajuanRows] = await conn.query(
+      `SELECT id, status, pembimbing2_ditetapkan_nidn
+       FROM pengajuan_disposisi_pembimbing
+       WHERE outline_id = ? AND npm = ?
+       ORDER BY id DESC LIMIT 1`,
+      [outlineId, npm],
+    );
+    if (pengajuanRows.length === 0) {
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan disposisi pembimbing tidak ditemukan",
+      });
+    }
+    if (pengajuanRows[0].status !== "APPROVED") {
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan disposisi pembimbing belum disetujui oleh Kaprodi",
+      });
+    }
+
+    const pembimbing2Nidn = outline.pembimbing2_nidn ?? pengajuanRows[0].pembimbing2_ditetapkan_nidn;
+
+    // Guard: return existing if already initialized
+    const [existingKartu] = await conn.query(
+      `SELECT id FROM kartu_konsultasi_outline WHERE outline_id = ? LIMIT 1`,
+      [outlineId],
+    );
+    if (existingKartu.length > 0) {
+      return res.json({ ok: true, data: { kartuId: existingKartu[0].id, already_exists: true } });
+    }
+
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [insKartu] = await conn.query(
+      `INSERT INTO kartu_konsultasi_outline (outline_id, is_completed) VALUES (?, 0)`,
+      [outlineId],
+    );
+    await conn.query(
+      `INSERT INTO konsultasi_outline_stage (
+         kartu_konsultasi_outline_id,
+         stage,
+         pembimbing_nidn,
+         current_status,
+         current_submission_no,
+         started_at
+       ) VALUES (?, 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+      [insKartu.insertId, String(pembimbing2Nidn).trim()],
+    );
+
+    await conn.commit();
+    txStarted = false;
+
+    return res.status(201).json({ ok: true, data: { kartuId: insKartu.insertId } });
+  } catch (err) {
+    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    next(err);
+  } finally {
+    conn.release();
+  }
+};
 
 exports.listAssignedToLecturer = async (req, res, next) => {
   try {
