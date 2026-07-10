@@ -485,34 +485,6 @@ exports.seedDosenDummy = async (req, res, next) => {
       });
     }
 
-    // Seed fakultas and update program_studi kode + fakultas_id
-    for (const fak of PREDEFINED_FAKULTAS) {
-      await conn.query(
-        `INSERT INTO fakultas (nama, kode, dekan_nidn)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           nama = VALUES(nama),
-           dekan_nidn = VALUES(dekan_nidn)`,
-        [fak.nama, fak.kode, fak.dekanNidn],
-      );
-    }
-
-    // Update program_studi rows with kode and fakultas_id
-    for (const ps of programRows) {
-      const kode = PROGRAM_STUDI_KODE[String(ps.nama).toLowerCase()] ?? null;
-      if (!kode) continue;
-      // Find the fakultas for this prodi (first one seeded, assuming single faculty for now)
-      const [[fakRow]] = await conn.query(
-        `SELECT id FROM fakultas WHERE kode = ? LIMIT 1`,
-        [PREDEFINED_FAKULTAS[0].kode],
-      );
-      if (!fakRow) continue;
-      await conn.query(
-        `UPDATE program_studi SET kode = ?, fakultas_id = ? WHERE id = ?`,
-        [kode, fakRow.id, ps.id],
-      );
-    }
-
     const input = getPredefinedDosen(programRows);
     const validProgramIds = new Set(programRows.map((p) => Number(p.id)));
     let kaprodiCount = 0;
@@ -768,6 +740,35 @@ exports.seedDosenDummy = async (req, res, next) => {
         dekanAccount,
         sekretariatProdiAccount,
       });
+    }
+
+    // Seed fakultas and update program_studi kode + fakultas_id
+    // (must run after dosen are seeded so dekan_nidn FK target exists)
+    for (const fak of PREDEFINED_FAKULTAS) {
+      await conn.query(
+        `INSERT INTO fakultas (nama, kode, dekan_nidn)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           nama = VALUES(nama),
+           dekan_nidn = VALUES(dekan_nidn)`,
+        [fak.nama, fak.kode, fak.dekanNidn],
+      );
+    }
+
+    // Update program_studi rows with kode and fakultas_id
+    for (const ps of programRows) {
+      const kode = PROGRAM_STUDI_KODE[String(ps.nama).toLowerCase()] ?? null;
+      if (!kode) continue;
+      // Find the fakultas for this prodi (first one seeded, assuming single faculty for now)
+      const [[fakRow]] = await conn.query(
+        `SELECT id FROM fakultas WHERE kode = ? LIMIT 1`,
+        [PREDEFINED_FAKULTAS[0].kode],
+      );
+      if (!fakRow) continue;
+      await conn.query(
+        `UPDATE program_studi SET kode = ?, fakultas_id = ? WHERE id = ?`,
+        [kode, fakRow.id, ps.id],
+      );
     }
 
     await conn.commit();
