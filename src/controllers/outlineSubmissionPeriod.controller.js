@@ -17,6 +17,14 @@ function isOpenNow(openAt, closeAt) {
   return now >= new Date(openAt).getTime() && now <= new Date(closeAt).getTime();
 }
 
+// BELUM_DIBUKA (not yet open) / SEDANG_BUKA (open) / SUDAH_TUTUP (already closed)
+function computeStatus(openAt, closeAt) {
+  const now = Date.now();
+  if (now < new Date(openAt).getTime()) return "BELUM_DIBUKA";
+  if (now > new Date(closeAt).getTime()) return "SUDAH_TUTUP";
+  return "SEDANG_BUKA";
+}
+
 function formatRow(r) {
   return {
     id: r.id,
@@ -25,6 +33,7 @@ function formatRow(r) {
     openAt: r.open_at,
     closeAt: r.close_at,
     isOpenNow: isOpenNow(r.open_at, r.close_at),
+    status: computeStatus(r.open_at, r.close_at),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -67,11 +76,12 @@ function validatePeriodFields({ openAt, closeAt, tahunAkademik, periodeAkademik 
 
 // Overlap test: existing.open_at < new.closeAt AND existing.close_at > new.openAt
 // (strict comparisons so periods that merely touch at a shared boundary instant don't count as overlapping)
-async function findOverlappingPeriod({ id, tahunAkademik, periodeAkademik, openAt, closeAt }) {
-  const params = [tahunAkademik, periodeAkademik, closeAt, openAt];
+// Checked against ALL periods regardless of tahun_akademik/periode_akademik so that at most one
+// outline submission period can ever be open at the same time.
+async function findOverlappingPeriod({ id, openAt, closeAt }) {
+  const params = [closeAt, openAt];
   let sql = `SELECT id FROM outline_submission_period
-             WHERE tahun_akademik = ? AND periode_akademik = ?
-               AND open_at < ? AND close_at > ?`;
+             WHERE open_at < ? AND close_at > ?`;
   if (id !== undefined) {
     sql += " AND id != ?";
     params.push(id);
@@ -116,15 +126,13 @@ exports.create = async (req, res, next) => {
     const closeSql = toSqlDateTime(parseDateInput(closeAt));
 
     const hasOverlap = await findOverlappingPeriod({
-      tahunAkademik: trimmedTahunAkademik,
-      periodeAkademik,
       openAt: openSql,
       closeAt: closeSql,
     });
     if (hasOverlap) {
       return res.status(409).json({
         ok: false,
-        message: "Sudah ada periode dengan tahun akademik, periode akademik, dan rentang tanggal yang tumpang tindih.",
+        message: "Sudah ada periode lain dengan rentang tanggal yang tumpang tindih. Hanya boleh ada satu periode yang buka pada satu waktu.",
       });
     }
 
@@ -212,24 +220,15 @@ exports.update = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "closeAt must be greater than or equal to openAt" });
     }
 
-    const resolvedTahunAkademik = tahunAkademik !== undefined
-      ? String(tahunAkademik).trim()
-      : existing[0].tahun_akademik;
-    const resolvedPeriodeAkademik = periodeAkademik !== undefined
-      ? periodeAkademik
-      : existing[0].periode_akademik;
-
     const hasOverlap = await findOverlappingPeriod({
       id,
-      tahunAkademik: resolvedTahunAkademik,
-      periodeAkademik: resolvedPeriodeAkademik,
       openAt: toSqlDateTime(resolvedOpen),
       closeAt: toSqlDateTime(resolvedClose),
     });
     if (hasOverlap) {
       return res.status(409).json({
         ok: false,
-        message: "Sudah ada periode dengan tahun akademik, periode akademik, dan rentang tanggal yang tumpang tindih.",
+        message: "Sudah ada periode lain dengan rentang tanggal yang tumpang tindih. Hanya boleh ada satu periode yang buka pada satu waktu.",
       });
     }
 

@@ -70,6 +70,9 @@ app.use("/", pengumpulanBerkasFinalRoutes);
 const notificationRoutes = require("./routes/notification.routes");
 app.use("/notifications", notificationRoutes);
 
+const kaprodiPendingActionsRoutes = require("./routes/kaprodiPendingActions.routes");
+app.use("/", kaprodiPendingActionsRoutes);
+
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");
 app.use(notFound);
