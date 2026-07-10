@@ -65,12 +65,13 @@ function validatePeriodFields({ openAt, closeAt, tahunAkademik, periodeAkademik 
   return null;
 }
 
-// Overlap test: existing.open_at <= new.closeAt AND existing.close_at >= new.openAt
+// Overlap test: existing.open_at < new.closeAt AND existing.close_at > new.openAt
+// (strict comparisons so periods that merely touch at a shared boundary instant don't count as overlapping)
 async function findOverlappingPeriod({ id, tahunAkademik, periodeAkademik, openAt, closeAt }) {
   const params = [tahunAkademik, periodeAkademik, closeAt, openAt];
   let sql = `SELECT id FROM outline_submission_period
              WHERE tahun_akademik = ? AND periode_akademik = ?
-               AND open_at <= ? AND close_at >= ?`;
+               AND open_at < ? AND close_at > ?`;
   if (id !== undefined) {
     sql += " AND id != ?";
     params.push(id);
