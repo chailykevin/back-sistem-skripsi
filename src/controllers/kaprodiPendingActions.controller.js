@@ -35,7 +35,10 @@ exports.getPendingActions = async (req, res, next) => {
 
     const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
     if (programStudiIds.length === 0) {
-      return res.json({ ok: true, data: { outline: 0, sidang: 0, total: 0 } });
+      return res.json({
+        ok: true,
+        data: { outline: 0, disposisi: 0, sidang: 0, total: 0 },
+      });
     }
 
     const placeholders = programStudiIds.map(() => "?").join(",");
@@ -74,7 +77,8 @@ exports.getPendingActions = async (req, res, next) => {
     return res.json({
       ok: true,
       data: {
-        outline: outline + disposisi,
+        outline,
+        disposisi,
         sidang,
         total: outline + disposisi + sidang,
       },
