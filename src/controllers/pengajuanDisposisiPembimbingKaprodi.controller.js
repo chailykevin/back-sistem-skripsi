@@ -26,6 +26,12 @@ function formatDateId(date) {
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+function buildFormulirFileName(npm, namaMahasiswa) {
+  const safeNpm = String(npm ?? "").trim().replace(/[^\w.-]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[^\w.-]+/g, "_");
+  return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.docx`;
+}
+
 function checkbox(value) {
   return value ? "☑" : "☐";
 }
@@ -321,7 +327,7 @@ exports.review = async (req, res, next) => {
       syaratMetodologi,
     });
 
-    if (!["APPROVED", "NEED_REVISION", "REJECTED"].includes(status)) {
+    if (!["APPROVED", "NEED_REVISION"].includes(status)) {
       return res.status(400).json({ ok: false, message: "Invalid status" });
     }
 
@@ -597,8 +603,7 @@ exports.review = async (req, res, next) => {
          d3.nama AS pembimbing1_ditetapkan_nama,
          d4.nama AS pembimbing2_ditetapkan_nama,
          u_student.signature_image AS student_signature,
-         dkap.nama AS kaprodi_nama,
-         u_kaprodi.signature_image AS kaprodi_signature
+         dkap.nama AS kaprodi_nama
        FROM pengajuan_disposisi_pembimbing pj
        JOIN mahasiswa m ON m.npm = pj.npm
        JOIN program_studi ps ON ps.id = pj.program_studi_id
@@ -609,12 +614,21 @@ exports.review = async (req, res, next) => {
        LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
        LEFT JOIN users u_student ON u_student.npm = pj.npm AND u_student.is_active = 1
        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
-       LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn AND u_kaprodi.is_active = 1
        WHERE pj.id = ?
        LIMIT 1`,
       [id],
     );
+    const [[kaprodiUserRow]] = await conn.query(
+      `SELECT u.signature_image
+       FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+       WHERE u.nidn = ? AND r.code = 'KAPRODI'
+       LIMIT 1`,
+      [reviewDocRows[0]?.kaprodi_nidn],
+    );
     const rd = reviewDocRows[0] ?? {};
+    rd.kaprodi_signature = kaprodiUserRow?.signature_image ?? null;
     console.log("[review] reviewDocRows[0] keys:", Object.keys(rd));
 
     const keputusanMap = {
@@ -667,7 +681,7 @@ exports.review = async (req, res, next) => {
       id,
       "PENGAJUAN_DISPOSISI_PEMBIMBING",
       reviewFormulirBase64,
-      "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
+      buildFormulirFileName(rd.npm, rd.nama_mahasiswa),
     );
     console.log("[review] upsertFileByType done");
 

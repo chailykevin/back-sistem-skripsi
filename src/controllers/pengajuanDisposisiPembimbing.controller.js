@@ -18,6 +18,12 @@ function checkbox(value) {
   return value ? "☑" : "☐";
 }
 
+function buildFormulirFileName(npm, namaMahasiswa) {
+  const safeNpm = String(npm ?? "").trim().replace(/[^\w.-]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[^\w.-]+/g, "_");
+  return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.docx`;
+}
+
 function textPatch(value) {
   return {
     type: PatchType.PARAGRAPH,
@@ -421,7 +427,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       pengajuanDisposisiPembimbingId,
       "PENGAJUAN_DISPOSISI_PEMBIMBING",
       formulirBase64,
-      "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
+      buildFormulirFileName(npm, docData.nama_mahasiswa),
     );
 
     if (fileTranskrip !== undefined && fileTranskrip !== null) {
@@ -1042,7 +1048,7 @@ exports.resubmit = async (req, res, next) => {
       id,
       "PENGAJUAN_DISPOSISI_PEMBIMBING",
       resubFormulirBase64,
-      "formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
+      buildFormulirFileName(npm, resubDocData.nama_mahasiswa),
     );
 
     if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
