@@ -19,6 +19,13 @@ exports.create = async (req, res, next) => {
       });
     }
 
+    if (String(judul).trim().length < 5) {
+      return res.status(400).json({
+        ok: false,
+        message: "Judul minimal 5 karakter",
+      });
+    }
+
     if (String(judul).trim().length > 255) {
       return res.status(400).json({
         ok: false,
@@ -754,6 +761,13 @@ exports.resubmit = async (req, res, next) => {
         ok: false,
         message:
           "At least one of judul, latarBelakang, or fileOutline must be provided",
+      });
+    }
+
+    if (judulVal !== null && judulVal.length > 0 && judulVal.length < 5) {
+      return res.status(400).json({
+        ok: false,
+        message: "Judul minimal 5 karakter",
       });
     }
 
