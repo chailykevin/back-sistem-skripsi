@@ -199,6 +199,27 @@ function signatureImagePatch(signatureValue) {
   }
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 function formatKartuDate(value) {
   if (!value) {
     return "";
@@ -539,6 +560,13 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       signature_image: kaprodiRow?.signature_image ?? null,
     },
   ];
+
+  assertSignatures([
+    { role: "Mahasiswa", nama: psRow?.nama_mahasiswa, signatureImage: mahasiswaRow?.signature_image },
+    { role: "Pembimbing 2", nama: psRow?.pembimbing2_nama, signatureImage: p2Row?.signature_image },
+    { role: "Pembimbing 1", nama: psRow?.pembimbing1_nama, signatureImage: p1Row?.signature_image },
+    { role: "Kaprodi", nama: psRow?.kaprodi_nama, signatureImage: kaprodiRow?.signature_image },
+  ]);
 
   const kartuForHalaman = {
     ...kartu,

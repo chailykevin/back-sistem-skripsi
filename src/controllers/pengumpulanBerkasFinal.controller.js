@@ -53,6 +53,27 @@ function signaturePatch(signatureValue) {
   };
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
     `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
@@ -149,7 +170,7 @@ async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
   return row ?? null;
 }
 
-async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sekprodiSig, namaSekprodi) {
+async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sekprodiSig, namaSekprodi, requireSekprodiSig = false) {
   const [mhsRow] = await conn.query(
     `SELECT m.nama, m.npm, psk.no_hp
      FROM mahasiswa m
@@ -192,6 +213,34 @@ async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sek
     getSigByUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
     getSigByUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
     getSigByUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
+  ]);
+
+  async function getDosenNamaByUserId(userId) {
+    if (!userId) return "";
+    const [[row]] = await conn.query(
+      `SELECT d.nama FROM users u JOIN dosen d ON d.nidn = u.nidn WHERE u.id = ? LIMIT 1`,
+      [userId],
+    );
+    return row?.nama ?? "";
+  }
+  const [namaPb1, namaPb2, namaPg1, namaPg2] = await Promise.all([
+    getDosenNamaByUserId(confMap["PEMBIMBING_1"]?.user_id ?? null),
+    getDosenNamaByUserId(confMap["PEMBIMBING_2"]?.user_id ?? null),
+    getDosenNamaByUserId(confMap["PENGUJI_1"]?.user_id ?? null),
+    getDosenNamaByUserId(confMap["PENGUJI_2"]?.user_id ?? null),
+  ]);
+
+  assertSignatures([
+    { role: "Mahasiswa", nama: mhs.nama ?? sidangRow?.nama_mahasiswa, signatureImage: sigMhs },
+    { role: "Perpustakaan", signatureImage: perpusSig },
+    { role: "LPPM", signatureImage: lppmSig },
+    { role: "Pembimbing 1", nama: namaPb1, signatureImage: sigPb1 },
+    { role: "Pembimbing 2", nama: namaPb2, signatureImage: sigPb2 },
+    { role: "Penguji 1", nama: namaPg1, signatureImage: sigPg1 },
+    { role: "Penguji 2", nama: namaPg2, signatureImage: sigPg2 },
+    ...(requireSekprodiSig
+      ? [{ role: "Sekretaris Prodi", nama: namaSekprodi, signatureImage: sekprodiSig }]
+      : []),
   ]);
 
   const tanggalDibuat = formatTanggal(new Date());
@@ -728,7 +777,7 @@ exports.signPengumpulan = async (req, res, next) => {
     );
     const sidangRow = sidangRows[0][0] ?? null;
 
-    const docBuffer = await generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sekprodiSig, namaSekprodi);
+    const docBuffer = await generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sekprodiSig, namaSekprodi, true);
 
     await conn.query(
       `UPDATE pengumpulan_berkas_final_files

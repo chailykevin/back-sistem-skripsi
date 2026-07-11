@@ -87,6 +87,27 @@ function signatureImagePatch(signatureValue) {
   }
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 async function generateFormulirDoc(data) {
   const {
     npm,
@@ -601,6 +622,11 @@ exports.review = async (req, res, next) => {
       NEED_REVISION: "Perlu Revisi",
       REJECTED: "Ditolak",
     };
+
+    assertSignatures([
+      { role: "Mahasiswa", nama: rd.nama_mahasiswa, signatureImage: rd.student_signature },
+      { role: "Kaprodi", nama: rd.kaprodi_nama, signatureImage: rd.kaprodi_signature },
+    ]);
 
     console.log("[review] generating formulir doc");
     const reviewFormulirBase64 = await generateFormulirDoc({

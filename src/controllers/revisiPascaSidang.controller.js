@@ -121,6 +121,27 @@ async function getSigByNpm(conn, npm) {
   return row?.signature_image ?? null;
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 // Returns the first stage that is not yet APPROVED, or null if all approved / none created
 function resolveActiveStage(stages) {
   for (const role of STAGE_ORDER) {
@@ -178,6 +199,14 @@ async function generateHalamanPengesahanMajelisDoc(conn, sidangRow) {
     getSigByNidn(conn, sidangRow.penguji2_nidn),
   ]);
 
+  assertSignatures([
+    { role: "Mahasiswa", nama: sidangRow.nama_mahasiswa, signatureImage: sigMhs },
+    { role: "Pembimbing 1", nama: sidangRow.pembimbing1_nama, signatureImage: sig1 },
+    { role: "Pembimbing 2", nama: sidangRow.pembimbing2_nama, signatureImage: sig2 },
+    { role: "Penguji 1", nama: sidangRow.penguji1_nama, signatureImage: sigPg1 },
+    { role: "Penguji 2", nama: sidangRow.penguji2_nama, signatureImage: sigPg2 },
+  ]);
+
   const templatePath = path.join(
     __dirname,
     "../templates/template_halaman_pengesahan_majelis_penguji.docx",
@@ -228,6 +257,13 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     getSigByNidn(conn, sidangRow.pembimbing1_nidn),
     getSigByNidn(conn, sidangRow.pembimbing2_nidn),
     getSigByNidn(conn, dekanNidn),
+  ]);
+
+  assertSignatures([
+    { role: "Mahasiswa", nama: sidangRow.nama_mahasiswa, signatureImage: sigMhs },
+    { role: "Pembimbing 1", nama: sidangRow.pembimbing1_nama, signatureImage: sig1 },
+    { role: "Pembimbing 2", nama: sidangRow.pembimbing2_nama, signatureImage: sig2 },
+    { role: "Dekan", nama: dekanNama, signatureImage: sigDekan },
   ]);
 
   const templatePath = path.join(
@@ -670,31 +706,41 @@ exports.reviewRevisi = async (req, res, next) => {
       const nextRole = STAGE_ORDER[currentRoleIndex + 1] ?? null;
 
       if (["PENGUJI_2", "PENGUJI_1"].includes(activeStage.signer_role)) {
-        try {
-          const [[notulenRow]] = await conn.query(
-            `SELECT sn.*,
-                    m.npm, m.nama AS nama_mahasiswa,
-                    prog.nama AS program_studi_nama,
-                    sk.judul AS judul_skripsi,
-                    d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
-                    d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
-                    psk_k.tanggal_sidang
-             FROM sidang_notulen sn
-             JOIN sidang s ON s.id = sn.sidang_id
-             JOIN skripsi sk ON sk.id = s.skripsi_id
-             JOIN mahasiswa m ON m.npm = sk.npm
-             JOIN program_studi prog ON prog.id = sk.program_studi_id
-             LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
-             LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
-             LEFT JOIN pengajuan_sidang_kaprodi psk_k
-                    ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-             LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
-             LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-             WHERE sn.sidang_id = ? AND sn.role = ?`,
-            [revisi.sidang_id, activeStage.signer_role],
-          );
-          if (notulenRow && notulenRow.submitted_at) {
-            const sigImage = await getSigByUserId(conn, activeStage.user_id);
+        const [[notulenRow]] = await conn.query(
+          `SELECT sn.*,
+                  m.npm, m.nama AS nama_mahasiswa,
+                  prog.nama AS program_studi_nama,
+                  sk.judul AS judul_skripsi,
+                  d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
+                  d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
+                  psk_k.tanggal_sidang
+           FROM sidang_notulen sn
+           JOIN sidang s ON s.id = sn.sidang_id
+           JOIN skripsi sk ON sk.id = s.skripsi_id
+           JOIN mahasiswa m ON m.npm = sk.npm
+           JOIN program_studi prog ON prog.id = sk.program_studi_id
+           LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+           LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+           LEFT JOIN pengajuan_sidang_kaprodi psk_k
+                  ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+           LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+           LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+           WHERE sn.sidang_id = ? AND sn.role = ?`,
+          [revisi.sidang_id, activeStage.signer_role],
+        );
+        if (notulenRow && notulenRow.submitted_at) {
+          const sigImage = await getSigByUserId(conn, activeStage.user_id);
+          assertSignatures([
+            {
+              role: getRoleLabel(activeStage.signer_role),
+              nama:
+                activeStage.signer_role === "PENGUJI_1"
+                  ? notulenRow.penguji1_nama
+                  : notulenRow.penguji2_nama,
+              signatureImage: sigImage,
+            },
+          ]);
+          try {
             const templateBuffer = await readFile(
               path.join(__dirname, "../templates/template_notulen_penguji.docx"),
             );
@@ -732,9 +778,9 @@ exports.reviewRevisi = async (req, res, next) => {
                 activeStage.signer_role,
               ],
             );
+          } catch (_) {
+            // non-fatal: notulen regeneration failure (unrelated to missing signatures) must not block revisi approval
           }
-        } catch (_) {
-          // non-fatal: notulen regeneration failure must not block revisi approval
         }
       }
 

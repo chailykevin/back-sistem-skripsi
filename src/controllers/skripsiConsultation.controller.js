@@ -106,6 +106,27 @@ function signatureImagePatch(signatureValue) {
   }
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 function formatKartuDate(value) {
   if (!value) return "";
   return new Intl.DateTimeFormat("id-ID", {
@@ -338,6 +359,13 @@ async function generateAndStoreFinalKartuDocx(
   const logs = await getKartuLogs(queryable, kartuId);
   const extra = await fetchKartuExtra(queryable, kartuId, skripsiId);
   const kartuFull = await fetchKartuDenorm(queryable, kartu);
+
+  assertSignatures([
+    { role: "Pembimbing 1", nama: kartuFull.pembimbing1_nama, signatureImage: kartuFull.pembimbing1_signature },
+    { role: "Pembimbing 2", nama: kartuFull.pembimbing2_nama, signatureImage: kartuFull.pembimbing2_signature },
+    { role: "Kaprodi", nama: extra.kaprodiNama, signatureImage: extra.kaprodiSignature },
+  ]);
+
   const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
     kartuFull,
     logs,

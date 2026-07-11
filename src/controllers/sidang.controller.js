@@ -69,6 +69,27 @@ function signaturePatch(signatureValue) {
   };
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
@@ -593,6 +614,21 @@ exports.submitPenilaian = async (req, res, next) => {
       [req.user.id],
     );
 
+    assertSignatures([
+      {
+        role: ROLE_LABEL[role] ?? role,
+        nama:
+          role === "PEMBIMBING_1"
+            ? sidang.pembimbing1_nama
+            : role === "PEMBIMBING_2"
+              ? sidang.pembimbing2_nama
+              : role === "PENGUJI_1"
+                ? sidang.penguji1_nama
+                : sidang.penguji2_nama,
+        signatureImage: sigRow?.signature_image,
+      },
+    ]);
+
     const [nIsi, nBahasa, nTsp, nPenguasaan, nPenunjang] = parsedNilai;
     const totalNilai =
       nIsi * BOBOT.isi +
@@ -827,6 +863,10 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
       [req.user.id],
     );
+
+    assertSignatures([
+      { role: "Pembimbing 1", nama: sidang.pembimbing1_nama, signatureImage: sigRow?.signature_image },
+    ]);
 
     const tanggalFormatted = sidang.tanggal_sidang
       ? formatTanggal(new Date(sidang.tanggal_sidang))
@@ -1151,6 +1191,13 @@ async function generateAndStoreBeritaAcara(
     getSig(sidang.pembimbing2_nidn),
     getSig(sidang.penguji1_nidn),
     getSig(sidang.penguji2_nidn),
+  ]);
+
+  assertSignatures([
+    { role: "Pembimbing 1", nama: sidang.pembimbing1_nama, signatureImage: sig1 },
+    { role: "Pembimbing 2", nama: sidang.pembimbing2_nama, signatureImage: sig2 },
+    { role: "Penguji 1", nama: sidang.penguji1_nama, signatureImage: sigPg1 },
+    { role: "Penguji 2", nama: sidang.penguji2_nama, signatureImage: sigPg2 },
   ]);
 
   const templatePath = path.join(

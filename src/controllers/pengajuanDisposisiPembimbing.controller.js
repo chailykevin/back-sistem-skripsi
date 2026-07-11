@@ -60,6 +60,27 @@ function signatureImagePatch(signatureValue) {
   } catch (_) { return textPatch(""); }
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 async function generateFormulirDoc(data) {
   const {
     npm, namaMahasiswa, programStudiNama, noHp, sks, judulSkripsi,
@@ -321,6 +342,11 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       [pengajuanDisposisiPembimbingId],
     );
     const docData = docDataRows[0] ?? {};
+
+    assertSignatures([
+      { role: "Mahasiswa", nama: docData.nama_mahasiswa, signatureImage: docData.signature_image },
+    ]);
+
     const formulirBase64 = await generateFormulirDoc({
       npm,
       namaMahasiswa: docData.nama_mahasiswa,
@@ -902,6 +928,11 @@ exports.resubmit = async (req, res, next) => {
       [id],
     );
     const resubDocData = resubDocDataRows[0] ?? {};
+
+    assertSignatures([
+      { role: "Mahasiswa", nama: resubDocData.nama_mahasiswa, signatureImage: resubDocData.signature_image },
+    ]);
+
     const resubFormulirBase64 = await generateFormulirDoc({
       npm,
       namaMahasiswa: resubDocData.nama_mahasiswa,

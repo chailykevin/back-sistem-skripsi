@@ -69,6 +69,27 @@ function signatureImagePatch(signatureValue) {
   }
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    throw Object.assign(
+      new Error(
+        `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+      ),
+      { statusCode: 400, missingSignatures: missing },
+    );
+  }
+}
+
 const BULAN_ID = [
   "Januari",
   "Februari",
@@ -261,7 +282,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
   );
   if (!kartu)
     throw Object.assign(new Error("Kartu konsultasi outline tidak ditemukan"), {
-      status: 400,
+      statusCode: 400,
     });
 
   // Fetch pengajuan disposisi pembimbing for perlu_surat_pengantar + nama_perusahaan
@@ -273,7 +294,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
     throw Object.assign(
       new Error("Pengajuan disposisi pembimbing tidak ditemukan"),
       {
-        status: 400,
+        statusCode: 400,
       },
     );
 
@@ -288,12 +309,12 @@ async function generateSkDocuments(conn, sk, outlineId) {
   );
   if (!ps)
     throw Object.assign(new Error("Program studi tidak ditemukan"), {
-      status: 400,
+      statusCode: 400,
     });
   if (!ps.f_kode || !ps.dekan_nidn) {
     throw Object.assign(
       new Error("Dekan belum dikonfigurasi untuk fakultas ini"),
-      { status: 400 },
+      { statusCode: 400 },
     );
   }
 
@@ -310,7 +331,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
   );
   if (!dekan)
     throw Object.assign(new Error("Dekan belum dikonfigurasi"), {
-      status: 400,
+      statusCode: 400,
     });
 
   const [[kaprodi]] = await conn.query(
@@ -329,6 +350,12 @@ async function generateSkDocuments(conn, sk, outlineId) {
     `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
     [kartu.npm],
   );
+
+  assertSignatures([
+    { role: "Dekan", nama: dekan.nama_dekan, signatureImage: dekan.signature_image },
+    { role: "Kaprodi", nama: kaprodi?.nama_kaprodi, signatureImage: kaprodi?.signature_image },
+    { role: "Mahasiswa", nama: kartu.nama_mahasiswa, signatureImage: mahasiswaUser?.signature_image },
+  ]);
 
   // Generate nomor_surat sequence (count SKs completed this month for same prodi)
   const now = new Date();

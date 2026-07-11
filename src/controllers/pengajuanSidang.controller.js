@@ -145,6 +145,27 @@ function signatureImagePatch(signatureValue) {
   }
 }
 
+function hasSignature(signatureValue) {
+  return Boolean(decodeSignatureToBuffer(signatureValue));
+}
+
+function assertSignatures(checks) {
+  const missing = checks
+    .filter((c) => !hasSignature(c.signatureImage))
+    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
+  if (missing.length > 0) {
+    const detail = missing
+      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
+      .join(", ");
+    const err = new Error(
+      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
+    );
+    err.statusCode = 400;
+    err.missingSignatures = missing;
+    throw err;
+  }
+}
+
 async function buildSuratPenyelesaianDocxBuffer({
   namaMahasiswa,
   npm,
@@ -2314,6 +2335,11 @@ exports.submitKaprodi = async (req, res, next) => {
     const ujianCountString = terbilang(ujianCount);
     const namaKaprodi = docData?.nama_kaprodi ?? "";
 
+    assertSignatures([
+      { role: "Kaprodi", nama: namaKaprodi, signatureImage: docData?.kaprodi_sig },
+      { role: "Mahasiswa", nama: docData?.nama_mahasiswa, signatureImage: docData?.mahasiswa_sig },
+    ]);
+
     const lembarBuffer = await buildLembarPermohonanUjianBuffer({
       todayDate,
       fakultas: docData?.fakultas_nama ?? "",
@@ -3176,6 +3202,12 @@ exports.submitDisposisi = async (req, res, next) => {
       `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
       [kaprodi.penguji2_nidn],
     );
+
+    assertSignatures([
+      { role: "Kaprodi", nama: docData?.nama_kaprodi, signatureImage: docData?.kaprodi_sig },
+      { role: "Mahasiswa", nama: docData?.nama_mahasiswa, signatureImage: docData?.mahasiswa_sig },
+    ]);
+
     const usulanBuffer = await buildLembarUsulanPengujiBufferFull({
       prodi: docData?.prodi_nama ?? "",
       fakultas: docData?.fakultas_nama ?? "",
@@ -3447,6 +3479,10 @@ exports.generateSuratUndangan = async (req, res, next) => {
           kaprodiNidn,
         ])
       : [[null]];
+
+    assertSignatures([
+      { role: "Kaprodi", nama: kaprodiDosenRow?.nama, signatureImage: kaprodiUserRow?.signature_image },
+    ]);
 
     // Dosen emails for pembimbing and penguji
     async function getDosenEmail(nidn) {
