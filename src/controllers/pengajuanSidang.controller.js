@@ -2147,12 +2147,26 @@ exports.updateKaprodi = async (req, res, next) => {
       params.push(String(alamat).trim() || null);
     }
     if (noHp !== undefined) {
+      const noHpVal = String(noHp).trim();
+      if (noHpVal && !/^08[0-9]{7,13}$/.test(noHpVal)) {
+        return res.status(400).json({
+          ok: false,
+          message: "No. HP tidak valid (harus diawali 08, 9-15 digit angka)",
+        });
+      }
       setClauses.push("no_hp = ?");
-      params.push(String(noHp).trim() || null);
+      params.push(noHpVal || null);
     }
     if (noWa !== undefined) {
+      const noWaVal = String(noWa).trim();
+      if (noWaVal && !/^08[0-9]{7,13}$/.test(noWaVal)) {
+        return res.status(400).json({
+          ok: false,
+          message: "No. WA tidak valid (harus diawali 08, 9-15 digit angka)",
+        });
+      }
       setClauses.push("no_wa = ?");
-      params.push(String(noWa).trim() || null);
+      params.push(noWaVal || null);
     }
     if (statusPernikahan !== undefined) {
       setClauses.push("status_pernikahan = ?");

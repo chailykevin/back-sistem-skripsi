@@ -293,10 +293,10 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     } = req.body || {};
 
     const noHpVal = noHp != null ? String(noHp).trim() : "";
-    if (!noHpVal || !/^\+?[0-9]{9,15}$/.test(noHpVal)) {
+    if (!noHpVal || !/^08[0-9]{7,13}$/.test(noHpVal)) {
       return res.status(400).json({
         ok: false,
-        message: "No. HP tidak valid (9-15 digit angka, boleh diawali +)",
+        message: "No. HP tidak valid (harus diawali 08, 9-15 digit angka)",
       });
     }
 
@@ -337,6 +337,13 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: "namaPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    if (perluSuratPengantar && namaPerusahaanVal.length < 2) {
+      return res.status(400).json({
+        ok: false,
+        message: "Nama perusahaan minimal 2 karakter",
       });
     }
 
@@ -786,10 +793,10 @@ exports.resubmit = async (req, res, next) => {
 
     const noHpVal =
       noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
-    if (noHpVal !== null && noHpVal.length > 0 && !/^\+?[0-9]{9,15}$/.test(noHpVal)) {
+    if (noHpVal !== null && noHpVal.length > 0 && !/^08[0-9]{7,13}$/.test(noHpVal)) {
       return res.status(400).json({
         ok: false,
-        message: "No. HP tidak valid (9-15 digit angka, boleh diawali +)",
+        message: "No. HP tidak valid (harus diawali 08, 9-15 digit angka)",
       });
     }
     const pembimbing1Val =
@@ -868,6 +875,18 @@ exports.resubmit = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: "namaPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    if (
+      perluSuratProvided &&
+      Boolean(perluSuratPengantar) &&
+      namaPerusahaanVal &&
+      namaPerusahaanVal.length < 2
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Nama perusahaan minimal 2 karakter",
       });
     }
 
