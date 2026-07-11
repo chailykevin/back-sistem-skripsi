@@ -292,6 +292,54 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       fileMetodologiName,
     } = req.body || {};
 
+    const noHpVal = noHp != null ? String(noHp).trim() : "";
+    if (!noHpVal || !/^\+?[0-9]{9,15}$/.test(noHpVal)) {
+      return res.status(400).json({
+        ok: false,
+        message: "No. HP tidak valid (9-15 digit angka, boleh diawali +)",
+      });
+    }
+
+    const pembimbing1Val =
+      pembimbing1DiajukanNidn != null ? String(pembimbing1DiajukanNidn).trim() : "";
+    const pembimbing2Val =
+      pembimbing2DiajukanNidn != null ? String(pembimbing2DiajukanNidn).trim() : "";
+
+    if (!pembimbing1Val || !pembimbing2Val) {
+      return res.status(400).json({
+        ok: false,
+        message: "Dosen pembimbing 1 dan 2 wajib diisi",
+      });
+    }
+
+    if (pembimbing1Val === pembimbing2Val) {
+      return res.status(400).json({
+        ok: false,
+        message: "Pembimbing 1 and Pembimbing 2 cannot be the same",
+      });
+    }
+
+    const [dosenRows] = await db.query(
+      `SELECT nidn FROM dosen WHERE nidn IN (?, ?)`,
+      [pembimbing1Val, pembimbing2Val],
+    );
+    const foundNidns = new Set(dosenRows.map((row) => row.nidn));
+    if (!foundNidns.has(pembimbing1Val) || !foundNidns.has(pembimbing2Val)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Dosen pembimbing yang dipilih tidak valid",
+      });
+    }
+
+    const namaPerusahaanVal =
+      namaPerusahaan != null ? String(namaPerusahaan).trim() : "";
+    if (perluSuratPengantar && !namaPerusahaanVal) {
+      return res.status(400).json({
+        ok: false,
+        message: "namaPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
@@ -309,11 +357,11 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         outlineId,
         npm,
         programStudiId,
-        noHp ?? null,
-        pembimbing1DiajukanNidn ?? null,
-        pembimbing2DiajukanNidn ?? null,
+        noHpVal,
+        pembimbing1Val,
+        pembimbing2Val,
         perluSuratPengantar ? 1 : 0,
-        namaPerusahaan ?? null,
+        namaPerusahaanVal || null,
         toBit(syaratTranskrip, 0),
         toBit(syaratKrs, 0),
         toBit(syaratMetodologi, 0),
@@ -351,13 +399,13 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       npm,
       namaMahasiswa: docData.nama_mahasiswa,
       programStudiNama: docData.program_studi_nama,
-      noHp: noHp ?? null,
+      noHp: noHpVal,
       sks: docData.sks,
       judulSkripsi: docData.judul_skripsi,
-      pembimbing1Nama: docData.pembimbing1_nama ?? pembimbing1DiajukanNidn ?? "",
-      pembimbing2Nama: docData.pembimbing2_nama ?? pembimbing2DiajukanNidn ?? "",
+      pembimbing1Nama: docData.pembimbing1_nama ?? pembimbing1Val,
+      pembimbing2Nama: docData.pembimbing2_nama ?? pembimbing2Val,
       perluSuratPengantar: Boolean(perluSuratPengantar),
-      namaPerusahaan: namaPerusahaan ?? null,
+      namaPerusahaan: namaPerusahaanVal || null,
       studentSignature: docData.signature_image,
       submittedAt: new Date(),
     });
@@ -738,6 +786,12 @@ exports.resubmit = async (req, res, next) => {
 
     const noHpVal =
       noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
+    if (noHpVal !== null && noHpVal.length > 0 && !/^\+?[0-9]{9,15}$/.test(noHpVal)) {
+      return res.status(400).json({
+        ok: false,
+        message: "No. HP tidak valid (9-15 digit angka, boleh diawali +)",
+      });
+    }
     const pembimbing1Val =
       pembimbing1DiajukanNidn !== undefined && pembimbing1DiajukanNidn !== null
         ? String(pembimbing1DiajukanNidn).trim()
@@ -815,6 +869,23 @@ exports.resubmit = async (req, res, next) => {
         ok: false,
         message: "namaPerusahaan is required when perluSuratPengantar is true",
       });
+    }
+
+    const nidnsToCheck = [pembimbing1Val, pembimbing2Val].filter(
+      (val) => val && val.length > 0,
+    );
+    if (nidnsToCheck.length > 0) {
+      const [dosenRows] = await db.query(
+        `SELECT nidn FROM dosen WHERE nidn IN (${nidnsToCheck.map(() => "?").join(",")})`,
+        nidnsToCheck,
+      );
+      const foundNidns = new Set(dosenRows.map((row) => row.nidn));
+      if (nidnsToCheck.some((val) => !foundNidns.has(val))) {
+        return res.status(400).json({
+          ok: false,
+          message: "Dosen pembimbing yang dipilih tidak valid",
+        });
+      }
     }
 
     const npm = await getStudentNpm(req.user.id);
