@@ -19,6 +19,20 @@ exports.create = async (req, res, next) => {
       });
     }
 
+    if (String(judul).trim().length > 255) {
+      return res.status(400).json({
+        ok: false,
+        message: "Judul maksimal 255 karakter",
+      });
+    }
+
+    if (String(latarBelakang).trim().length > 1500) {
+      return res.status(400).json({
+        ok: false,
+        message: "Latar belakang maksimal 1500 karakter",
+      });
+    }
+
     // ambil npm mahasiswa dari user login
     const [users] = await db.query(
       `SELECT npm FROM users WHERE id = ? LIMIT 1`,
@@ -740,6 +754,20 @@ exports.resubmit = async (req, res, next) => {
         ok: false,
         message:
           "At least one of judul, latarBelakang, or fileOutline must be provided",
+      });
+    }
+
+    if (judulVal !== null && judulVal.length > 255) {
+      return res.status(400).json({
+        ok: false,
+        message: "Judul maksimal 255 karakter",
+      });
+    }
+
+    if (latarVal !== null && latarVal.length > 1500) {
+      return res.status(400).json({
+        ok: false,
+        message: "Latar belakang maksimal 1500 karakter",
       });
     }
 
