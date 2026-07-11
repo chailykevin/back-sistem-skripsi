@@ -6,7 +6,7 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+app.use(cors({ exposedHeaders: ["Content-Disposition"] }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -72,6 +72,18 @@ app.use("/notifications", notificationRoutes);
 
 const kaprodiPendingActionsRoutes = require("./routes/kaprodiPendingActions.routes");
 app.use("/", kaprodiPendingActionsRoutes);
+
+const lecturerPendingActionsRoutes = require("./routes/lecturerPendingActions.routes");
+app.use("/", lecturerPendingActionsRoutes);
+
+const sekretariatPendingActionsRoutes = require("./routes/sekretariatPendingActions.routes");
+app.use("/", sekretariatPendingActionsRoutes);
+
+const institutionPendingActionsRoutes = require("./routes/institutionPendingActions.routes");
+app.use("/", institutionPendingActionsRoutes);
+
+const sekprodiPendingActionsRoutes = require("./routes/sekprodiPendingActions.routes");
+app.use("/", sekprodiPendingActionsRoutes);
 
 const notFound = require("./middlewares/notFound");
 const errorHandler = require("./middlewares/errorHandler");

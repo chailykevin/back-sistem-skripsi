@@ -19,6 +19,12 @@ function nextChapterGroup(current) {
     : null;
 }
 
+function buildKartuFileName(npm, namaMahasiswa, suffix) {
+  const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
+}
+
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
     `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
@@ -217,6 +223,7 @@ async function getKartuLogs(queryable, kartuId) {
        rv.submission_no,
        u.nidn          AS reviewer_nidn,
        d.nama          AS reviewer_nama,
+       u.signature_image AS reviewer_signature,
        rv.decision_status AS status,
        rv.catatan_kartu,
        rv.reviewed_at  AS logged_at
@@ -239,6 +246,14 @@ async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra = {}) {
     "template_kartu_penulisan_skripsi.docx",
   );
   const templateBuffer = await readFile(templatePath);
+
+  assertSignatures(
+    logs.map((log, idx) => ({
+      role: `Paraf ${idx + 1} (${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)})`,
+      nama: log.reviewer_nama,
+      signatureImage: log.reviewer_signature,
+    })),
+  );
 
   const patches = {
     fakultas: textPatch((extra.fakultasNama ?? "").toUpperCase()),
@@ -265,7 +280,7 @@ async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra = {}) {
       log ? formatKartuDate(log.logged_at) : "",
     );
     patches[`keterangan_${i}`] = textPatch(keterangan);
-    patches[`paraf_${i}`] = textPatch(log?.reviewer_nama ?? "");
+    patches[`paraf_${i}`] = signatureImagePatch(log?.reviewer_signature);
   }
 
   return patchDocument({
@@ -371,7 +386,11 @@ async function generateAndStoreFinalKartuDocx(
     logs,
     extra,
   );
-  const fileName = `kartu-penulisan-skripsi-${skripsiId}-${Date.now()}.docx`;
+  const fileName = buildKartuFileName(
+    kartuFull.npm,
+    kartuFull.nama_mahasiswa,
+    "Kartu Penulisan Skripsi",
+  );
 
   await queryable.query(
     `UPDATE kartu_konsultasi_skripsi
@@ -1792,7 +1811,11 @@ exports.previewKartuDocx = async (req, res, next) => {
       logs,
       extra,
     );
-    const fileName = `kartu-penulisan-skripsi-${skripsiId}-preview.docx`;
+    const fileName = buildKartuFileName(
+      kartuFull.npm,
+      kartuFull.nama_mahasiswa,
+      "Kartu Penulisan Skripsi Preview",
+    );
 
     res.setHeader(
       "Content-Type",

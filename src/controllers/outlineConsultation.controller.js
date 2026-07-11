@@ -26,6 +26,16 @@ async function getLecturerNidn(userId) {
   return rows[0]?.nidn ?? null;
 }
 
+function buildKartuFileName(npm, namaMahasiswa, suffix) {
+  const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
+}
+
+function buildKartuPreviewFileName(npm, namaMahasiswa) {
+  return buildKartuFileName(npm, namaMahasiswa, "Kartu Konsultasi Outline Preview");
+}
+
 async function getKaprodiProgramStudiIdsByNidn(nidn) {
   const [rows] = await db.query(
     `SELECT id
@@ -264,6 +274,14 @@ async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
   );
   const templateBuffer = await readFile(templatePath);
 
+  assertSignatures(
+    logs.map((log, idx) => ({
+      role: `Paraf ${idx + 1} (${getStageLabel(log.stage)})`,
+      nama: log.reviewer_nama,
+      signatureImage: log.reviewer_signature,
+    })),
+  );
+
   const patches = {
     nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
     npm: textPatch(kartu.npm),
@@ -285,7 +303,7 @@ async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
       log ? formatKartuDate(log.logged_at) : "",
     );
     patches[`keterangan_${i}`] = textPatch(keterangan);
-    patches[`paraf_${i}`] = textPatch(log?.reviewer_nama ?? "");
+    patches[`paraf_${i}`] = signatureImagePatch(log?.reviewer_signature);
   }
 
   return patchDocument({
@@ -298,16 +316,23 @@ async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
 async function getKartuLogs(queryable, kartuId) {
   const [logs] = await queryable.query(
     `SELECT
+       r.id,
        s.stage,
        r.submission_no,
        d.nama   AS reviewer_nama,
+       u.signature_image AS reviewer_signature,
        r.decision_status AS status,
        r.catatan_kartu,
-       r.reviewed_at AS logged_at
+       r.reviewed_at AS logged_at,
+       rf.id AS review_file_id,
+       rf.file_name AS review_file_name,
+       CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file
      FROM konsultasi_outline_stage s
      JOIN konsultasi_outline_review r ON r.konsultasi_outline_stage_id = s.id
      LEFT JOIN users u ON u.id = r.reviewer_user_id
      LEFT JOIN dosen d ON d.nidn = u.nidn
+     LEFT JOIN konsultasi_outline_review_file rf
+       ON rf.konsultasi_outline_review_id = r.id
      WHERE s.kartu_konsultasi_outline_id = ?
      ORDER BY r.reviewed_at ASC, r.id ASC
      LIMIT 18`,
@@ -366,7 +391,11 @@ async function generateAndStoreFinalKartuDocx(
   const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(kartu, logs);
   const mimeType =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const fileName = `kartu-konsultasi-outline-${outlineId}-${Date.now()}.docx`;
+  const fileName = buildKartuFileName(
+    kartu.npm,
+    kartu.nama_mahasiswa,
+    "Kartu Konsultasi Outline",
+  );
 
   const [ins] = await queryable.query(
     `UPDATE kartu_konsultasi_outline
@@ -584,7 +613,11 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   });
   const halamanMime =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const halamanFileName = `halaman-persetujuan-judul-${outlineId}-${Date.now()}.docx`;
+  const halamanFileName = buildKartuFileName(
+    kartu.npm,
+    psRow?.nama_mahasiswa,
+    "Halaman Persetujuan Judul",
+  );
 
   const [ins] = await conn.query(
     `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
@@ -642,6 +675,7 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
        o.pembimbing1_nidn  AS pembimbing1_nidn,
        o.pembimbing2_nidn  AS pembimbing2_nidn,
        o.program_studi_id  AS program_studi_id,
+       m.npm               AS npm,
        m.nama              AS nama_mahasiswa,
        ps.nama             AS program_studi_nama,
        o.judul             AS judul_skripsi,
@@ -1166,6 +1200,62 @@ exports.getMyKartu = async (req, res, next) => {
   }
 };
 
+exports.getReviewFile = async (req, res, next) => {
+  try {
+    const reviewId = Number(req.params.reviewId);
+    if (!Number.isFinite(reviewId) || reviewId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid reviewId" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         rf.id, rf.file_content, rf.file_name, rf.mime_type,
+         o.npm, o.pembimbing1_nidn, o.pembimbing2_nidn, o.program_studi_id
+       FROM konsultasi_outline_review_file rf
+       INNER JOIN konsultasi_outline_review r ON r.id = rf.konsultasi_outline_review_id
+       INNER JOIN konsultasi_outline_stage st ON st.id = r.konsultasi_outline_stage_id
+       INNER JOIN kartu_konsultasi_outline k ON k.id = st.kartu_konsultasi_outline_id
+       JOIN outline o ON o.id = k.outline_id
+       WHERE rf.konsultasi_outline_review_id = ?
+       LIMIT 1`,
+      [reviewId],
+    );
+    const file = rows[0] ?? null;
+    if (!file) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "Review file not found" });
+    }
+
+    let isAuthorized = false;
+    if (req.user.userType === "STUDENT") {
+      const npm = await getStudentNpm(req.user.id);
+      isAuthorized = Boolean(npm) && npm === file.npm;
+    } else if (req.user.userType === "LECTURER") {
+      const nidn = await getLecturerNidn(req.user.id);
+      if (nidn) {
+        isAuthorized =
+          nidn === file.pembimbing1_nidn || nidn === file.pembimbing2_nidn;
+        if (!isAuthorized && hasRole(req, "KAPRODI")) {
+          const kaprodiProgramStudiIds =
+            await getKaprodiProgramStudiIdsByNidn(nidn);
+          isAuthorized = kaprodiProgramStudiIds.includes(
+            Number(file.program_studi_id),
+          );
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    return res.json({ ok: true, data: file });
+  } catch (err) {
+    next(err);
+  }
+};
+
 exports.getMyFinalKartuFile = async (req, res, next) => {
   try {
     const outlineId = Number(req.params.outlineId);
@@ -1256,7 +1346,7 @@ exports.previewKartuDocx = async (req, res, next) => {
       kartu,
       logs,
     );
-    const fileName = `kartu-konsultasi-outline-${outlineId}-preview.docx`;
+    const fileName = buildKartuPreviewFileName(kartu.npm, kartu.nama_mahasiswa);
 
     res.setHeader(
       "Content-Type",
@@ -1984,6 +2074,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
          s.started_at AS stage_started_at,
          s.finished_at AS stage_finished_at,
          k.id AS kartu_id,
+         o.id AS kartu_outline_id,
          m.nama AS kartu_nama_mahasiswa,
          m.npm AS kartu_npm,
          ps.nama AS kartu_program_studi_nama,
@@ -2061,6 +2152,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
         },
         kartu: {
           id: row.kartu_id,
+          outlineId: row.kartu_outline_id,
           namaMahasiswa: row.kartu_nama_mahasiswa,
           npm: row.kartu_npm,
           programStudiNama: row.kartu_program_studi_nama,

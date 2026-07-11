@@ -26,6 +26,11 @@ router.get(
   c.getMyKartu,
 );
 router.get(
+  "/outline-consultations/reviews/:reviewId/file",
+  auth,
+  c.getReviewFile,
+);
+router.get(
   "/outline-consultations/:outlineId/kartu/final",
   auth,
   c.getMyFinalKartuFile,

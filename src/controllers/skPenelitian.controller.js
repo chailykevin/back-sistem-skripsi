@@ -12,6 +12,12 @@ async function getStudentNpm(userId) {
   return rows[0]?.npm ?? null;
 }
 
+function buildKartuFileName(npm, namaMahasiswa, suffix) {
+  const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
+}
+
 function textPatch(value) {
   return {
     type: PatchType.PARAGRAPH,
@@ -632,7 +638,11 @@ exports.initSkPenelitian = async (req, res, next) => {
 
       const mimeDocx =
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-      const halamanFileName = `halaman-persetujuan-judul-${outlineId}-${Date.now()}.docx`;
+      const halamanFileName = buildKartuFileName(
+        kartu.npm,
+        kartuForHalaman.nama_mahasiswa,
+        "Halaman Persetujuan Judul",
+      );
 
       await conn.query(
         `INSERT INTO pengajuan_sk_penelitian_files
