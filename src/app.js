@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 
 app.use(cors({ exposedHeaders: ["Content-Disposition"] }));
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "75mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 const healthRoutes = require("./routes/health.routes");
