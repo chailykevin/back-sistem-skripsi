@@ -1,7 +1,9 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const { sendSuratUndangan } = require("../utils/email");
-const { getOpenPeriod: getSidangOpenPeriod } = require("../services/sidangSubmissionPeriod.service");
+const {
+  getOpenPeriod: getSidangOpenPeriod,
+} = require("../services/sidangSubmissionPeriod.service");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -31,6 +33,48 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
   return rows
     .map((row) => Number(row.id))
     .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+function validateIpk(ipk) {
+  if (ipk === null || ipk === undefined || ipk === "") return null;
+  const num = Number(ipk);
+  if (!Number.isFinite(num) || num < 0 || num > 4) {
+    return "IPK harus berupa angka antara 0 dan 4";
+  }
+  return null;
+}
+
+function validateTglLahir(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return { error: null, value: null };
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) {
+    return { error: "Tanggal lahir tidak valid", value: null };
+  }
+  if (date.getTime() > Date.now()) {
+    return { error: "Tanggal lahir tidak boleh di masa depan", value: null };
+  }
+  return { error: null, value: trimmed };
+}
+
+function validatePengujiAssignment({
+  penguji1Nidn,
+  penguji2Nidn,
+  pembimbing1Nidn,
+  pembimbing2Nidn,
+}) {
+  const p1 = penguji1Nidn ? String(penguji1Nidn).trim() : "";
+  const p2 = penguji2Nidn ? String(penguji2Nidn).trim() : "";
+  if (p1 && p2 && p1 === p2) {
+    return "Penguji 1 dan Penguji 2 tidak boleh sama";
+  }
+  const pembimbingNidns = new Set(
+    [pembimbing1Nidn, pembimbing2Nidn].filter(Boolean),
+  );
+  if ((p1 && pembimbingNidns.has(p1)) || (p2 && pembimbingNidns.has(p2))) {
+    return "Penguji tidak boleh sama dengan pembimbing";
+  }
+  return null;
 }
 
 const MIME_DOCX =
@@ -193,7 +237,11 @@ async function buildSuratPenyelesaianDocxBuffer({
     ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
     prodi: textPatch(prodi),
   };
-  return patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return patchDocument({
+    outputType: "nodebuffer",
+    data: templateBuffer,
+    patches,
+  });
 }
 
 async function buildLembarPermohonanUjianBuffer({
@@ -736,9 +784,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -994,9 +1040,7 @@ exports.getPengajuanSidang = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const sidang = await getActiveSidang(db, skripsiId);
@@ -1043,9 +1087,7 @@ exports.uploadFiles = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { files } = req.body ?? {};
@@ -1192,9 +1234,7 @@ exports.submitPengajuanSidang = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1350,9 +1390,7 @@ exports.reviewFile = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const fileType = req.params.fileType;
@@ -1444,9 +1482,7 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { action, catatanSekretariat } = req.body ?? {};
@@ -1556,7 +1592,8 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
           `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
           [skripsiId],
         );
-        const perluSuratKeterangan = skripsiForVerify?.perlu_surat_pengantar === 1;
+        const perluSuratKeterangan =
+          skripsiForVerify?.perlu_surat_pengantar === 1;
 
         const unverified = REQUIRED_FILE_TYPES.filter(
           (t) => !SYSTEM_FILE_TYPES.includes(t) && fileMap[t] !== "VERIFIED",
@@ -1665,9 +1702,7 @@ exports.getFile = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const fileType = req.params.fileType;
@@ -1776,9 +1811,7 @@ exports.initKaprodi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1986,9 +2019,7 @@ exports.getKaprodi = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const activeSidangForGet = await getActiveSidang(db, skripsiId);
@@ -2089,9 +2120,7 @@ exports.updateKaprodi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const activeSidangForUpdate = await getActiveSidang(db, skripsiId);
@@ -2135,16 +2164,35 @@ exports.updateKaprodi = async (req, res, next) => {
     const params = [];
 
     if (tempatLahir !== undefined) {
+      const tempatLahirVal = String(tempatLahir).trim();
+      if (tempatLahirVal.length > 100) {
+        return res.status(400).json({
+          ok: false,
+          message: "Tempat lahir maksimal 100 karakter",
+        });
+      }
       setClauses.push("tempat_lahir = ?");
-      params.push(String(tempatLahir).trim() || null);
+      params.push(tempatLahirVal || null);
     }
     if (tglLahir !== undefined) {
+      const { error: tglLahirError, value: tglLahirVal } =
+        validateTglLahir(tglLahir);
+      if (tglLahirError) {
+        return res.status(400).json({ ok: false, message: tglLahirError });
+      }
       setClauses.push("tgl_lahir = ?");
-      params.push(tglLahir || null);
+      params.push(tglLahirVal);
     }
     if (alamat !== undefined) {
+      const alamatVal = String(alamat).trim();
+      if (alamatVal.length > 500) {
+        return res.status(400).json({
+          ok: false,
+          message: "Alamat maksimal 500 karakter",
+        });
+      }
       setClauses.push("alamat = ?");
-      params.push(String(alamat).trim() || null);
+      params.push(alamatVal || null);
     }
     if (noHp !== undefined) {
       const noHpVal = String(noHp).trim();
@@ -2178,6 +2226,10 @@ exports.updateKaprodi = async (req, res, next) => {
       );
     }
     if (ipk !== undefined) {
+      const ipkError = validateIpk(ipk);
+      if (ipkError) {
+        return res.status(400).json({ ok: false, message: ipkError });
+      }
       setClauses.push("ipk = ?");
       params.push(ipk !== null && ipk !== "" ? Number(ipk) : null);
     }
@@ -2192,6 +2244,30 @@ exports.updateKaprodi = async (req, res, next) => {
     if (penguji2Nidn !== undefined) {
       setClauses.push("penguji2_nidn = ?");
       params.push(String(penguji2Nidn).trim() || null);
+    }
+
+    if (penguji1Nidn !== undefined || penguji2Nidn !== undefined) {
+      const effectivePenguji1Nidn =
+        penguji1Nidn !== undefined
+          ? String(penguji1Nidn).trim() || null
+          : kaprodi.penguji1_nidn;
+      const effectivePenguji2Nidn =
+        penguji2Nidn !== undefined
+          ? String(penguji2Nidn).trim() || null
+          : kaprodi.penguji2_nidn;
+      const [[skripsiRow]] = await db.query(
+        `SELECT pembimbing1_nidn, pembimbing2_nidn FROM skripsi WHERE id = ? LIMIT 1`,
+        [skripsiId],
+      );
+      const pengujiError = validatePengujiAssignment({
+        penguji1Nidn: effectivePenguji1Nidn,
+        penguji2Nidn: effectivePenguji2Nidn,
+        pembimbing1Nidn: skripsiRow?.pembimbing1_nidn ?? null,
+        pembimbing2Nidn: skripsiRow?.pembimbing2_nidn ?? null,
+      });
+      if (pengujiError) {
+        return res.status(400).json({ ok: false, message: pengujiError });
+      }
     }
 
     if (setClauses.length === 0) {
@@ -2234,9 +2310,7 @@ exports.submitKaprodi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -2350,8 +2424,16 @@ exports.submitKaprodi = async (req, res, next) => {
     const namaKaprodi = docData?.nama_kaprodi ?? "";
 
     assertSignatures([
-      { role: "Kaprodi", nama: namaKaprodi, signatureImage: docData?.kaprodi_sig },
-      { role: "Mahasiswa", nama: docData?.nama_mahasiswa, signatureImage: docData?.mahasiswa_sig },
+      {
+        role: "Kaprodi",
+        nama: namaKaprodi,
+        signatureImage: docData?.kaprodi_sig,
+      },
+      {
+        role: "Mahasiswa",
+        nama: docData?.nama_mahasiswa,
+        signatureImage: docData?.mahasiswa_sig,
+      },
     ]);
 
     const lembarBuffer = await buildLembarPermohonanUjianBuffer({
@@ -2543,7 +2625,12 @@ exports.submitKaprodi = async (req, res, next) => {
         `UPDATE pengajuan_sidang_files
          SET file_content = ?, file_name = ?, mime_type = ?, updated_at = CURRENT_TIMESTAMP
          WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
-        [penyelesaianBase64, penyelesaianFileName, MIME_DOCX, existingSidang.id],
+        [
+          penyelesaianBase64,
+          penyelesaianFileName,
+          MIME_DOCX,
+          existingSidang.id,
+        ],
       );
     }
 
@@ -2603,9 +2690,7 @@ exports.reviewFileKaprodi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const fileType = req.params.fileType;
@@ -2726,9 +2811,7 @@ exports.reviewKaprodi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const { action, catatanKaprodi } = req.body ?? {};
@@ -2984,9 +3067,7 @@ exports.updateDisposisi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -3084,9 +3165,7 @@ exports.submitDisposisi = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -3218,8 +3297,16 @@ exports.submitDisposisi = async (req, res, next) => {
     );
 
     assertSignatures([
-      { role: "Kaprodi", nama: docData?.nama_kaprodi, signatureImage: docData?.kaprodi_sig },
-      { role: "Mahasiswa", nama: docData?.nama_mahasiswa, signatureImage: docData?.mahasiswa_sig },
+      {
+        role: "Kaprodi",
+        nama: docData?.nama_kaprodi,
+        signatureImage: docData?.kaprodi_sig,
+      },
+      {
+        role: "Mahasiswa",
+        nama: docData?.nama_mahasiswa,
+        signatureImage: docData?.mahasiswa_sig,
+      },
     ]);
 
     const usulanBuffer = await buildLembarUsulanPengujiBufferFull({
@@ -3342,9 +3429,7 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
     const filterByProdi =
       Number.isFinite(programStudiIdParam) && programStudiIdParam > 0;
 
-    const conditions = [
-      `psk.status IN ('VALID','DISPOSISI_SENT','COMPLETED')`,
-    ];
+    const conditions = [`psk.status IN ('VALID','DISPOSISI_SENT','COMPLETED')`];
     const params = [];
 
     if (filterByStatus) {
@@ -3406,9 +3491,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
 
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     await conn.beginTransaction();
@@ -3495,7 +3578,11 @@ exports.generateSuratUndangan = async (req, res, next) => {
       : [[null]];
 
     assertSignatures([
-      { role: "Kaprodi", nama: kaprodiDosenRow?.nama, signatureImage: kaprodiUserRow?.signature_image },
+      {
+        role: "Kaprodi",
+        nama: kaprodiDosenRow?.nama,
+        signatureImage: kaprodiUserRow?.signature_image,
+      },
     ]);
 
     // Dosen emails for pembimbing and penguji
@@ -3630,10 +3717,14 @@ exports.generateSuratUndangan = async (req, res, next) => {
            (?, 'PENGUJI_1', ?),
            (?, 'PENGUJI_2', ?)`,
         [
-          newSidangId, p1UserId,
-          newSidangId, p2UserId,
-          newSidangId, pg1UserId,
-          newSidangId, pg2UserId,
+          newSidangId,
+          p1UserId,
+          newSidangId,
+          p2UserId,
+          newSidangId,
+          pg1UserId,
+          newSidangId,
+          pg2UserId,
         ],
       );
 
@@ -3641,10 +3732,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
         `INSERT INTO sidang_notulen (sidang_id, role, user_id) VALUES
            (?, 'PENGUJI_1', ?),
            (?, 'PENGUJI_2', ?)`,
-        [
-          newSidangId, pg1UserId,
-          newSidangId, pg2UserId,
-        ],
+        [newSidangId, pg1UserId, newSidangId, pg2UserId],
       );
 
       await conn.query(

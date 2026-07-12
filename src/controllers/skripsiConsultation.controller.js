@@ -232,7 +232,8 @@ async function getKartuLogs(queryable, kartuId) {
      LEFT JOIN users u ON u.id = rv.reviewer_user_id
      LEFT JOIN dosen d ON d.nidn = u.nidn
      WHERE st.kartu_konsultasi_skripsi_id = ?
-     ORDER BY rv.reviewed_at ASC`,
+     ORDER BY rv.reviewed_at ASC, rv.id ASC
+     LIMIT 53`,
     [kartuId],
   );
   return logs;
@@ -837,7 +838,7 @@ exports.getReviewFile = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         rf.id, rf.file_content, rf.file_name, rf.created_at,
+         rf.id, rf.file_content, rf.file_name, rf.mime_type, rf.created_at,
          sk.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn
        FROM konsultasi_skripsi_review_file rf
        INNER JOIN konsultasi_skripsi_review r ON r.id = rf.konsultasi_skripsi_review_id
@@ -889,8 +890,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid stageId" });
     }
 
-    const { decisionStatus, catatanKartu, reviewFile, reviewFileName } =
-      req.body || {};
+    const {
+      decisionStatus,
+      catatanKartu,
+      reviewFile,
+      reviewFileName,
+      reviewFileMimeType,
+    } = req.body || {};
 
     if (!decisionStatus || !String(catatanKartu || "").trim()) {
       return res.status(400).json({
@@ -1022,12 +1028,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     if (hasReviewFile) {
       await conn.query(
         `INSERT INTO konsultasi_skripsi_review_file (
-           konsultasi_skripsi_review_id, file_content, file_name, uploaded_by_user_id
-         ) VALUES (?, ?, ?, ?)`,
+           konsultasi_skripsi_review_id, file_content, file_name, mime_type, uploaded_by_user_id
+         ) VALUES (?, ?, ?, ?, ?)`,
         [
           reviewIns.insertId,
           String(reviewFile),
           safeReviewFileName,
+          reviewFileMimeType ?? null,
           req.user.id,
         ],
       );
@@ -1157,7 +1164,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     const [kartuInfoRows] = await conn.query(
-      `SELECT sk.npm, sk.pembimbing1_nidn, m.nama AS nama_mahasiswa
+      `SELECT sk.id AS skripsi_id, sk.npm, sk.pembimbing1_nidn, m.nama AS nama_mahasiswa
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
@@ -1221,10 +1228,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           await conn.query(
             `UPDATE skripsi
              SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-             WHERE npm = ?
-             ORDER BY created_at DESC
-             LIMIT 1`,
-            [kartuInfo.npm],
+             WHERE id = ?`,
+            [kartuInfo.skripsi_id],
           );
         } else {
           await insertNotification(
@@ -1324,6 +1329,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
     const [reviews] = await db.query(
       `SELECT
          r.id, r.submission_no, r.decision_status, r.catatan_kartu, r.reviewed_at,
+         st.chapter_group, st.stage,
          CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file,
          rf.id AS review_file_id, rf.file_name AS review_file_name
        FROM konsultasi_skripsi_review r
@@ -1336,14 +1342,18 @@ exports.getLecturerStageDetail = async (req, res, next) => {
 
     const [logs] = await db.query(
       `SELECT
+         rv.id,
          st.chapter_group,
          st.stage,
          rv.submission_no,
          rv.decision_status AS status,
          rv.catatan_kartu,
-         rv.reviewed_at     AS logged_at
+         rv.reviewed_at     AS logged_at,
+         CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file,
+         rf.id AS review_file_id, rf.file_name AS review_file_name
        FROM konsultasi_skripsi_review rv
        JOIN konsultasi_skripsi_stage st ON st.id = rv.konsultasi_skripsi_stage_id
+       LEFT JOIN konsultasi_skripsi_review_file rf ON rf.konsultasi_skripsi_review_id = rv.id
        WHERE st.kartu_konsultasi_skripsi_id = ?
        ORDER BY rv.reviewed_at DESC`,
       [row.kartu_id],
