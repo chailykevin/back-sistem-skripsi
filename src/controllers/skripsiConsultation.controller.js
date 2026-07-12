@@ -483,11 +483,24 @@ exports.initKartu = async (req, res, next) => {
         .json({ ok: false, message: "Both pembimbing must be assigned" });
     }
 
-    const [kartuIns] = await conn.query(
-      `INSERT INTO kartu_konsultasi_skripsi (skripsi_id) VALUES (?)`,
-      [skripsiId],
-    );
-    const kartuId = kartuIns.insertId;
+    let kartuId;
+    try {
+      const [kartuIns] = await conn.query(
+        `INSERT INTO kartu_konsultasi_skripsi (skripsi_id) VALUES (?)`,
+        [skripsiId],
+      );
+      kartuId = kartuIns.insertId;
+    } catch (insErr) {
+      if (insErr.code === "ER_DUP_ENTRY") {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message: "Kartu konsultasi skripsi already exists",
+        });
+      }
+      throw insErr;
+    }
 
     await conn.query(
       `INSERT INTO konsultasi_skripsi_stage (

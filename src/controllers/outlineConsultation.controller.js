@@ -520,104 +520,116 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   }
 
   // Generate halaman persetujuan DOCX inline from users.signature_image
-  const [[mahasiswaRow]] = await conn.query(
-    `SELECT u.signature_image FROM users u
-     JOIN outline o ON o.npm = u.npm
-     WHERE o.id = ? LIMIT 1`,
-    [kartu.outline_id],
-  );
-  const [[p2Row]] = await conn.query(
-    `SELECT u.signature_image FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-     WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
-    [kartu.pembimbing2_nidn],
-  );
-  const [[p1Row]] = await conn.query(
-    `SELECT u.signature_image FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-     WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
-    [kartu.pembimbing1_nidn],
-  );
-  const [[kaprodiRow]] = await conn.query(
-    `SELECT u.signature_image FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-     JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
-     WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
-    [kartu.program_studi_id],
-  );
-  const [[psRow]] = await conn.query(
-    `SELECT
-       ps.nama AS program_studi_nama,
-       d.nama AS kaprodi_nama,
-       m.nama AS nama_mahasiswa,
-       o.judul AS judul_skripsi,
-       d1.nama AS pembimbing1_nama,
-       d2.nama AS pembimbing2_nama
-     FROM program_studi ps
-     LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
-     JOIN outline o ON o.id = ?
-     JOIN mahasiswa m ON m.npm = o.npm
-     LEFT JOIN dosen d1 ON d1.nidn = ?
-     LEFT JOIN dosen d2 ON d2.nidn = ?
-     WHERE ps.id = ? LIMIT 1`,
-    [
-      kartu.outline_id,
-      kartu.pembimbing1_nidn,
-      kartu.pembimbing2_nidn,
-      kartu.program_studi_id,
-    ],
-  );
+  // Non-fatal: a missing signature must not abort the outline-review transaction
+  let halamanFile = null;
+  try {
+    const [[mahasiswaRow]] = await conn.query(
+      `SELECT u.signature_image FROM users u
+       JOIN outline o ON o.npm = u.npm
+       WHERE o.id = ? LIMIT 1`,
+      [kartu.outline_id],
+    );
+    const [[p2Row]] = await conn.query(
+      `SELECT u.signature_image FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+      [kartu.pembimbing2_nidn],
+    );
+    const [[p1Row]] = await conn.query(
+      `SELECT u.signature_image FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+      [kartu.pembimbing1_nidn],
+    );
+    const [[kaprodiRow]] = await conn.query(
+      `SELECT u.signature_image FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+       WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
+      [kartu.program_studi_id],
+    );
+    const [[psRow]] = await conn.query(
+      `SELECT
+         ps.nama AS program_studi_nama,
+         d.nama AS kaprodi_nama,
+         m.nama AS nama_mahasiswa,
+         o.judul AS judul_skripsi,
+         d1.nama AS pembimbing1_nama,
+         d2.nama AS pembimbing2_nama
+       FROM program_studi ps
+       LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+       JOIN outline o ON o.id = ?
+       JOIN mahasiswa m ON m.npm = o.npm
+       LEFT JOIN dosen d1 ON d1.nidn = ?
+       LEFT JOIN dosen d2 ON d2.nidn = ?
+       WHERE ps.id = ? LIMIT 1`,
+      [
+        kartu.outline_id,
+        kartu.pembimbing1_nidn,
+        kartu.pembimbing2_nidn,
+        kartu.program_studi_id,
+      ],
+    );
 
-  const halamanSignatures = [
-    {
-      signer_role: "MAHASISWA",
-      signature_image: mahasiswaRow?.signature_image ?? null,
-    },
-    {
-      signer_role: "PEMBIMBING_2",
-      signature_image: p2Row?.signature_image ?? null,
-    },
-    {
-      signer_role: "PEMBIMBING_1",
-      signature_image: p1Row?.signature_image ?? null,
-    },
-    {
-      signer_role: "KAPRODI",
-      signature_image: kaprodiRow?.signature_image ?? null,
-    },
-  ];
+    const halamanSignatures = [
+      {
+        signer_role: "MAHASISWA",
+        signature_image: mahasiswaRow?.signature_image ?? null,
+      },
+      {
+        signer_role: "PEMBIMBING_2",
+        signature_image: p2Row?.signature_image ?? null,
+      },
+      {
+        signer_role: "PEMBIMBING_1",
+        signature_image: p1Row?.signature_image ?? null,
+      },
+      {
+        signer_role: "KAPRODI",
+        signature_image: kaprodiRow?.signature_image ?? null,
+      },
+    ];
 
-  assertSignatures([
-    { role: "Mahasiswa", nama: psRow?.nama_mahasiswa, signatureImage: mahasiswaRow?.signature_image },
-    { role: "Pembimbing 2", nama: psRow?.pembimbing2_nama, signatureImage: p2Row?.signature_image },
-    { role: "Pembimbing 1", nama: psRow?.pembimbing1_nama, signatureImage: p1Row?.signature_image },
-    { role: "Kaprodi", nama: psRow?.kaprodi_nama, signatureImage: kaprodiRow?.signature_image },
-  ]);
+    assertSignatures([
+      { role: "Mahasiswa", nama: psRow?.nama_mahasiswa, signatureImage: mahasiswaRow?.signature_image },
+      { role: "Pembimbing 2", nama: psRow?.pembimbing2_nama, signatureImage: p2Row?.signature_image },
+      { role: "Pembimbing 1", nama: psRow?.pembimbing1_nama, signatureImage: p1Row?.signature_image },
+      { role: "Kaprodi", nama: psRow?.kaprodi_nama, signatureImage: kaprodiRow?.signature_image },
+    ]);
 
-  const kartuForHalaman = {
-    ...kartu,
-    nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
-    judul_skripsi: psRow?.judul_skripsi ?? "",
-    pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
-    pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
-  };
+    const kartuForHalaman = {
+      ...kartu,
+      nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
+      judul_skripsi: psRow?.judul_skripsi ?? "",
+      pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
+      pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+    };
 
-  const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-    kartu: kartuForHalaman,
-    signatures: halamanSignatures,
-    programStudiNama: psRow?.program_studi_nama ?? "",
-    namaKaprodi: psRow?.kaprodi_nama ?? "",
-  });
-  const halamanMime =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const halamanFileName = buildKartuFileName(
-    kartu.npm,
-    psRow?.nama_mahasiswa,
-    "Halaman Persetujuan Judul",
-  );
+    const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
+      kartu: kartuForHalaman,
+      signatures: halamanSignatures,
+      programStudiNama: psRow?.program_studi_nama ?? "",
+      namaKaprodi: psRow?.kaprodi_nama ?? "",
+    });
+
+    halamanFile = {
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      name: buildKartuFileName(
+        kartu.npm,
+        psRow?.nama_mahasiswa,
+        "Halaman Persetujuan Judul",
+      ),
+      content: halamanBuffer.toString("base64"),
+    };
+  } catch (halamanErr) {
+    console.log(
+      "[autoSubmitSkPenelitian] halaman persetujuan generation skipped",
+      halamanErr.message,
+    );
+  }
 
   const [ins] = await conn.query(
     `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
@@ -650,13 +662,15 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       mime: null,
       content: outlineRows[0].file_outline,
     },
-    {
-      type: "HALAMAN_PERSETUJUAN",
-      name: halamanFileName,
-      mime: halamanMime,
-      content: halamanBuffer.toString("base64"),
-    },
   ];
+  if (halamanFile) {
+    files.push({
+      type: "HALAMAN_PERSETUJUAN",
+      name: halamanFile.name,
+      mime: halamanFile.mime,
+      content: halamanFile.content,
+    });
+  }
   for (const f of files) {
     await conn.query(
       `INSERT INTO pengajuan_sk_penelitian_files (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status) VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,

@@ -28,7 +28,7 @@ function formatDateId(date) {
 
 function buildFormulirFileName(npm, namaMahasiswa) {
   const safeNpm = String(npm ?? "").trim().replace(/[^\w.-]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[^\w.-]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[^\w\s.-]+/g, "").replace(/\s+/g, " ");
   return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.docx`;
 }
 

@@ -1463,7 +1463,21 @@ exports.listSkForSekretariat = async (req, res, next) => {
          sk.created_at,
          m.nama AS nama_mahasiswa,
          o.judul AS judul_skripsi,
-         ps.nama AS program_studi_nama
+         o.submission_period_id,
+         o.program_studi_id,
+         ps.nama AS program_studi_nama,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         ) AS has_sk_penunjukan_pembimbing,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_KETERANGAN'
+         ) AS has_surat_keterangan,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+         ) AS has_surat_penyelesaian_skripsi
        FROM pengajuan_sk_penelitian sk
        JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
@@ -1514,7 +1528,17 @@ exports.listSkForDekan = async (req, res, next) => {
          o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama,
          o.program_studi_id,
-         (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1) AS skripsi_id
+         (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1) AS skripsi_id,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         ) AS has_sk_document,
+         EXISTS(
+           SELECT 1 FROM revisi_pasca_sidang rps
+           JOIN sidang sd ON sd.id = rps.sidang_id
+           JOIN revisi_pasca_sidang_files rf ON rf.revisi_id = rps.id AND rf.file_type = 'HALAMAN_PENGESAHAN_DEKAN'
+           WHERE sd.skripsi_id = (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1)
+         ) AS has_halaman_pengesahan
        FROM pengajuan_sk_penelitian sk
        JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
