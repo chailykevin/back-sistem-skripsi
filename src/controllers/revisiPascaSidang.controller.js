@@ -112,6 +112,20 @@ async function getSigByNidn(conn, nidn) {
   return row?.signature_image ?? null;
 }
 
+async function getSigByNidnAndRole(conn, nidn, roleCode) {
+  if (!nidn) return null;
+  const [[row]] = await conn.query(
+    `SELECT u.signature_image
+     FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE u.nidn = ? AND u.is_active = 1 AND r.code = ?
+     LIMIT 1`,
+    [nidn, roleCode],
+  );
+  return row?.signature_image ?? null;
+}
+
 async function getSigByNpm(conn, npm) {
   if (!npm) return null;
   const [[row]] = await conn.query(
@@ -256,7 +270,7 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     getSigByNpm(conn, sidangRow.npm),
     getSigByNidn(conn, sidangRow.pembimbing1_nidn),
     getSigByNidn(conn, sidangRow.pembimbing2_nidn),
-    getSigByNidn(conn, dekanNidn),
+    getSigByNidnAndRole(conn, dekanNidn, "DEKAN"),
   ]);
 
   assertSignatures([
@@ -567,7 +581,7 @@ exports.reviewRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Hanya dosen yang dapat mereview revisi" });
     }
 
-    const { decision, catatan } = req.body;
+    const { decision, catatan, reviewFile, reviewFileName, reviewFileMimeType } = req.body;
     if (!decision || !["APPROVED", "NEED_REVISION"].includes(decision)) {
       return res
         .status(400)
@@ -583,6 +597,16 @@ exports.reviewRevisi = async (req, res, next) => {
           ok: false,
           message: "catatan wajib diisi untuk NEED_REVISION",
         });
+    }
+
+    const hasReviewFile =
+      reviewFile !== undefined && reviewFile !== null && String(reviewFile) !== "";
+    const safeReviewFileName = String(reviewFileName ?? "").trim();
+    if (hasReviewFile && !safeReviewFileName) {
+      return res.status(400).json({
+        ok: false,
+        message: "reviewFileName is required when reviewFile is provided",
+      });
     }
 
     await conn.beginTransaction();
@@ -670,7 +694,7 @@ exports.reviewRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Tidak dapat mereview saat ini" });
     }
 
-    await conn.query(
+    const [reviewIns] = await conn.query(
       `INSERT INTO revisi_pasca_sidang_reviews (stage_id, submission_no, decision, catatan, reviewed_at)
        VALUES (?, ?, ?, ?, NOW())`,
       [
@@ -680,6 +704,21 @@ exports.reviewRevisi = async (req, res, next) => {
         catatan?.trim() ?? null,
       ],
     );
+
+    if (hasReviewFile) {
+      await conn.query(
+        `INSERT INTO revisi_pasca_sidang_review_file (
+           revisi_pasca_sidang_review_id, file_content, file_name, mime_type, uploaded_by_user_id
+         ) VALUES (?, ?, ?, ?, ?)`,
+        [
+          reviewIns.insertId,
+          String(reviewFile),
+          safeReviewFileName,
+          reviewFileMimeType ?? null,
+          req.user.id,
+        ],
+      );
+    }
 
     if (decision === "NEED_REVISION") {
       await conn.query(
@@ -994,10 +1033,15 @@ exports.getRevisi = async (req, res, next) => {
             .then(([rows]) => rows),
           db
             .query(
-              `SELECT stage_id, submission_no, decision, catatan, reviewed_at
-             FROM revisi_pasca_sidang_reviews
-             WHERE stage_id IN (?)
-             ORDER BY submission_no ASC`,
+              `SELECT
+                 rev.id, rev.stage_id, rev.submission_no, rev.decision, rev.catatan, rev.reviewed_at,
+                 CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file,
+                 rf.id AS review_file_id, rf.file_name AS review_file_name
+               FROM revisi_pasca_sidang_reviews rev
+               LEFT JOIN revisi_pasca_sidang_review_file rf
+                      ON rf.revisi_pasca_sidang_review_id = rev.id
+               WHERE rev.stage_id IN (?)
+               ORDER BY rev.submission_no ASC`,
               [stageIds],
             )
             .then(([rows]) => rows),
@@ -1098,7 +1142,7 @@ exports.getLecturerRevisi = async (req, res, next) => {
     if (rows.length) {
       const revisiIds = rows.map((r) => r.id);
       const [stages] = await db.query(
-        `SELECT revisi_id, signer_role, current_status
+        `SELECT id, revisi_id, signer_role, current_status
          FROM revisi_pasca_sidang_stages
          WHERE revisi_id IN (?)`,
         [revisiIds],
@@ -1109,6 +1153,22 @@ exports.getLecturerRevisi = async (req, res, next) => {
           stagesByRevisi[stage.revisi_id] = [];
         stagesByRevisi[stage.revisi_id].push(stage);
       }
+
+      const stageIds = stages.map((s) => s.id);
+      const latestSubmittedByStage = {};
+      if (stageIds.length) {
+        const [latestSubs] = await db.query(
+          `SELECT stage_id, MAX(submitted_at) AS latest_submitted_at
+           FROM revisi_pasca_sidang_submissions
+           WHERE stage_id IN (?)
+           GROUP BY stage_id`,
+          [stageIds],
+        );
+        for (const row of latestSubs) {
+          latestSubmittedByStage[row.stage_id] = row.latest_submitted_at;
+        }
+      }
+
       for (const row of rows) {
         const revisiStages = stagesByRevisi[row.id] ?? [];
         const active = resolveActiveStage(revisiStages);
@@ -1118,6 +1178,15 @@ exports.getLecturerRevisi = async (req, res, next) => {
               currentStatus: active.current_status,
             }
           : null;
+
+        let latestSubmittedAt = null;
+        for (const stage of revisiStages) {
+          const stageLatest = latestSubmittedByStage[stage.id];
+          if (stageLatest && (!latestSubmittedAt || stageLatest > latestSubmittedAt)) {
+            latestSubmittedAt = stageLatest;
+          }
+        }
+        row.latest_submitted_at = latestSubmittedAt;
       }
     }
 
@@ -1194,15 +1263,13 @@ exports.getSubmissionFile = async (req, res, next) => {
       }
     }
 
-    // Get the active stage and return its latest submission file
+    // Return the most recently submitted file across all stages of this revisi
     const [stages] = await db.query(
-      `SELECT * FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
+      `SELECT id FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
       [revisi.id],
     );
-    const activeStage = resolveActiveStage(stages);
-    const targetStageId = activeStage?.id ?? stages[stages.length - 1]?.id;
-
-    if (!targetStageId) {
+    const stageIds = stages.map((s) => s.id);
+    if (!stageIds.length) {
       return res
         .status(404)
         .json({ ok: false, message: "Belum ada file revisi yang diunggah" });
@@ -1210,8 +1277,8 @@ exports.getSubmissionFile = async (req, res, next) => {
 
     const [[fileRow]] = await db.query(
       `SELECT file_name, file_content FROM revisi_pasca_sidang_submissions
-       WHERE stage_id = ? ORDER BY submission_no DESC LIMIT 1`,
-      [targetStageId],
+       WHERE stage_id IN (?) ORDER BY submitted_at DESC, id DESC LIMIT 1`,
+      [stageIds],
     );
     if (!fileRow) {
       return res
@@ -1220,6 +1287,62 @@ exports.getSubmissionFile = async (req, res, next) => {
     }
 
     return sendDocx(res, fileRow);
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /revisi-pasca-sidang/reviews/:reviewId/file
+exports.getReviewFile = async (req, res, next) => {
+  try {
+    const reviewId = Number(req.params.reviewId);
+    if (!Number.isFinite(reviewId) || reviewId <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid reviewId" });
+    }
+
+    const [[file]] = await db.query(
+      `SELECT
+         rf.id, rf.file_content, rf.file_name, rf.mime_type,
+         m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+         psk_k.penguji1_nidn, psk_k.penguji2_nidn
+       FROM revisi_pasca_sidang_review_file rf
+       INNER JOIN revisi_pasca_sidang_reviews rev ON rev.id = rf.revisi_pasca_sidang_review_id
+       INNER JOIN revisi_pasca_sidang_stages st ON st.id = rev.stage_id
+       INNER JOIN revisi_pasca_sidang rps ON rps.id = st.revisi_id
+       JOIN sidang s ON s.id = rps.sidang_id
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE rf.revisi_pasca_sidang_review_id = ?
+       LIMIT 1`,
+      [reviewId],
+    );
+    if (!file) {
+      return res.status(404).json({ ok: false, message: "Review file not found" });
+    }
+
+    const isStudent = req.user.hasRole("STUDENT");
+    if (isStudent) {
+      const npm = await getStudentNpm(req.user.id);
+      if (npm !== file.npm) {
+        return res.status(403).json({ ok: false, message: "Forbidden" });
+      }
+    } else if (!req.user.hasRole("SEKRETARIAT") && !req.user.hasRole("KAPRODI")) {
+      const nidn = await getLecturerNidn(req.user.id);
+      if (!isRevisiParticipant(file, nidn)) {
+        return res.status(403).json({ ok: false, message: "Forbidden" });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        file_name: file.file_name,
+        mime_type: file.mime_type,
+        file_content: file.file_content,
+      },
+    });
   } catch (err) {
     next(err);
   }

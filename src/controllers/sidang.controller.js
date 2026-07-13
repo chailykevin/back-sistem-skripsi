@@ -315,7 +315,8 @@ exports.getSidang = async (req, res, next) => {
 
     // Notulen: hide note + file_content from non-owners during ONGOING
     const sanitizedNotulen = notulenRows.map((row) => {
-      if (!isOngoing) return row;
+      const hasSubmitted = row.submitted_at !== null;
+      if (!isOngoing) return { ...row, has_submitted: hasSubmitted };
       if (isStudent) {
         const {
           note,
@@ -325,14 +326,14 @@ exports.getSidang = async (req, res, next) => {
           submitted_at,
           ...safe
         } = row;
-        return safe;
+        return { ...safe, has_submitted: hasSubmitted };
       }
       if (callerRole && row.role !== callerRole) {
         const { note, hasil_sidang, file_content, file_name, submitted_at, ...safe } = row;
-        return { ...safe, has_submitted: row.submitted_at !== null };
+        return { ...safe, has_submitted: hasSubmitted };
       }
       const { file_content, ...safe } = row;
-      return safe;
+      return { ...safe, has_submitted: hasSubmitted };
     });
 
     return res.json({
@@ -341,7 +342,7 @@ exports.getSidang = async (req, res, next) => {
         sidang,
         penilaian: sanitizedPenilaian,
         notulen: sanitizedNotulen,
-        hasilPenilaian: hasilPenilaian ?? null,
+        hasilPenilaian: isStudent ? null : (hasilPenilaian ?? null),
         files,
       },
     });
@@ -1352,11 +1353,18 @@ async function resolveSidangFileAccess(req, sidang) {
   return nidn ? resolveSidangRole(sidang, nidn) !== null : false;
 }
 
-function sendDocx(res, fileRow) {
+function sendDocx(res, fileRow, downloadFileName) {
   const buffer = Buffer.from(fileRow.file_content, "base64");
   res.setHeader("Content-Type", MIME_DOCX);
-  res.setHeader("Content-Disposition", `attachment; filename="${fileRow.file_name}"`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${downloadFileName ?? fileRow.file_name}"`,
+  );
   return res.send(buffer);
+}
+
+function buildSidangDownloadFileName(npm, namaMahasiswa, namaDokumen) {
+  return `${npm} - ${namaMahasiswa} - ${namaDokumen}.docx`;
 }
 
 // GET /sidang/:skripsiId/files/berita-acara
@@ -1369,7 +1377,7 @@ exports.getBeritaAcara = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1399,7 +1407,11 @@ exports.getBeritaAcara = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Berita acara belum tersedia" });
     }
 
-    return sendDocx(res, fileRow);
+    return sendDocx(
+      res,
+      fileRow,
+      buildSidangDownloadFileName(sidang.npm, sidang.nama_mahasiswa, "Berita Acara Hasil Ujian"),
+    );
   } catch (err) {
     next(err);
   }
@@ -1415,7 +1427,7 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1445,7 +1457,11 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Hasil penilaian belum tersedia" });
     }
 
-    return sendDocx(res, fileRow);
+    return sendDocx(
+      res,
+      fileRow,
+      buildSidangDownloadFileName(sidang.npm, sidang.nama_mahasiswa, "Hasil Penilaian Akhir"),
+    );
   } catch (err) {
     next(err);
   }
@@ -1453,6 +1469,12 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
 
 const VALID_PENILAIAN_ROLES = ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"];
 const VALID_NOTULEN_ROLES = ["PENGUJI_1", "PENGUJI_2"];
+const SIDANG_ROLE_LABELS = {
+  PEMBIMBING_1: "Pembimbing 1",
+  PEMBIMBING_2: "Pembimbing 2",
+  PENGUJI_1: "Penguji 1",
+  PENGUJI_2: "Penguji 2",
+};
 
 // GET /sidang/:skripsiId/files/penilaian/:role
 exports.getPenilaianFile = async (req, res, next) => {
@@ -1472,7 +1494,7 @@ exports.getPenilaianFile = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1502,7 +1524,15 @@ exports.getPenilaianFile = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Formulir penilaian belum tersedia" });
     }
 
-    return sendDocx(res, fileRow);
+    return sendDocx(
+      res,
+      fileRow,
+      buildSidangDownloadFileName(
+        sidang.npm,
+        sidang.nama_mahasiswa,
+        `Formulir Penilaian ${SIDANG_ROLE_LABELS[role]}`,
+      ),
+    );
   } catch (err) {
     next(err);
   }
@@ -1526,7 +1556,7 @@ exports.getNotulenFile = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1552,7 +1582,15 @@ exports.getNotulenFile = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Notulen belum tersedia" });
     }
 
-    return sendDocx(res, fileRow);
+    return sendDocx(
+      res,
+      fileRow,
+      buildSidangDownloadFileName(
+        sidang.npm,
+        sidang.nama_mahasiswa,
+        `Notulen ${SIDANG_ROLE_LABELS[role]}`,
+      ),
+    );
   } catch (err) {
     next(err);
   }

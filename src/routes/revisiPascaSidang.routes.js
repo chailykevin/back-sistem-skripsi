@@ -10,5 +10,6 @@ router.get("/revisi-pasca-sidang/:skripsiId", auth, c.getRevisi);
 router.get("/revisi-pasca-sidang/:skripsiId/files/submission", auth, c.getSubmissionFile);
 router.get("/revisi-pasca-sidang/:skripsiId/files/halaman-pengesahan-majelis-penguji", auth, c.getHalamanMajelisFile);
 router.get("/revisi-pasca-sidang/:skripsiId/files/halaman-pengesahan-dekan", auth, c.getHalamanDekanFile);
+router.get("/revisi-pasca-sidang/reviews/:reviewId/file", auth, c.getReviewFile);
 
 module.exports = router;

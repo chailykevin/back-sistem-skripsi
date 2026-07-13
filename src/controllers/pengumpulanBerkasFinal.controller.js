@@ -351,9 +351,13 @@ exports.initPengumpulan = async (req, res, next) => {
     );
 
     const [[row]] = await conn.query(
-      `SELECT id, status, is_completed FROM pengumpulan_berkas_final WHERE skripsi_id = ? LIMIT 1`,
+      `SELECT id, status, is_completed FROM pengumpulan_berkas_final WHERE skripsi_id = ? LIMIT 1 FOR UPDATE`,
       [skripsiId],
     );
+    if (!row) {
+      await conn.rollback(); txStarted = false;
+      return res.status(409).json({ ok: false, message: "Gagal menginisiasi pengumpulan berkas, silakan coba lagi" });
+    }
 
     await conn.commit(); txStarted = false;
     return res.json({ ok: true, data: { id: row.id, status: row.status, is_completed: row.is_completed } });
