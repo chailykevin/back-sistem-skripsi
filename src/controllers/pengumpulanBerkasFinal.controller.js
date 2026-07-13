@@ -20,6 +20,25 @@ const RECIPIENT_ROLES = [
   "PENGUJI_2",
 ];
 
+function recipientLink(role, skripsiId) {
+  switch (role) {
+    case "PERPUSTAKAAN":
+      return `/perpustakaan/berkas-final/${skripsiId}`;
+    case "LPPM":
+      return `/lppm/berkas-final/${skripsiId}`;
+    case "SEKPRODI":
+      return `/sekprodi/berkas-final/${skripsiId}`;
+    case "PEMBIMBING_1":
+    case "PEMBIMBING_2":
+    case "PENGUJI_1":
+    case "PENGUJI_2":
+      return `/pembimbing/berkas-final/${skripsiId}`;
+    case "STUDENT":
+    default:
+      return `/student/berkas-final`;
+  }
+}
+
 function formatTanggal(date) {
   const d = new Date(date);
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
@@ -476,7 +495,6 @@ exports.submitPengumpulan = async (req, res, next) => {
     );
 
     // Notify all 6 recipients
-    const link = `/pengumpulan-berkas-final/${skripsiId}`;
     for (const row of confirmRows) {
       if (row.userId) {
         await insertNotification(
@@ -484,7 +502,7 @@ exports.submitPengumpulan = async (req, res, next) => {
           row.userId,
           "PENGUMPULAN_BERKAS_FINAL",
           `Mahasiswa dengan npm ${npm} telah mengunggah berkas final skripsi. Silakan konfirmasi penerimaan.`,
-          link,
+          recipientLink(row.role, skripsiId),
         );
       }
     }
@@ -643,7 +661,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
               sekprodiUserId,
               "PENGUMPULAN_BERKAS_FINAL",
               `Semua pihak telah mengkonfirmasi berkas final skripsi mahasiswa npm ${pengumpulan.npm}. Silakan tanda tangani surat penyerahan.`,
-              `/pengumpulan-berkas-final/${skripsiId}`,
+              recipientLink("SEKPRODI", skripsiId),
             );
           }
         }
@@ -657,7 +675,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
           studentUserId,
           "PENGUMPULAN_BERKAS_FINAL",
           "Semua pihak telah mengkonfirmasi berkas final skripsi Anda. Menunggu tanda tangan Sekretaris Prodi.",
-          `/pengumpulan-berkas-final/${skripsiId}`,
+          recipientLink("STUDENT", skripsiId),
         );
       }
     } else {
@@ -669,7 +687,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
           studentUserId,
           "PENGUMPULAN_BERKAS_FINAL",
           `Konfirmasi penerimaan berkas telah diterima (${confirmed}/${total}).`,
-          `/pengumpulan-berkas-final/${skripsiId}`,
+          recipientLink("STUDENT", skripsiId),
         );
       }
     }
@@ -803,7 +821,7 @@ exports.signPengumpulan = async (req, res, next) => {
         studentUserId,
         "PENGUMPULAN_BERKAS_FINAL",
         "Surat Pernyataan Penyerahan Skripsi telah ditandatangani. Proses pengumpulan berkas final selesai.",
-        `/pengumpulan-berkas-final/${skripsiId}`,
+        recipientLink("STUDENT", skripsiId),
       );
     }
 
