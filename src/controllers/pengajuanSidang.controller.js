@@ -1061,7 +1061,7 @@ exports.getPengajuanSidang = async (req, res, next) => {
     );
 
     const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, created_at
+      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
        FROM pengajuan_sidang_files
        WHERE pengajuan_sidang_id = ?
        ORDER BY file_type ASC`,
@@ -1174,20 +1174,35 @@ exports.uploadFiles = async (req, res, next) => {
       txStarted = true;
 
       for (const f of files) {
+        const [[existing]] = await conn.query(
+          `SELECT kaprodi_status, kaprodi_verified_at FROM pengajuan_sidang_files
+           WHERE pengajuan_sidang_id = ? AND file_type = ? LIMIT 1`,
+          [sidang.id, f.fileType],
+        );
+        // A file re-uploaded after Kaprodi verified it is no longer guaranteed
+        // to match what was reviewed — keep the VERIFIED record (for history)
+        // but null kaprodi_verified_at so it renders as stale, not silently
+        // as unverified. Kaprodi's overall VALID gate is untouched.
+        const carryKaprodiStatus = existing?.kaprodi_status ?? null;
+        const carryVerifiedAt =
+          existing?.kaprodi_status === "VERIFIED" ? null : (existing?.kaprodi_verified_at ?? null);
+
         await conn.query(
           `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = ?`,
           [sidang.id, f.fileType],
         );
         await conn.query(
           `INSERT INTO pengajuan_sidang_files
-             (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-           VALUES (?, ?, ?, ?, ?, 'UPLOADED', 'SUBMITTED')`,
+             (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status, kaprodi_status, kaprodi_verified_at)
+           VALUES (?, ?, ?, ?, ?, 'UPLOADED', 'SUBMITTED', ?, ?)`,
           [
             sidang.id,
             f.fileType,
             String(f.fileName).trim(),
             f.mimeType ?? null,
             String(f.fileContent),
+            carryKaprodiStatus,
+            carryVerifiedAt,
           ],
         );
       }
@@ -1204,7 +1219,7 @@ exports.uploadFiles = async (req, res, next) => {
     }
 
     const [updatedFiles] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, created_at
+      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
        FROM pengajuan_sidang_files
        WHERE pengajuan_sidang_id = ?
        ORDER BY file_type ASC`,
@@ -1531,6 +1546,19 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       });
     }
 
+    const [[kaprodiRow]] = await conn.query(
+      `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+      [sidang.id],
+    );
+    if (!kaprodiRow || kaprodiRow.status !== "VALID") {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan sidang belum divalidasi oleh Kaprodi.",
+      });
+    }
+
     if (action === "NEED_REVISION") {
       await conn.query(
         `UPDATE pengajuan_sidang
@@ -1721,7 +1749,7 @@ exports.getFile = async (req, res, next) => {
     }
 
     const [[file]] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, file_content, source, status, kaprodi_status, created_at
+      `SELECT id, file_type, file_name, mime_type, file_content, source, status, kaprodi_status, kaprodi_verified_at, created_at
        FROM pengajuan_sidang_files
        WHERE pengajuan_sidang_id = ? AND file_type = ?
        ORDER BY created_at DESC LIMIT 1`,
@@ -2072,7 +2100,7 @@ exports.getKaprodi = async (req, res, next) => {
     let files = [];
     if (sidang) {
       const [fileRows] = await db.query(
-        `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, created_at
+        `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
          FROM pengajuan_sidang_files
          WHERE pengajuan_sidang_id = ? AND file_type IN (?)
          ORDER BY file_type ASC`,
@@ -2777,8 +2805,11 @@ exports.reviewFileKaprodi = async (req, res, next) => {
     }
 
     await conn.query(
-      `UPDATE pengajuan_sidang_files SET kaprodi_status = ? WHERE id = ?`,
-      [status, fileRow.id],
+      `UPDATE pengajuan_sidang_files
+       SET kaprodi_status = ?,
+           kaprodi_verified_at = CASE WHEN ? = 'VERIFIED' THEN CURRENT_TIMESTAMP ELSE NULL END
+       WHERE id = ?`,
+      [status, status, fileRow.id],
     );
 
     await conn.commit();
@@ -2894,13 +2925,13 @@ exports.reviewKaprodi = async (req, res, next) => {
           .json({ ok: false, message: "Belum ada Pengajuan Sidang terkait" });
       }
       const [fileRows] = await conn.query(
-        `SELECT file_type, kaprodi_status FROM pengajuan_sidang_files
+        `SELECT file_type, kaprodi_status, kaprodi_verified_at FROM pengajuan_sidang_files
          WHERE pengajuan_sidang_id = ? AND file_type IN (?)`,
         [sidang.id, KAPRODI_REQUIRED_FILE_TYPES],
       );
       const verifiedSet = new Set(
         fileRows
-          .filter((r) => r.kaprodi_status === "VERIFIED")
+          .filter((r) => r.kaprodi_status === "VERIFIED" && r.kaprodi_verified_at)
           .map((r) => r.file_type),
       );
       const unverifiedFiles = KAPRODI_REQUIRED_FILE_TYPES.filter(

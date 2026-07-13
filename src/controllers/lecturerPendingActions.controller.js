@@ -26,6 +26,7 @@ exports.getPendingActions = async (req, res, next) => {
     const [
       [outlineConsultationRows],
       [skripsiConsultationRows],
+      [sidangStartRows],
       [sidangPenilaianRows],
       [sidangNotulenRows],
       [sidangHasilRows],
@@ -42,6 +43,14 @@ exports.getPendingActions = async (req, res, next) => {
         `SELECT COUNT(*) AS c
          FROM konsultasi_skripsi_stage s
          WHERE s.pembimbing_nidn = ? AND s.current_status IN ('SUBMITTED', 'IN_REVIEW')`,
+        [nidn],
+      ),
+      db.query(
+        `SELECT COUNT(*) AS c
+         FROM sidang si
+         JOIN skripsi sk ON sk.id = si.skripsi_id
+         WHERE si.status = 'SCHEDULED'
+           AND sk.pembimbing1_nidn = ?`,
         [nidn],
       ),
       db.query(
@@ -106,6 +115,7 @@ exports.getPendingActions = async (req, res, next) => {
     const outlineConsultation = Number(outlineConsultationRows[0]?.c ?? 0);
     const skripsiConsultation = Number(skripsiConsultationRows[0]?.c ?? 0);
     const sidang =
+      Number(sidangStartRows[0]?.c ?? 0) +
       Number(sidangPenilaianRows[0]?.c ?? 0) +
       Number(sidangNotulenRows[0]?.c ?? 0) +
       Number(sidangHasilRows[0]?.c ?? 0);

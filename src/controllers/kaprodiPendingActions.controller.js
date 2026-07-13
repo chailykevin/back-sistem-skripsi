@@ -37,42 +37,58 @@ exports.getPendingActions = async (req, res, next) => {
     if (programStudiIds.length === 0) {
       return res.json({
         ok: true,
-        data: { outline: 0, disposisi: 0, sidang: 0, total: 0 },
+        data: {
+          outline: 0,
+          disposisi: 0,
+          sidang: 0,
+          disposisiSidang: 0,
+          total: 0,
+        },
       });
     }
 
     const placeholders = programStudiIds.map(() => "?").join(",");
 
-    const [[outlineRows], [disposisiRows], [sidangRows]] = await Promise.all([
-      db.query(
-        `SELECT COUNT(*) AS c
-         FROM outline o
-         JOIN mahasiswa m ON m.npm = o.npm
-         WHERE m.program_studi_id IN (${placeholders}) AND o.status = 'SUBMITTED'`,
-        programStudiIds,
-      ),
-      db.query(
-        `SELECT COUNT(*) AS c
-         FROM pengajuan_disposisi_pembimbing pj
-         JOIN mahasiswa m ON m.npm = pj.npm
-         JOIN program_studi ps ON ps.id = m.program_studi_id
-         WHERE ps.id IN (${placeholders}) AND pj.status = 'SUBMITTED'`,
-        programStudiIds,
-      ),
-      db.query(
-        `SELECT COUNT(*) AS c
-         FROM pengajuan_sidang_kaprodi psk
-         JOIN pengajuan_sidang ON pengajuan_sidang.id = psk.pengajuan_sidang_id
-         JOIN skripsi s ON s.id = pengajuan_sidang.skripsi_id
-         JOIN program_studi ps ON ps.id = s.program_studi_id
-         WHERE ps.id IN (${placeholders}) AND psk.status = 'SUBMITTED'`,
-        programStudiIds,
-      ),
-    ]);
+    const [[outlineRows], [disposisiRows], [sidangRows], [disposisiSidangRows]] =
+      await Promise.all([
+        db.query(
+          `SELECT COUNT(*) AS c
+           FROM outline o
+           JOIN mahasiswa m ON m.npm = o.npm
+           WHERE m.program_studi_id IN (${placeholders}) AND o.status = 'SUBMITTED'`,
+          programStudiIds,
+        ),
+        db.query(
+          `SELECT COUNT(*) AS c
+           FROM pengajuan_disposisi_pembimbing pj
+           JOIN mahasiswa m ON m.npm = pj.npm
+           JOIN program_studi ps ON ps.id = m.program_studi_id
+           WHERE ps.id IN (${placeholders}) AND pj.status = 'SUBMITTED'`,
+          programStudiIds,
+        ),
+        db.query(
+          `SELECT COUNT(*) AS c
+           FROM pengajuan_sidang_kaprodi psk
+           JOIN pengajuan_sidang ON pengajuan_sidang.id = psk.pengajuan_sidang_id
+           JOIN skripsi s ON s.id = pengajuan_sidang.skripsi_id
+           JOIN program_studi ps ON ps.id = s.program_studi_id
+           WHERE ps.id IN (${placeholders}) AND psk.status = 'SUBMITTED'`,
+          programStudiIds,
+        ),
+        db.query(
+          `SELECT COUNT(*) AS c
+           FROM pengajuan_sidang ps2
+           JOIN skripsi s ON s.id = ps2.skripsi_id
+           JOIN program_studi ps ON ps.id = s.program_studi_id
+           WHERE ps.id IN (${placeholders}) AND ps2.status = 'WAITING_FOR_DISPOSISI'`,
+          programStudiIds,
+        ),
+      ]);
 
     const outline = Number(outlineRows[0]?.c ?? 0);
     const disposisi = Number(disposisiRows[0]?.c ?? 0);
     const sidang = Number(sidangRows[0]?.c ?? 0);
+    const disposisiSidang = Number(disposisiSidangRows[0]?.c ?? 0);
 
     return res.json({
       ok: true,
@@ -80,7 +96,8 @@ exports.getPendingActions = async (req, res, next) => {
         outline,
         disposisi,
         sidang,
-        total: outline + disposisi + sidang,
+        disposisiSidang,
+        total: outline + disposisi + sidang + disposisiSidang,
       },
     });
   } catch (err) {
