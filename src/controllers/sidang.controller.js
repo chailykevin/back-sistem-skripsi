@@ -145,6 +145,17 @@ const BOBOT = {
   penunjang: 0.1,
 };
 
+// Max points per komponen = bobot * 100. Lecturers enter already-weighted
+// points directly (e.g. Isi max 30), not a raw 0-100 score to be multiplied.
+const NILAI_MAX = {
+  isi: BOBOT.isi * 100,
+  bahasa: BOBOT.bahasa * 100,
+  tsp: BOBOT.tsp * 100,
+  penguasaan: BOBOT.penguasaan * 100,
+  penunjang: BOBOT.penunjang * 100,
+};
+const NILAI_KEYS = ["isi", "bahasa", "tsp", "penguasaan", "penunjang"];
+
 const NOTULEN_ROLE_LABEL = {
   PENGUJI_1: "Penguji Utama",
   PENGUJI_2: "Anggota Penguji",
@@ -388,7 +399,8 @@ exports.startSidang = async (req, res, next) => {
       [sidang.id],
     );
 
-    const sidangLink = `/sidang/${skripsiId}`;
+    const studentSidangLink = `/student/sidang`;
+    const lecturerSidangLink = `/pembimbing/sidang/${skripsiId}`;
     const [[studentUserRow]] = await db.query(
       `SELECT id FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
       [sidang.npm],
@@ -399,7 +411,7 @@ exports.startSidang = async (req, res, next) => {
         studentUserRow.id,
         "SIDANG_STARTED",
         "Sidang skripsi Anda telah dimulai.",
-        sidangLink,
+        studentSidangLink,
       );
     }
     const lecturerMsg = `Sidang skripsi ${sidang.nama_mahasiswa} telah dimulai.`;
@@ -411,7 +423,7 @@ exports.startSidang = async (req, res, next) => {
     ]) {
       const lecId = await resolveUserId(db, lecNidn);
       if (lecId) {
-        await insertNotification(db, lecId, "SIDANG_STARTED", lecturerMsg, sidangLink);
+        await insertNotification(db, lecId, "SIDANG_STARTED", lecturerMsg, lecturerSidangLink);
       }
     }
 
@@ -499,7 +511,7 @@ exports.submitNotulen = async (req, res, next) => {
         pembimbing1UserId,
         "SIDANG_NOTULEN_SUBMITTED",
         `${callerNama} telah mengumpulkan notulen sidang ${sidang.nama_mahasiswa}.`,
-        `/sidang/${skripsiId}`,
+        `/pembimbing/sidang/${skripsiId}`,
       );
     }
 
@@ -568,10 +580,15 @@ exports.submitPenilaian = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "Nilai harus berupa angka" });
     }
-    if (parsedNilai.some((v) => v < 0 || v > 100)) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Nilai harus antara 0 dan 100" });
+    const outOfRangeIdx = parsedNilai.findIndex(
+      (v, i) => v < 0 || v > NILAI_MAX[NILAI_KEYS[i]],
+    );
+    if (outOfRangeIdx !== -1) {
+      const key = NILAI_KEYS[outOfRangeIdx];
+      return res.status(400).json({
+        ok: false,
+        message: `Nilai ${key} harus antara 0 dan ${NILAI_MAX[key]} (bobot ${BOBOT[key] * 100}%)`,
+      });
     }
 
     await conn.beginTransaction();
@@ -630,12 +647,8 @@ exports.submitPenilaian = async (req, res, next) => {
     ]);
 
     const [nIsi, nBahasa, nTsp, nPenguasaan, nPenunjang] = parsedNilai;
-    const totalNilai =
-      nIsi * BOBOT.isi +
-      nBahasa * BOBOT.bahasa +
-      nTsp * BOBOT.tsp +
-      nPenguasaan * BOBOT.penguasaan +
-      nPenunjang * BOBOT.penunjang;
+    // Each komponen is already entered in weighted points, so total is a plain sum.
+    const totalNilai = nIsi + nBahasa + nTsp + nPenguasaan + nPenunjang;
 
     const tanggalFormatted = sidang.tanggal_sidang
       ? formatTanggal(new Date(sidang.tanggal_sidang))
@@ -743,7 +756,7 @@ exports.submitPenilaian = async (req, res, next) => {
           pembimbing1UserId,
           "SIDANG_PENILAIAN_SUBMITTED",
           `${callerNama} telah mengumpulkan penilaian sidang ${sidang.nama_mahasiswa}.`,
-          `/sidang/${skripsiId}`,
+          `/pembimbing/sidang/${skripsiId}`,
         );
       }
     }
@@ -977,7 +990,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
           studentUserRow.id,
           "SIDANG_GAGAL",
           "Skripsi Anda dinyatakan GAGAL karena terindikasi plagiat. Anda dapat mengulang dari awal pada semester berikutnya.",
-          `/sidang/${skripsiId}`,
+          `/student/sidang`,
         );
       }
       await conn.commit();
@@ -1054,7 +1067,8 @@ exports.submitHasilPenilaian = async (req, res, next) => {
 
     // Notify student + all 4 participants of LULUS / TIDAK_LULUS result
     const notifType = hasilSidang === "LULUS" ? "SIDANG_LULUS" : "SIDANG_TIDAK_LULUS";
-    const sidangLink = `/sidang/${skripsiId}`;
+    const studentSidangLink = `/student/sidang`;
+    const lecturerSidangLink = `/pembimbing/sidang/${skripsiId}`;
     const [[studentRow]] = await conn.query(
       `SELECT id FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
       [sidang.npm],
@@ -1064,7 +1078,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
         hasilSidang === "LULUS"
           ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi dengan nilai ${rata.toFixed(2)} (${grade}).`
           : "Anda dinyatakan TIDAK LULUS dalam sidang skripsi. Anda dapat mengikuti ujian ulang.";
-      await insertNotification(conn, studentRow.id, notifType, studentMsg, sidangLink);
+      await insertNotification(conn, studentRow.id, notifType, studentMsg, studentSidangLink);
     }
     const lecturerMsg =
       hasilSidang === "LULUS"
@@ -1078,7 +1092,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     ]) {
       const lecId = await resolveUserId(conn, lecNidn);
       if (lecId) {
-        await insertNotification(conn, lecId, notifType, lecturerMsg, sidangLink);
+        await insertNotification(conn, lecId, notifType, lecturerMsg, lecturerSidangLink);
       }
     }
 
