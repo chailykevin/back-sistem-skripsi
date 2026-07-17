@@ -39,6 +39,41 @@ const PREDEFINED_MAHASISWA = [
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
   },
+  {
+    npm: "22421581",
+    nama: "Robert Varian",
+    username: "22421581",
+    programStudiNama: "Informatika",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
+  {
+    npm: "22421527",
+    nama: "Carolus Seto Gautama",
+    username: "22421527",
+    programStudiNama: "Informatika",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
+  {
+    npm: "22421587",
+    nama: "Sylvia Steffi",
+    username: "22421587",
+    programStudiNama: "Informatika",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
+  {
+    npm: "22421521",
+    nama: "Argo Aditya Saputra",
+    username: "22421521",
+    programStudiNama: "Informatika",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
+  {
+    npm: "22421568",
+    nama: "Mertayasa Pradana Hartono",
+    username: "22421568",
+    programStudiNama: "Informatika",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
 ];
 const PREDEFINED_DOSEN = [
   {
