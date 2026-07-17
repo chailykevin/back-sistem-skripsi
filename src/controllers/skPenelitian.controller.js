@@ -413,7 +413,12 @@ async function generateSkDocuments(conn, sk, outlineId) {
     `INSERT INTO pengajuan_sk_penelitian_files
        (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
      VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-    [sk.id, `SK_Skripsi_${kartu.npm}.docx`, mimeDocx, skBase64],
+    [
+      sk.id,
+      buildKartuFileName(kartu.npm, kartu.nama_mahasiswa, "SK Penunjukan Pembimbing"),
+      mimeDocx,
+      skBase64,
+    ],
   );
 
   // Generate SURAT_PENYELESAIAN_SKRIPSI (always)
@@ -439,7 +444,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
      VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
     [
       sk.id,
-      `Surat_Penyelesaian_Skripsi_${kartu.npm}.docx`,
+      buildKartuFileName(kartu.npm, kartu.nama_mahasiswa, "Surat Penyelesaian Skripsi"),
       mimeDocx,
       penyelesaianBase64,
     ],
