@@ -269,6 +269,9 @@ async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra = {}) {
     pembimbing2_signature: signatureImagePatch(kartu.pembimbing2_signature),
     kaprodi_signature: signatureImagePatch(extra.kaprodiSignature ?? null),
     tanggal_mulai: textPatch(extra.tanggalMulai ?? ""),
+    tanggal_selesai: textPatch(
+      kartu.completed_at ? formatKartuDate(kartu.completed_at) : "",
+    ),
     kaprodi_name: textPatch(extra.kaprodiNama ?? ""),
   };
 
@@ -1789,7 +1792,7 @@ exports.previewKartuDocx = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT k.id, k.skripsi_id, k.is_completed, k.file_content, k.file_name, k.mime_type,
+      `SELECT k.id, k.skripsi_id, k.is_completed, k.completed_at, k.file_content, k.file_name, k.mime_type,
               sk.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn, sk.program_studi_id
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
