@@ -151,10 +151,10 @@ exports.create = async (req, res, next) => {
       try {
         if (txStarted) await conn.rollback();
       } catch (_) {}
-      conn.release();
       throw err;
+    } finally {
+      conn.release();
     }
-    conn.release();
 
     res.status(201).json({
       ok: true,
