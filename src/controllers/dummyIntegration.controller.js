@@ -10,7 +10,6 @@ const PREDEFINED_MAHASISWA = [
     username: "22412890",
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
-    email: "22412890@student.example.com",
   },
   {
     npm: "22421562",
@@ -18,7 +17,6 @@ const PREDEFINED_MAHASISWA = [
     username: "22421562",
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
-    email: "chailykevin@gmail.com",
   },
   {
     npm: "22421495",
@@ -26,7 +24,6 @@ const PREDEFINED_MAHASISWA = [
     username: "22421495",
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
-    email: "22421495@student.example.com",
   },
   {
     npm: "22421592",
@@ -34,7 +31,6 @@ const PREDEFINED_MAHASISWA = [
     username: "22421592",
     programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
-    email: "22421592@student.example.com",
   },
   {
     npm: "22412858",
@@ -42,7 +38,6 @@ const PREDEFINED_MAHASISWA = [
     username: "22412858",
     programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
-    email: "22412858@student.example.com",
   },
 ];
 const PREDEFINED_DOSEN = [
@@ -158,12 +153,14 @@ async function getProgramStudiRows(conn) {
 }
 
 async function upsertMahasiswa(conn, mahasiswa) {
+  // email is intentionally omitted from ON DUPLICATE KEY UPDATE: it's only
+  // set on first insert (seed data carries none). Re-seeding an existing
+  // student must never erase an email they've since captured/verified.
   await conn.query(
     `INSERT INTO mahasiswa (npm, nama, email, sks, program_studi_id)
      VALUES (?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
-       email = VALUES(email),
        sks = VALUES(sks),
        program_studi_id = VALUES(program_studi_id)`,
     [
@@ -188,12 +185,14 @@ async function upsertDosen(conn, dosen) {
 }
 
 async function upsertUserAccount(conn, payload) {
+  // password_hash is intentionally omitted from ON DUPLICATE KEY UPDATE:
+  // it should only ever be set on first insert. Re-seeding an existing
+  // account must never reset a password the user may have since changed.
   await conn.query(
     `INSERT INTO users (username, password_hash, npm, nidn, is_active)
      VALUES (?, ?, ?, ?, 1)
      ON DUPLICATE KEY UPDATE
        username = VALUES(username),
-       password_hash = VALUES(password_hash),
        npm = VALUES(npm),
        nidn = VALUES(nidn),
        is_active = 1`,
@@ -281,7 +280,7 @@ function getPredefinedMahasiswa(programRows) {
     sks: 140,
     username: item.username,
     programStudiNama: item.programStudiNama,
-    password: item.password,
+    password: item.npm,
     programStudiId:
       prodiByName.get(String(item.programStudiNama).toLowerCase())?.id ?? null,
     index: index + 1,
@@ -305,7 +304,6 @@ function getPredefinedDosen(programRows) {
     isSekretariat: item.isSekretariat ?? false,
     isDekan: item.isDekan ?? false,
     isSekretariatProdi: item.isSekretariatProdi ?? false,
-    password: item.password,
     programStudiNama: item.isKaprodi
       ? String(item.programStudiNama ?? "").trim()
       : item.isSekretariatProdi
@@ -319,6 +317,7 @@ function getPredefinedDosen(programRows) {
       ? (prodiByName.get(String(item.programStudiNama ?? "").toLowerCase())
           ?.id ?? null)
       : null,
+    password: item.username,
     index: index + 1,
   }));
 }
@@ -378,12 +377,11 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
       }
     }
 
-    const password = DUMMY_PASSWORD_PLAIN;
-    const passwordHash = await bcrypt.hash(password, 10);
     const assignedByUserId = Number(req.user?.id) || null;
 
     const result = [];
     for (const mhs of input) {
+      const passwordHash = await bcrypt.hash(mhs.password, 10);
       await upsertMahasiswa(conn, mhs);
       await upsertUserAccount(conn, {
         username: mhs.username,
@@ -429,7 +427,7 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
       ok: true,
       message: "Dummy mahasiswa seeded",
       data: {
-        credentials: { password },
+        credentials: { note: "Each mahasiswa's password equals their npm" },
         mahasiswa: result,
       },
     });
@@ -528,8 +526,6 @@ exports.seedDosenDummy = async (req, res, next) => {
       }
     }
 
-    const password = DUMMY_PASSWORD_PLAIN;
-    const passwordHash = await bcrypt.hash(password, 10);
     const assignedByUserId = Number(req.user?.id) || null;
 
     // Seed PERPUSTAKAAN and LPPM institution-wide accounts
@@ -543,6 +539,7 @@ exports.seedDosenDummy = async (req, res, next) => {
     ];
     for (const acc of institutionAccounts) {
       if (!acc.roleId) continue;
+      const passwordHash = await bcrypt.hash(acc.username, 10);
       await upsertUserAccount(conn, {
         username: acc.username,
         passwordHash,
@@ -564,9 +561,10 @@ exports.seedDosenDummy = async (req, res, next) => {
     for (const dsn of input) {
       // Lecturer account
       await upsertDosen(conn, dsn);
+      const lecturerPasswordHash = await bcrypt.hash(dsn.username, 10);
       await upsertUserAccount(conn, {
         username: dsn.username,
-        passwordHash,
+        passwordHash: lecturerPasswordHash,
         npm: null,
         nidn: dsn.nidn,
       });
@@ -595,9 +593,10 @@ exports.seedDosenDummy = async (req, res, next) => {
       let kaprodiProgramStudi = null;
       if (dsn.isKaprodi) {
         const kaprodiUsername = dsn.username + "_kaprodi";
+        const kaprodiPasswordHash = await bcrypt.hash(kaprodiUsername, 10);
         await upsertUserAccount(conn, {
           username: kaprodiUsername,
-          passwordHash,
+          passwordHash: kaprodiPasswordHash,
           npm: null,
           nidn: dsn.nidn,
         });
@@ -625,6 +624,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         kaprodiAccount = {
           userId: kaprodiUserId,
           username: kaprodiUsername,
+          password: kaprodiUsername,
           roles: ["KAPRODI"],
           kaprodiProgramStudiId: kaprodiProgramStudi?.id ?? null,
           kaprodiProgramStudiNama: kaprodiProgramStudi?.nama ?? null,
@@ -634,9 +634,13 @@ exports.seedDosenDummy = async (req, res, next) => {
       let sekretariatAccount = null;
       if (dsn.isSekretariat) {
         const sekretariatUsername = dsn.username + "_sekretariat";
+        const sekretariatPasswordHash = await bcrypt.hash(
+          sekretariatUsername,
+          10,
+        );
         await upsertUserAccount(conn, {
           username: sekretariatUsername,
-          passwordHash,
+          passwordHash: sekretariatPasswordHash,
           npm: null,
           nidn: dsn.nidn,
         });
@@ -658,6 +662,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         sekretariatAccount = {
           userId: sekretariatUserId,
           username: sekretariatUsername,
+          password: sekretariatUsername,
           roles: ["SEKRETARIAT"],
         };
       }
@@ -665,9 +670,10 @@ exports.seedDosenDummy = async (req, res, next) => {
       let dekanAccount = null;
       if (dsn.isDekan) {
         const dekanUsername = dsn.username + "_dekan";
+        const dekanPasswordHash = await bcrypt.hash(dekanUsername, 10);
         await upsertUserAccount(conn, {
           username: dekanUsername,
-          passwordHash,
+          passwordHash: dekanPasswordHash,
           npm: null,
           nidn: dsn.nidn,
         });
@@ -683,7 +689,12 @@ exports.seedDosenDummy = async (req, res, next) => {
           programStudiId: null,
           assignedByUserId,
         });
-        dekanAccount = { userId: dekanUserId, username: dekanUsername, roles: ["DEKAN"] };
+        dekanAccount = {
+          userId: dekanUserId,
+          username: dekanUsername,
+          password: dekanUsername,
+          roles: ["DEKAN"],
+        };
       }
 
       let sekretariatProdiAccount = null;
@@ -693,9 +704,10 @@ exports.seedDosenDummy = async (req, res, next) => {
         dsn.sekretariatProdiProgramStudiId
       ) {
         const sekprodiUsername = dsn.username + "_sekprodi";
+        const sekprodiPasswordHash = await bcrypt.hash(sekprodiUsername, 10);
         await upsertUserAccount(conn, {
           username: sekprodiUsername,
-          passwordHash,
+          passwordHash: sekprodiPasswordHash,
           npm: null,
           nidn: dsn.nidn,
         });
@@ -721,6 +733,7 @@ exports.seedDosenDummy = async (req, res, next) => {
           sekretariatProdiAccount = {
             userId: sekprodiUserId,
             username: sekprodiUsername,
+            password: sekprodiUsername,
             roles: ["SEKRETARIAT_PRODI"],
             programStudiId: sekprodiProdi?.id ?? null,
             programStudiNama: sekprodiProdi?.nama ?? null,
@@ -778,7 +791,9 @@ exports.seedDosenDummy = async (req, res, next) => {
       ok: true,
       message: "Dummy dosen seeded",
       data: {
-        credentials: { password },
+        credentials: {
+          note: "Each dosen account's password equals its own username",
+        },
         summary: {
           total: result.length,
           kaprodi: kaprodiCount,
@@ -787,7 +802,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         institutionAccounts: institutionAccounts.map((a) => ({
           username: a.username,
           role: a.roleCode,
-          password,
+          password: a.username,
         })),
         dosen: result,
       },
