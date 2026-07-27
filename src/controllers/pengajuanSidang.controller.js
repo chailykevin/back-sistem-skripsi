@@ -638,18 +638,8 @@ const VALID_KAPRODI_STATUSES = [
 ];
 
 const ALL_FILE_TYPES = [
-  "JUDUL_LUAR",
-  "JUDUL_DALAM",
-  "PERSETUJUAN_UJIAN",
-  "ABSTRAK",
-  "KATA_PENGANTAR",
-  "DAFTAR_ISI",
-  "DAFTAR_TABEL",
-  "DAFTAR_GAMBAR",
+  "BERKAS_SKRIPSI",
   "DAFTAR_LAMPIRAN",
-  "BAB_1_5",
-  "DAFTAR_PUSTAKA",
-  "RIWAYAT_HIDUP",
   "HALAMAN_LAMPIRAN",
   "INDEKS",
   "SURAT_KETERANGAN",
@@ -713,17 +703,7 @@ const REQUIRED_FILE_TYPES = ALL_FILE_TYPES.filter(
 
 // File types that Kaprodi verifies (skripsi content + optional skripsi content + consultation docs)
 const KAPRODI_FILE_TYPES = [
-  "JUDUL_LUAR",
-  "JUDUL_DALAM",
-  "PERSETUJUAN_UJIAN",
-  "ABSTRAK",
-  "KATA_PENGANTAR",
-  "DAFTAR_ISI",
-  "DAFTAR_TABEL",
-  "DAFTAR_GAMBAR",
-  "BAB_1_5",
-  "DAFTAR_PUSTAKA",
-  "RIWAYAT_HIDUP",
+  "BERKAS_SKRIPSI",
   "SURAT_PERNYATAAN_TIDAK_PLAGIAT",
   "DAFTAR_LAMPIRAN",
   "HALAMAN_LAMPIRAN",
@@ -1009,7 +989,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
         );
       }
     }
-    // Ujian ulang: no system files auto-pulled; student uploads only BUKTI_PEMBAYARAN + BAB_1_5
+    // Ujian ulang: no system files auto-pulled; student uploads only BUKTI_PEMBAYARAN + BERKAS_SKRIPSI
 
     await conn.commit();
     txStarted = false;
@@ -1312,8 +1292,8 @@ exports.submitPengajuanSidang = async (req, res, next) => {
     const existingTypes = new Set(existingFiles.map((f) => f.file_type));
 
     if (sidang.ujian_ke > 1) {
-      // Ujian ulang: only BUKTI_PEMBAYARAN and BAB_1_5 required
-      const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BAB_1_5"];
+      // Ujian ulang: only BUKTI_PEMBAYARAN and BERKAS_SKRIPSI required
+      const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BERKAS_SKRIPSI"];
       const missing = ujianUlangRequired.filter((t) => !existingTypes.has(t));
       if (missing.length > 0) {
         await conn.rollback();
@@ -1602,8 +1582,8 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       );
 
       if (sidang.ujian_ke > 1) {
-        // Ujian ulang: only check BUKTI_PEMBAYARAN and BAB_1_5
-        const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BAB_1_5"];
+        // Ujian ulang: only check BUKTI_PEMBAYARAN and BERKAS_SKRIPSI
+        const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BERKAS_SKRIPSI"];
         const unverified = ujianUlangRequired.filter(
           (t) => fileMap[t] !== "VERIFIED",
         );
@@ -2023,7 +2003,7 @@ exports.initKaprodi = async (req, res, next) => {
         );
       }
     }
-    // Ujian ulang: no system files; student has already uploaded BUKTI_PEMBAYARAN + BAB_1_5
+    // Ujian ulang: no system files; student has already uploaded BUKTI_PEMBAYARAN + BERKAS_SKRIPSI
 
     await conn.commit();
     txStarted = false;

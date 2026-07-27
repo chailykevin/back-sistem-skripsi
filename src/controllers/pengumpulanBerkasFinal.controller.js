@@ -855,7 +855,9 @@ exports.getPengumpulan = async (req, res, next) => {
               m.nama AS nama_mahasiswa,
               prog.nama AS program_studi_nama,
               d1.nama AS pembimbing1_nama,
-              d2.nama AS pembimbing2_nama
+              d2.nama AS pembimbing2_nama,
+              dp1.nama AS penguji1_nama,
+              dp2.nama AS penguji2_nama
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
@@ -865,6 +867,8 @@ exports.getPengumpulan = async (req, res, next) => {
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN dosen dp1 ON dp1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen dp2 ON dp2.nidn = psk_k.penguji2_nidn
        WHERE pbf.skripsi_id = ?
        LIMIT 1`,
       [skripsiId],
@@ -925,6 +929,8 @@ exports.getPengumpulan = async (req, res, next) => {
         programStudiNama: pengumpulan.program_studi_nama ?? null,
         pembimbing1Nama: pengumpulan.pembimbing1_nama ?? null,
         pembimbing2Nama: pengumpulan.pembimbing2_nama ?? null,
+        penguji1Nama: pengumpulan.penguji1_nama ?? null,
+        penguji2Nama: pengumpulan.penguji2_nama ?? null,
         status: pengumpulan.status,
         isCompleted: !!pengumpulan.is_completed,
         createdAt: pengumpulan.created_at,
@@ -932,6 +938,12 @@ exports.getPengumpulan = async (req, res, next) => {
         confirmations: confirmations.map((c) => ({
           id: c.id,
           recipientRole: c.recipient_role,
+          nama: {
+            PEMBIMBING_1: pengumpulan.pembimbing1_nama,
+            PEMBIMBING_2: pengumpulan.pembimbing2_nama,
+            PENGUJI_1: pengumpulan.penguji1_nama,
+            PENGUJI_2: pengumpulan.penguji2_nama,
+          }[c.recipient_role] ?? null,
           userId: c.user_id,
           confirmedAt: c.confirmed_at,
         })),

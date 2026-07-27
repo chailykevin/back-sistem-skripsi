@@ -283,9 +283,9 @@ exports.getSidang = async (req, res, next) => {
     };
 
     // For lecturers during ONGOING: hide other participants' scores and file_content but keep submitted_at
-    // Pembimbing 1 sees all scores (needed to submit hasil penilaian akhir)
+    // Pembimbing 1 and Pembimbing 2 see all scores (either can submit hasil penilaian akhir)
     const sanitizePenilaianForLecturer = (row) => {
-      if (!isOngoing || !callerRole || callerRole === "PEMBIMBING_1") return row;
+      if (!isOngoing || !callerRole || callerRole === "PEMBIMBING_1" || callerRole === "PEMBIMBING_2") return row;
       if (row.role === callerRole) {
         const { file_content, ...safe } = row;
         return safe;
@@ -375,12 +375,13 @@ exports.startSidang = async (req, res, next) => {
         .json({ ok: false, message: "Sidang tidak ditemukan" });
     }
 
-    if (resolveSidangRole(sidang, nidn) !== "PEMBIMBING_1") {
+    const callerRole = resolveSidangRole(sidang, nidn);
+    if (callerRole !== "PEMBIMBING_1" && callerRole !== "PEMBIMBING_2") {
       return res
         .status(403)
         .json({
           ok: false,
-          message: "Hanya Pembimbing 1 yang dapat memulai sidang",
+          message: "Hanya Pembimbing 1 atau Pembimbing 2 yang dapat memulai sidang",
         });
     }
 
@@ -836,12 +837,12 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     }
 
     const role = resolveSidangRole(sidang, nidn);
-    if (role !== "PEMBIMBING_1") {
+    if (role !== "PEMBIMBING_1" && role !== "PEMBIMBING_2") {
       await conn.rollback();
       txStarted = false;
       return res.status(403).json({
         ok: false,
-        message: "Hanya Pembimbing 1 yang dapat mengisi hasil penilaian akhir",
+        message: "Hanya Pembimbing 1 atau Pembimbing 2 yang dapat mengisi hasil penilaian akhir",
       });
     }
 
@@ -872,10 +873,29 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     const rata = totalNilai / 4;
     const grade = computeGrade(rata);
 
-    // Signature for Pembimbing 1
+    // Verdict must match the computed rata — mirrors the frontend's disabled radios.
+    if (rata >= 60 && hasilSidang !== "LULUS") {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "Rata-rata >= 60, hasil sidang harus LULUS.",
+      });
+    }
+    if (rata < 60 && hasilSidang === "LULUS") {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "Rata-rata < 60, hasil sidang tidak boleh LULUS.",
+      });
+    }
+
+    // Hasil Penilaian Akhir DOCX is always signed by Pembimbing 1, regardless of
+    // which pembimbing (P1 or P2) actually submits this form.
     const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
+      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      [sidang.pembimbing1_nidn],
     );
 
     assertSignatures([
