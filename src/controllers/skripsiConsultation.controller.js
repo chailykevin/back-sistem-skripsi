@@ -4,9 +4,10 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 
-const CHAPTER_ORDER = ["BAB_1_2", "BAB_3", "BAB_4", "BAB_5"];
+const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 const CHAPTER_LABEL = {
-  BAB_1_2: "Bab 1 & 2",
+  BAB_1: "Bab 1",
+  BAB_2: "Bab 2",
   BAB_3: "Bab 3",
   BAB_4: "Bab 4",
   BAB_5: "Bab 5",
@@ -145,7 +146,8 @@ function formatKartuDate(value) {
 
 function getChapterGroupLabel(chapterGroup) {
   const map = {
-    BAB_1_2: "Bab 1 & 2",
+    BAB_1: "Bab 1",
+    BAB_2: "Bab 2",
     BAB_3: "Bab 3",
     BAB_4: "Bab 4",
     BAB_5: "Bab 5",
@@ -510,7 +512,7 @@ exports.initKartu = async (req, res, next) => {
       `INSERT INTO konsultasi_skripsi_stage (
          kartu_konsultasi_skripsi_id, chapter_group, stage,
          pembimbing_nidn, current_status, current_submission_no, started_at
-       ) VALUES (?, 'BAB_1_2', 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
+       ) VALUES (?, 'BAB_1', 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
       [kartuId, skripsiRow.pembimbing2_nidn],
     );
 
@@ -574,7 +576,7 @@ exports.getMyDetail = async (req, res, next) => {
     const [stages] = await db.query(
       `SELECT * FROM konsultasi_skripsi_stage
        WHERE kartu_konsultasi_skripsi_id = ?
-       ORDER BY FIELD(chapter_group, 'BAB_1_2','BAB_3','BAB_4','BAB_5') ASC,
+       ORDER BY FIELD(chapter_group, 'BAB_1','BAB_2','BAB_3','BAB_4','BAB_5') ASC,
                 CASE stage WHEN 'PEMBIMBING_2' THEN 1 WHEN 'PEMBIMBING_1' THEN 2 ELSE 3 END ASC`,
       [kartu.id],
     );
@@ -686,7 +688,7 @@ exports.submitMyChapter = async (req, res, next) => {
     const [stageRows] = await conn.query(
       `SELECT * FROM konsultasi_skripsi_stage
        WHERE kartu_konsultasi_skripsi_id = ?
-       ORDER BY FIELD(chapter_group, 'BAB_1_2','BAB_3','BAB_4','BAB_5') ASC,
+       ORDER BY FIELD(chapter_group, 'BAB_1','BAB_2','BAB_3','BAB_4','BAB_5') ASC,
                 CASE stage WHEN 'PEMBIMBING_2' THEN 1 WHEN 'PEMBIMBING_1' THEN 2 ELSE 3 END ASC
        FOR UPDATE`,
       [kartu.id],
@@ -1440,7 +1442,7 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
       `SELECT *
        FROM konsultasi_skripsi_stage
        WHERE kartu_konsultasi_skripsi_id IN (?)
-       ORDER BY FIELD(chapter_group, 'BAB_1_2','BAB_3','BAB_4','BAB_5') ASC,
+       ORDER BY FIELD(chapter_group, 'BAB_1','BAB_2','BAB_3','BAB_4','BAB_5') ASC,
                 CASE stage WHEN 'PEMBIMBING_2' THEN 1 WHEN 'PEMBIMBING_1' THEN 2 ELSE 3 END ASC`,
       [kartuIds],
     );
@@ -1705,7 +1707,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       `SELECT id, chapter_group, stage, current_status
        FROM konsultasi_skripsi_stage
        WHERE kartu_konsultasi_skripsi_id = ?
-       ORDER BY FIELD(chapter_group, 'BAB_1_2','BAB_3','BAB_4','BAB_5') ASC,
+       ORDER BY FIELD(chapter_group, 'BAB_1','BAB_2','BAB_3','BAB_4','BAB_5') ASC,
                 CASE stage WHEN 'PEMBIMBING_2' THEN 1 WHEN 'PEMBIMBING_1' THEN 2 ELSE 3 END ASC`,
       [kartu.id],
     );
