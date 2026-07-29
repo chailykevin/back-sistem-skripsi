@@ -73,6 +73,9 @@ app.use("/notifications", notificationRoutes);
 const kaprodiPendingActionsRoutes = require("./routes/kaprodiPendingActions.routes");
 app.use("/", kaprodiPendingActionsRoutes);
 
+const kaprodiReportRoutes = require("./routes/kaprodiReport.routes");
+app.use("/", kaprodiReportRoutes);
+
 const lecturerPendingActionsRoutes = require("./routes/lecturerPendingActions.routes");
 app.use("/", lecturerPendingActionsRoutes);
 

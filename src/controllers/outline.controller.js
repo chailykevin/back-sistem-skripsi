@@ -506,6 +506,8 @@ exports.listForKaprodi = async (req, res, next) => {
     // optional filter
     const status = req.query.status ? String(req.query.status) : null;
     const q = req.query.q ? String(req.query.q) : null;
+    const tahunAkademik = req.query.tahunAkademik ? String(req.query.tahunAkademik) : null;
+    const periodeAkademik = req.query.periodeAkademik ? String(req.query.periodeAkademik) : null;
 
     const where = [];
     const params = [];
@@ -521,6 +523,16 @@ exports.listForKaprodi = async (req, res, next) => {
     if (q) {
       where.push("o.judul LIKE ?");
       params.push(`%${q}%`);
+    }
+
+    if (tahunAkademik) {
+      where.push("osp.tahun_akademik = ?");
+      params.push(tahunAkademik);
+    }
+
+    if (periodeAkademik) {
+      where.push("osp.periode_akademik = ?");
+      params.push(periodeAkademik);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";

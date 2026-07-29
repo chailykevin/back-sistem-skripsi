@@ -232,6 +232,22 @@ exports.listForKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
+    const tahunAkademik = req.query.tahunAkademik ? String(req.query.tahunAkademik) : null;
+    const periodeAkademik = req.query.periodeAkademik ? String(req.query.periodeAkademik) : null;
+
+    const where = ["ps.kaprodi_nidn = ?"];
+    const params = [nidn];
+
+    if (tahunAkademik) {
+      where.push("osp.tahun_akademik = ?");
+      params.push(tahunAkademik);
+    }
+
+    if (periodeAkademik) {
+      where.push("osp.periode_akademik = ?");
+      params.push(periodeAkademik);
+    }
+
     const [rows] = await db.query(
       `
       SELECT
@@ -252,10 +268,10 @@ exports.listForKaprodi = async (req, res, next) => {
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
-      WHERE ps.kaprodi_nidn = ?
+      WHERE ${where.join(" AND ")}
       ORDER BY pj.submitted_at DESC
       `,
-      [nidn],
+      params,
     );
 
     if (rows.length > 0) {

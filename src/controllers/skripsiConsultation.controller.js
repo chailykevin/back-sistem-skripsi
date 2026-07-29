@@ -1511,7 +1511,7 @@ exports.listForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "You are not assigned as Kaprodi" });
     }
 
-    const { q } = req.query || {};
+    const { q, tahunAkademik, periodeAkademik } = req.query || {};
     const where = ["sk.program_studi_id IN (?)"];
     const params = [programStudiIds];
 
@@ -1519,6 +1519,16 @@ exports.listForKaprodi = async (req, res, next) => {
       const queryValue = `%${String(q).trim()}%`;
       where.push("(m.nama LIKE ? OR sk.npm LIKE ? OR sk.judul LIKE ?)");
       params.push(queryValue, queryValue, queryValue);
+    }
+
+    if (tahunAkademik) {
+      where.push("osp.tahun_akademik = ?");
+      params.push(String(tahunAkademik));
+    }
+
+    if (periodeAkademik) {
+      where.push("osp.periode_akademik = ?");
+      params.push(String(periodeAkademik));
     }
 
     const [kartuRows] = await db.query(
