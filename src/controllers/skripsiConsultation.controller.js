@@ -3,6 +3,7 @@ const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const { getOpenPeriod: getSidangOpenPeriod } = require("../services/sidangSubmissionPeriod.service");
 
 const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 const CHAPTER_LABEL = {
@@ -1148,9 +1149,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         );
         let autoSidangId = existingSidang?.id ?? null;
         if (!autoSidangId) {
+          const openPeriod = await getSidangOpenPeriod();
           const [sidangIns] = await conn.query(
-            `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
-            [kartuSkripsiId],
+            `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', 1, ?)`,
+            [kartuSkripsiId, openPeriod?.id ?? null],
           );
           autoSidangId = sidangIns.insertId;
         }

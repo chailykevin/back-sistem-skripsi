@@ -1363,6 +1363,89 @@ exports.getLecturerSidang = async (req, res, next) => {
   }
 };
 
+async function getKaprodiProgramStudiIdsByNidn(nidn) {
+  const [rows] = await db.query(
+    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    [nidn],
+  );
+  return rows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+exports.getKaprodiSidang = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("KAPRODI")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const { status, tahunAkademik, periodeAkademik } = req.query;
+    if (status !== undefined && !VALID_SIDANG_STATUSES.includes(status)) {
+      return res.status(400).json({
+        ok: false,
+        message: `status harus salah satu dari: ${VALID_SIDANG_STATUSES.join(", ")}`,
+      });
+    }
+
+    const nidn = await getLecturerNidn(req.user.id);
+    const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
+    if (programStudiIds.length === 0) {
+      return res.json({ ok: true, data: [] });
+    }
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+    const periodConditions = [];
+    const periodParams = [];
+    if (tahunAkademik) {
+      periodConditions.push("ssp.tahun_akademik = ?");
+      periodParams.push(String(tahunAkademik));
+    }
+    if (periodeAkademik) {
+      periodConditions.push("ssp.periode_akademik = ?");
+      periodParams.push(String(periodeAkademik));
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+         s.id, s.skripsi_id, s.nomor_surat,
+         m.npm, m.nama AS nama_mahasiswa,
+         prog.id   AS program_studi_id,
+         prog.nama AS program_studi_nama,
+         sk.judul  AS judul_skripsi,
+         ps.ujian_ke,
+         s.status, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
+         sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
+         sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
+         psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
+         psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama,
+         s.hasil_sidang, s.created_at,
+         shp.rata, shp.grade
+       FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+       LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
+       LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
+       LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
+       WHERE prog.id IN (${placeholders})
+         AND (? IS NULL OR s.status = ?)
+         ${periodConditions.map((c) => `AND ${c}`).join(" ")}
+       ORDER BY s.created_at DESC`,
+      [...programStudiIds, status ?? null, status ?? null, ...periodParams],
+    );
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
 async function resolveSidangFileAccess(req, sidang) {
   if (req.user.hasRole("SEKRETARIAT") || req.user.hasRole("KAPRODI")) return true;
   if (req.user.hasRole("STUDENT")) {

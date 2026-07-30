@@ -1152,6 +1152,60 @@ exports.listForSekretariatProdi = async (req, res, next) => {
   }
 };
 
+async function getKaprodiProgramStudiIdsByNidn(nidn) {
+  const [rows] = await db.query(
+    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    [nidn],
+  );
+  return rows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+const VALID_PENGUMPULAN_STATUSES = ["DRAFT", "SUBMITTED", "WAITING_SIGNATURE", "COMPLETED"];
+
+exports.getKaprodiPengumpulan = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("KAPRODI")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const { status } = req.query;
+    if (status !== undefined && !VALID_PENGUMPULAN_STATUSES.includes(status)) {
+      return res.status(400).json({
+        ok: false,
+        message: `status harus salah satu dari: ${VALID_PENGUMPULAN_STATUSES.join(", ")}`,
+      });
+    }
+
+    const nidn = await getLecturerNidn(req.user.id);
+    const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
+    if (programStudiIds.length === 0) {
+      return res.json({ ok: true, data: [] });
+    }
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+    const [rows] = await db.query(
+      `SELECT
+         pbf.id, pbf.skripsi_id, sk.npm, m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi,
+         pbf.status, pbf.is_completed, pbf.created_at,
+         (SELECT COUNT(*) FROM pengumpulan_berkas_final_confirmations c
+          WHERE c.pengumpulan_id = pbf.id AND c.confirmed_at IS NOT NULL) AS confirmed_count
+       FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       LEFT JOIN mahasiswa m ON m.npm = sk.npm
+       WHERE sk.program_studi_id IN (${placeholders})
+         AND (? IS NULL OR pbf.status = ?)
+       ORDER BY pbf.created_at DESC`,
+      [...programStudiIds, status ?? null, status ?? null],
+    );
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
 async function listForInstitutionRole(roleCode, recipientRole, req, res, next) {
   try {
     if (!req.user.hasRole(roleCode)) {

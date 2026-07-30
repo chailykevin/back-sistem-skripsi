@@ -1888,8 +1888,9 @@ exports.initKaprodi = async (req, res, next) => {
     const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
 
     // Gate by period for original flow only (ujian ulang is exempt)
+    let openPeriod = null;
     if (!isUjianUlang) {
-      const openPeriod = await getSidangOpenPeriod();
+      openPeriod = await getSidangOpenPeriod();
       if (!openPeriod) {
         return res.status(409).json({
           ok: false,
@@ -1904,8 +1905,8 @@ exports.initKaprodi = async (req, res, next) => {
     // Auto-create pengajuan_sidang DRAFT if missing (auto-init from konsultasi may have been skipped)
     if (!activeSidang) {
       const [sidangIns] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
-        [skripsiId],
+        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', 1, ?)`,
+        [skripsiId, openPeriod?.id ?? null],
       );
       activeSidang = { id: sidangIns.insertId, ujian_ke: 1 };
     }
@@ -1920,8 +1921,8 @@ exports.initKaprodi = async (req, res, next) => {
       let targetSidangId = activeSidang?.id;
       if (!targetSidangId) {
         const [sidangIns] = await conn.query(
-          `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', 1)`,
-          [skripsiId],
+          `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', 1, ?)`,
+          [skripsiId, openPeriod?.id ?? null],
         );
         targetSidangId = sidangIns.insertId;
       }
@@ -2475,9 +2476,10 @@ exports.submitKaprodi = async (req, res, next) => {
       [skripsiId],
     );
     if (!existingSidang) {
+      const openPeriodForFallback = await getSidangOpenPeriod();
       const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, status) VALUES (?, 'DRAFT')`,
-        [skripsiId],
+        `INSERT INTO pengajuan_sidang (skripsi_id, status, sidang_submission_period_id) VALUES (?, 'DRAFT', ?)`,
+        [skripsiId, openPeriodForFallback?.id ?? null],
       );
       existingSidang = { id: ins.insertId };
     }
@@ -3022,6 +3024,9 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
     const filterByStatus =
       statusParam && VALID_KAPRODI_STATUSES.includes(statusParam);
 
+    const tahunAkademik = req.query?.tahunAkademik ? String(req.query.tahunAkademik) : null;
+    const periodeAkademik = req.query?.periodeAkademik ? String(req.query.periodeAkademik) : null;
+
     const conditions = [
       `ps.id IN (${kaprodiProgramStudiIds.map(() => "?").join(",")})`,
       `psk.status != 'DRAFT'`,
@@ -3031,6 +3036,16 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
     if (filterByStatus) {
       conditions.push("psk.status = ?");
       params.push(statusParam);
+    }
+
+    if (tahunAkademik) {
+      conditions.push("ssp.tahun_akademik = ?");
+      params.push(tahunAkademik);
+    }
+
+    if (periodeAkademik) {
+      conditions.push("ssp.periode_akademik = ?");
+      params.push(periodeAkademik);
     }
 
     const [rows] = await db.query(

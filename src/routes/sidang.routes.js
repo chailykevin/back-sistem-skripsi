@@ -3,6 +3,7 @@ const c = require("../controllers/sidang.controller");
 const auth = require("../middlewares/auth");
 
 router.get("/sekretariat/sidang", auth, c.getSekretariatSidang);
+router.get("/kaprodi/sidang", auth, c.getKaprodiSidang);
 router.get("/lecturer/sidang", auth, c.getLecturerSidang);
 router.get("/sidang/:skripsiId", auth, c.getSidang);
 router.patch("/sidang/:skripsiId/start", auth, c.startSidang);

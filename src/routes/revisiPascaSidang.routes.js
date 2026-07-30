@@ -3,6 +3,7 @@ const c = require("../controllers/revisiPascaSidang.controller");
 const auth = require("../middlewares/auth");
 
 router.get("/lecturer/revisi-pasca-sidang", auth, c.getLecturerRevisi);
+router.get("/kaprodi/revisi-pasca-sidang", auth, c.getKaprodiRevisi);
 router.post("/revisi-pasca-sidang/:skripsiId/init", auth, c.initRevisi);
 router.post("/revisi-pasca-sidang/:skripsiId/submit", auth, c.submitRevisi);
 router.post("/revisi-pasca-sidang/:skripsiId/review", auth, c.reviewRevisi);

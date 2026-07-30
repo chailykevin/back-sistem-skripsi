@@ -3,6 +3,7 @@ const c = require("../controllers/pengumpulanBerkasFinal.controller");
 const auth = require("../middlewares/auth");
 
 router.get("/lecturer/pengumpulan-berkas-final", auth, c.listForLecturer);
+router.get("/kaprodi/pengumpulan-berkas-final", auth, c.getKaprodiPengumpulan);
 router.get("/perpustakaan/pengumpulan-berkas-final", auth, c.listForPerpustakaan);
 router.get("/lppm/pengumpulan-berkas-final", auth, c.listForLppm);
 router.get("/sekretariat-prodi/pengumpulan-berkas-final", auth, c.listForSekretariatProdi);

@@ -12,6 +12,24 @@ async function getStudentNpm(userId) {
   return rows[0]?.npm ?? null;
 }
 
+async function getLecturerNidn(userId) {
+  const [rows] = await db.query(
+    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    [userId],
+  );
+  return rows[0]?.nidn ?? null;
+}
+
+async function getKaprodiProgramStudiIdsByNidn(nidn) {
+  const [rows] = await db.query(
+    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    [nidn],
+  );
+  return rows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
   const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
@@ -1491,6 +1509,75 @@ exports.listSkForSekretariat = async (req, res, next) => {
        ${filterByStatus ? "WHERE sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
       filterByStatus ? [statusParam] : [],
+    );
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.listSkForKaprodi = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("KAPRODI")) {
+      return res.status(403).json({
+        ok: false,
+        message: "Only kaprodi can access this endpoint",
+      });
+    }
+
+    const nidn = await getLecturerNidn(req.user.id);
+    if (!nidn) {
+      return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+    }
+
+    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    if (programStudiIds.length === 0) {
+      return res
+        .status(403)
+        .json({ ok: false, message: "You are not assigned as Kaprodi" });
+    }
+
+    const statusParam = req.query?.status;
+    const filterByStatus =
+      statusParam && VALID_SK_STATUSES.includes(statusParam);
+
+    const [rows] = await db.query(
+      `SELECT
+         sk.id,
+         sk.outline_id,
+         sk.status,
+         sk.catatan_sekretariat,
+         sk.submitted_at,
+         sk.verified_at,
+         sk.completed_at,
+         sk.created_at,
+         m.nama AS nama_mahasiswa,
+         o.judul AS judul_skripsi,
+         o.submission_period_id,
+         o.program_studi_id,
+         ps.nama AS program_studi_nama,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+         ) AS has_sk_penunjukan_pembimbing,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_KETERANGAN'
+         ) AS has_surat_keterangan,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+         ) AS has_surat_penyelesaian_skripsi
+       FROM pengajuan_sk_penelitian sk
+       JOIN outline o ON o.id = sk.outline_id
+       LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
+       LEFT JOIN mahasiswa m ON m.npm = o.npm
+       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
+       WHERE o.program_studi_id IN (?)
+       ${filterByStatus ? "AND sk.status = ?" : ""}
+       ORDER BY sk.submitted_at DESC`,
+      filterByStatus ? [programStudiIds, statusParam] : [programStudiIds],
     );
 
     return res.json({ ok: true, data: rows });

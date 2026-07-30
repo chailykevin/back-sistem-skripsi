@@ -138,6 +138,8 @@ function resolveActiveKonsultasiOutlineStage(stages, isCompleted) {
 const STAGE_LABELS = {
   PEMBIMBING_2: "Pembimbing 2",
   PEMBIMBING_1: "Pembimbing 1",
+  PENGUJI_2: "Penguji 2",
+  PENGUJI_1: "Penguji 1",
 };
 
 function resolveWaitingOn(activeStatus) {
@@ -906,6 +908,449 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     }
 
     await sendWorkbook(res, workbook, "laporan-keseluruhan.xlsx");
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
+  try {
+    const programStudiIds = await resolveKaprodiProgramStudi(req, res);
+    if (!programStudiIds) return;
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+    const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "ssp");
+    const where = [`s.program_studi_id IN (${placeholders})`, `psk.status != 'DRAFT'`, ...periodClauses];
+
+    const [rows] = await db.query(
+      `SELECT
+         psk.status,
+         psk.submitted_at,
+         psk.reviewed_at,
+         psk.catatan_kaprodi,
+         psk.penguji1_nidn,
+         psk.penguji2_nidn,
+         psk.tanggal_sidang,
+         psk.waktu_sidang,
+         psk.tempat_sidang,
+         psk.ipk,
+         s.npm,
+         s.judul,
+         s.pembimbing1_nidn,
+         s.pembimbing2_nidn,
+         m.nama AS nama_mahasiswa,
+         ps_sidang.ujian_ke,
+         ssp.tahun_akademik AS period_tahun_akademik,
+         ssp.periode_akademik AS period_periode_akademik
+       FROM (
+         SELECT skripsi_id, MAX(id) AS latest_id
+         FROM pengajuan_sidang
+         GROUP BY skripsi_id
+       ) latest
+       INNER JOIN pengajuan_sidang ps_sidang ON ps_sidang.id = latest.latest_id
+       INNER JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps_sidang.id
+       INNER JOIN skripsi s ON s.id = ps_sidang.skripsi_id
+       INNER JOIN mahasiswa m ON m.npm = s.npm
+       LEFT JOIN sidang_submission_period ssp ON ssp.id = ps_sidang.sidang_submission_period_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY psk.submitted_at DESC`,
+      [...programStudiIds, ...periodParams],
+    );
+
+    const dosenNames = await getDosenNamesByNidn(
+      rows.flatMap((r) => [r.pembimbing1_nidn, r.pembimbing2_nidn, r.penguji1_nidn, r.penguji2_nidn]),
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Laporan Pengajuan Sidang Kaprodi");
+
+    sheet.columns = [
+      { header: "NPM", key: "npm", width: 15 },
+      { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
+      { header: "Judul", key: "judul", width: 40 },
+      { header: "Ujian Ke", key: "ujian_ke", width: 10 },
+      { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
+      { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
+      { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
+      { header: "Status", key: "status", width: 18 },
+      { header: "Tanggal Submit", key: "tanggal_submit", width: 20 },
+      { header: "Tanggal Keputusan", key: "tanggal_keputusan", width: 20 },
+      { header: "Durasi", key: "durasi", width: 18 },
+      { header: "Tanggal Sidang", key: "tanggal_sidang", width: 16 },
+      { header: "Waktu Sidang", key: "waktu_sidang", width: 14 },
+      { header: "Tempat Sidang", key: "tempat_sidang", width: 24 },
+      { header: "Penguji 1", key: "penguji1", width: 24 },
+      { header: "Penguji 2", key: "penguji2", width: 24 },
+      { header: "IPK", key: "ipk", width: 10 },
+      { header: "Catatan Kaprodi", key: "catatan_kaprodi", width: 32 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    for (const row of rows) {
+      sheet.addRow({
+        npm: row.npm,
+        nama_mahasiswa: row.nama_mahasiswa ?? "",
+        judul: row.judul,
+        ujian_ke: row.ujian_ke,
+        tahun_akademik: row.period_tahun_akademik ?? "",
+        periode_akademik: row.period_periode_akademik ?? "",
+        pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
+        pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
+        status: row.status,
+        tanggal_submit: formatDateTime(row.submitted_at),
+        tanggal_keputusan: formatDateTime(row.reviewed_at),
+        durasi: formatDurationHours(row.submitted_at, row.reviewed_at),
+        tanggal_sidang: formatDateTime(row.tanggal_sidang),
+        waktu_sidang: row.waktu_sidang ?? "",
+        tempat_sidang: row.tempat_sidang ?? "",
+        penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
+        penguji2: dosenNames.get(row.penguji2_nidn) ?? "",
+        ipk: row.ipk ?? "",
+        catatan_kaprodi: row.catatan_kaprodi ?? "",
+      });
+    }
+
+    await sendWorkbook(res, workbook, "laporan-pengajuan-sidang-kaprodi.xlsx");
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.exportSidangReport = async (req, res, next) => {
+  try {
+    const programStudiIds = await resolveKaprodiProgramStudi(req, res);
+    if (!programStudiIds) return;
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+    const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "ssp");
+    const where = [`sk.program_studi_id IN (${placeholders})`, ...periodClauses];
+
+    const [rows] = await db.query(
+      `SELECT
+         sd.id,
+         sd.nomor_surat,
+         sd.status,
+         sd.hasil_sidang,
+         sk.npm,
+         sk.judul,
+         sk.pembimbing1_nidn,
+         sk.pembimbing2_nidn,
+         m.nama AS nama_mahasiswa,
+         ps.ujian_ke,
+         psk.penguji1_nidn,
+         psk.penguji2_nidn,
+         psk.tanggal_sidang,
+         psk.waktu_sidang,
+         psk.tempat_sidang,
+         shp.rata,
+         shp.grade,
+         shp.catatan_penguji,
+         ssp.tahun_akademik AS period_tahun_akademik,
+         ssp.periode_akademik AS period_periode_akademik
+       FROM (
+         SELECT skripsi_id, MAX(id) AS latest_sidang_id
+         FROM sidang
+         GROUP BY skripsi_id
+       ) latest
+       INNER JOIN sidang sd ON sd.id = latest.latest_sidang_id
+       INNER JOIN skripsi sk ON sk.id = sd.skripsi_id
+       INNER JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
+       LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = sd.pengajuan_sidang_id
+       LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = sd.id
+       LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY sd.created_at DESC`,
+      [...programStudiIds, ...periodParams],
+    );
+
+    const dosenNames = await getDosenNamesByNidn(
+      rows.flatMap((r) => [r.pembimbing1_nidn, r.pembimbing2_nidn, r.penguji1_nidn, r.penguji2_nidn]),
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Laporan Sidang");
+
+    sheet.columns = [
+      { header: "NPM", key: "npm", width: 15 },
+      { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
+      { header: "Judul", key: "judul", width: 40 },
+      { header: "Ujian Ke", key: "ujian_ke", width: 10 },
+      { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
+      { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
+      { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
+      { header: "Penguji 1", key: "penguji1", width: 24 },
+      { header: "Penguji 2", key: "penguji2", width: 24 },
+      { header: "Status", key: "status", width: 16 },
+      { header: "Tanggal Sidang", key: "tanggal_sidang", width: 16 },
+      { header: "Waktu Sidang", key: "waktu_sidang", width: 14 },
+      { header: "Tempat Sidang", key: "tempat_sidang", width: 24 },
+      { header: "Hasil Sidang", key: "hasil_sidang", width: 16 },
+      { header: "Rata-Rata", key: "rata", width: 12 },
+      { header: "Grade", key: "grade", width: 10 },
+      { header: "Catatan Penguji", key: "catatan_penguji", width: 32 },
+      { header: "Nomor Surat", key: "nomor_surat", width: 28 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    for (const row of rows) {
+      sheet.addRow({
+        npm: row.npm,
+        nama_mahasiswa: row.nama_mahasiswa ?? "",
+        judul: row.judul,
+        ujian_ke: row.ujian_ke,
+        tahun_akademik: row.period_tahun_akademik ?? "",
+        periode_akademik: row.period_periode_akademik ?? "",
+        pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
+        pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
+        penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
+        penguji2: dosenNames.get(row.penguji2_nidn) ?? "",
+        status: row.status,
+        tanggal_sidang: formatDateTime(row.tanggal_sidang),
+        waktu_sidang: row.waktu_sidang ?? "",
+        tempat_sidang: row.tempat_sidang ?? "",
+        hasil_sidang: row.hasil_sidang ?? "",
+        rata: row.rata ?? "",
+        grade: row.grade ?? "",
+        catatan_penguji: row.catatan_penguji ?? "",
+        nomor_surat: row.nomor_surat ?? "",
+      });
+    }
+
+    await sendWorkbook(res, workbook, "laporan-sidang.xlsx");
+  } catch (err) {
+    next(err);
+  }
+};
+
+const RPS_STAGE_ORDER = ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"];
+
+function resolveActiveRevisiStage(stages, isCompleted) {
+  if (isCompleted) return { activeStage: null, activeStatus: null, stageRow: null };
+  for (const role of RPS_STAGE_ORDER) {
+    const stage = stages.find((s) => s.signer_role === role);
+    if (!stage) return { activeStage: null, activeStatus: null, stageRow: null };
+    if (stage.current_status !== "APPROVED") {
+      return { activeStage: role, activeStatus: stage.current_status, stageRow: stage };
+    }
+  }
+  return { activeStage: null, activeStatus: null, stageRow: null };
+}
+
+function getNidnForRevisiRole(row, role) {
+  if (role === "PENGUJI_2") return row.penguji2_nidn;
+  if (role === "PENGUJI_1") return row.penguji1_nidn;
+  if (role === "PEMBIMBING_2") return row.pembimbing2_nidn;
+  if (role === "PEMBIMBING_1") return row.pembimbing1_nidn;
+  return null;
+}
+
+exports.exportRevisiReport = async (req, res, next) => {
+  try {
+    const programStudiIds = await resolveKaprodiProgramStudi(req, res);
+    if (!programStudiIds) return;
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+
+    const [rawRows] = await db.query(
+      `SELECT
+         rps.id AS revisi_id,
+         rps.is_completed,
+         sk.id AS skripsi_id,
+         sk.npm,
+         sk.judul,
+         sk.pembimbing1_nidn,
+         sk.pembimbing2_nidn,
+         m.nama AS nama_mahasiswa,
+         psk.penguji1_nidn,
+         psk.penguji2_nidn
+       FROM revisi_pasca_sidang rps
+       INNER JOIN sidang s ON s.id = rps.sidang_id
+       INNER JOIN skripsi sk ON sk.id = s.skripsi_id
+       INNER JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE sk.program_studi_id IN (${placeholders})
+       ORDER BY sk.id, rps.id DESC`,
+      programStudiIds,
+    );
+
+    const rows = [...latestByKey(rawRows, "skripsi_id", "revisi_id").values()];
+
+    const revisiIds = rows.map((r) => r.revisi_id);
+    const stagesByRevisi = new Map();
+    if (revisiIds.length > 0) {
+      const [stageRows] = await db.query(
+        `SELECT id, revisi_id, signer_role, current_status, updated_at
+         FROM revisi_pasca_sidang_stages
+         WHERE revisi_id IN (?)`,
+        [revisiIds],
+      );
+      for (const s of stageRows) {
+        const list = stagesByRevisi.get(s.revisi_id) ?? [];
+        list.push(s);
+        stagesByRevisi.set(s.revisi_id, list);
+      }
+    }
+
+    const dosenNames = await getDosenNamesByNidn(
+      rows.flatMap((r) => [r.pembimbing1_nidn, r.pembimbing2_nidn, r.penguji1_nidn, r.penguji2_nidn]),
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Laporan Revisi Pasca Sidang");
+
+    sheet.columns = [
+      { header: "NPM", key: "npm", width: 15 },
+      { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
+      { header: "Judul", key: "judul", width: 40 },
+      { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
+      { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
+      { header: "Penguji 1", key: "penguji1", width: 24 },
+      { header: "Penguji 2", key: "penguji2", width: 24 },
+      { header: "Tahap Aktif", key: "tahap_aktif", width: 16 },
+      { header: "Signer Aktif", key: "signer_aktif", width: 24 },
+      { header: "Status", key: "status", width: 18 },
+      { header: "Menunggu", key: "menunggu", width: 18 },
+      { header: "Terakhir Diperbarui", key: "terakhir_diperbarui", width: 20 },
+      { header: "Durasi Sejak Aksi Terakhir", key: "durasi", width: 22 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    const now = new Date();
+
+    for (const row of rows) {
+      const stages = stagesByRevisi.get(row.revisi_id) ?? [];
+      const isCompleted = row.is_completed === 1;
+      const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted);
+      const isTransisi = !isCompleted && !stageRow;
+      const signerNidn = activeStage ? getNidnForRevisiRole(row, activeStage) : null;
+
+      sheet.addRow({
+        npm: row.npm,
+        nama_mahasiswa: row.nama_mahasiswa ?? "",
+        judul: row.judul,
+        pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
+        pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
+        penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
+        penguji2: dosenNames.get(row.penguji2_nidn) ?? "",
+        tahap_aktif: isCompleted ? "Selesai" : (isTransisi ? "Transisi" : (STAGE_LABELS[activeStage] ?? "")),
+        signer_aktif: isCompleted || isTransisi ? "" : (dosenNames.get(signerNidn) ?? ""),
+        status: isCompleted ? "Selesai" : (isTransisi ? "" : (activeStatus ?? "")),
+        menunggu: isCompleted || isTransisi ? "" : resolveWaitingOn(activeStatus),
+        terakhir_diperbarui: stageRow ? formatDateTime(stageRow.updated_at) : "",
+        durasi: isCompleted || !stageRow ? "-" : formatDurationHours(stageRow.updated_at, now),
+      });
+    }
+
+    await sendWorkbook(res, workbook, "laporan-revisi-pasca-sidang.xlsx");
+  } catch (err) {
+    next(err);
+  }
+};
+
+function confirmationCell(confirmedAt) {
+  return confirmedAt ? `Sudah (${formatDateTime(confirmedAt)})` : "Belum";
+}
+
+exports.exportBerkasFinalReport = async (req, res, next) => {
+  try {
+    const programStudiIds = await resolveKaprodiProgramStudi(req, res);
+    if (!programStudiIds) return;
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+
+    const [rows] = await db.query(
+      `SELECT
+         pbf.id AS pengumpulan_id,
+         pbf.status,
+         pbf.is_completed,
+         pbf.updated_at,
+         sk.npm,
+         sk.judul,
+         sk.pembimbing1_nidn,
+         sk.pembimbing2_nidn,
+         m.nama AS nama_mahasiswa,
+         psk.penguji1_nidn,
+         psk.penguji2_nidn
+       FROM pengumpulan_berkas_final pbf
+       INNER JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       INNER JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id
+              AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = s.pengajuan_sidang_id
+       WHERE sk.program_studi_id IN (${placeholders})
+       ORDER BY sk.npm`,
+      programStudiIds,
+    );
+
+    const pengumpulanIds = rows.map((r) => r.pengumpulan_id);
+    const confirmationsByPengumpulan = new Map();
+    if (pengumpulanIds.length > 0) {
+      const [confirmationRows] = await db.query(
+        `SELECT pengumpulan_id, recipient_role, confirmed_at
+         FROM pengumpulan_berkas_final_confirmations
+         WHERE pengumpulan_id IN (?)`,
+        [pengumpulanIds],
+      );
+      for (const c of confirmationRows) {
+        const map = confirmationsByPengumpulan.get(c.pengumpulan_id) ?? new Map();
+        map.set(c.recipient_role, c.confirmed_at);
+        confirmationsByPengumpulan.set(c.pengumpulan_id, map);
+      }
+    }
+
+    const dosenNames = await getDosenNamesByNidn(
+      rows.flatMap((r) => [r.pembimbing1_nidn, r.pembimbing2_nidn, r.penguji1_nidn, r.penguji2_nidn]),
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Laporan Pengumpulan Berkas Final");
+
+    sheet.columns = [
+      { header: "NPM", key: "npm", width: 15 },
+      { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
+      { header: "Judul", key: "judul", width: 40 },
+      { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
+      { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
+      { header: "Penguji 1", key: "penguji1", width: 24 },
+      { header: "Penguji 2", key: "penguji2", width: 24 },
+      { header: "Status", key: "status", width: 16 },
+      { header: "Perpustakaan", key: "perpustakaan", width: 24 },
+      { header: "LPPM", key: "lppm", width: 24 },
+      { header: "Pembimbing 1 Konfirmasi", key: "pembimbing1_konfirmasi", width: 26 },
+      { header: "Pembimbing 2 Konfirmasi", key: "pembimbing2_konfirmasi", width: 26 },
+      { header: "Penguji 1 Konfirmasi", key: "penguji1_konfirmasi", width: 26 },
+      { header: "Penguji 2 Konfirmasi", key: "penguji2_konfirmasi", width: 26 },
+      { header: "Sekprodi (Tanggal Selesai)", key: "sekprodi", width: 28 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    for (const row of rows) {
+      const confirmations = confirmationsByPengumpulan.get(row.pengumpulan_id) ?? new Map();
+      const isCompleted = row.status === "COMPLETED";
+
+      sheet.addRow({
+        npm: row.npm,
+        nama_mahasiswa: row.nama_mahasiswa ?? "",
+        judul: row.judul,
+        pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
+        pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
+        penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
+        penguji2: dosenNames.get(row.penguji2_nidn) ?? "",
+        status: row.status,
+        perpustakaan: confirmationCell(confirmations.get("PERPUSTAKAAN")),
+        lppm: confirmationCell(confirmations.get("LPPM")),
+        pembimbing1_konfirmasi: confirmationCell(confirmations.get("PEMBIMBING_1")),
+        pembimbing2_konfirmasi: confirmationCell(confirmations.get("PEMBIMBING_2")),
+        penguji1_konfirmasi: confirmationCell(confirmations.get("PENGUJI_1")),
+        penguji2_konfirmasi: confirmationCell(confirmations.get("PENGUJI_2")),
+        sekprodi: isCompleted ? `Sudah (${formatDateTime(row.updated_at)})` : "Belum",
+      });
+    }
+
+    await sendWorkbook(res, workbook, "laporan-pengumpulan-berkas-final.xlsx");
   } catch (err) {
     next(err);
   }

@@ -23,5 +23,21 @@ router.get(
   auth,
   c.exportOverallProgressReport,
 );
+router.get(
+  "/kaprodi/reports/pengajuan-sidang-kaprodi.xlsx",
+  auth,
+  c.exportPengajuanSidangKaprodiReport,
+);
+router.get("/kaprodi/reports/sidang.xlsx", auth, c.exportSidangReport);
+router.get(
+  "/kaprodi/reports/revisi-pasca-sidang.xlsx",
+  auth,
+  c.exportRevisiReport,
+);
+router.get(
+  "/kaprodi/reports/pengumpulan-berkas-final.xlsx",
+  auth,
+  c.exportBerkasFinalReport,
+);
 
 module.exports = router;

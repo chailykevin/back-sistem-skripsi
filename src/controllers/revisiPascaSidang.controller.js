@@ -1196,6 +1196,110 @@ exports.getLecturerRevisi = async (req, res, next) => {
   }
 };
 
+async function getKaprodiProgramStudiIdsByNidn(nidn) {
+  const [rows] = await db.query(
+    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    [nidn],
+  );
+  return rows
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+exports.getKaprodiRevisi = async (req, res, next) => {
+  try {
+    if (!req.user.hasRole("KAPRODI")) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const nidn = await getLecturerNidn(req.user.id);
+    const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
+    if (programStudiIds.length === 0) {
+      return res.json({ ok: true, data: [] });
+    }
+
+    const placeholders = programStudiIds.map(() => "?").join(",");
+    const [rows] = await db.query(
+      `SELECT
+         rps.id, rps.is_completed,
+         s.skripsi_id, m.npm, m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi, psk_k.tanggal_sidang,
+         sk.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
+         sk.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
+         psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
+         psk_k.penguji2_nidn, d_pg2.nama AS penguji2_nama
+       FROM revisi_pasca_sidang rps
+       JOIN sidang s ON s.id = rps.sidang_id
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k
+              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+       LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+       WHERE prog.id IN (${placeholders})
+       ORDER BY rps.created_at DESC`,
+      [...programStudiIds],
+    );
+
+    if (rows.length) {
+      const revisiIds = rows.map((r) => r.id);
+      const [stages] = await db.query(
+        `SELECT id, revisi_id, signer_role, current_status
+         FROM revisi_pasca_sidang_stages
+         WHERE revisi_id IN (?)`,
+        [revisiIds],
+      );
+      const stagesByRevisi = {};
+      for (const stage of stages) {
+        if (!stagesByRevisi[stage.revisi_id])
+          stagesByRevisi[stage.revisi_id] = [];
+        stagesByRevisi[stage.revisi_id].push(stage);
+      }
+
+      const stageIds = stages.map((s) => s.id);
+      const latestSubmittedByStage = {};
+      if (stageIds.length) {
+        const [latestSubs] = await db.query(
+          `SELECT stage_id, MAX(submitted_at) AS latest_submitted_at
+           FROM revisi_pasca_sidang_submissions
+           WHERE stage_id IN (?)
+           GROUP BY stage_id`,
+          [stageIds],
+        );
+        for (const row of latestSubs) {
+          latestSubmittedByStage[row.stage_id] = row.latest_submitted_at;
+        }
+      }
+
+      for (const row of rows) {
+        const revisiStages = stagesByRevisi[row.id] ?? [];
+        const active = resolveActiveStage(revisiStages);
+        row.activeStage = active
+          ? {
+              signerRole: active.signer_role,
+              currentStatus: active.current_status,
+            }
+          : null;
+
+        let latestSubmittedAt = null;
+        for (const stage of revisiStages) {
+          const stageLatest = latestSubmittedByStage[stage.id];
+          if (stageLatest && (!latestSubmittedAt || stageLatest > latestSubmittedAt)) {
+            latestSubmittedAt = stageLatest;
+          }
+        }
+        row.latest_submitted_at = latestSubmittedAt;
+      }
+    }
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const MIME_BY_EXT = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".doc": "application/msword",
