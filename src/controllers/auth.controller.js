@@ -1,21 +1,13 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
-const crypto = require("crypto");
 const db = require("../db"); // mysql2 pool
 const {
   sendPasswordResetEmail,
   sendEmailVerificationEmail,
 } = require("../utils/email");
+const { generateToken, hashToken } = require("../utils/token");
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
-
-function generateToken() {
-  return crypto.randomBytes(32).toString("base64url");
-}
-
-function hashToken(token) {
-  return crypto.createHash("sha256").update(token).digest("hex");
-}
 
 function deriveLegacyUserType(roles = []) {
   if (roles.includes("STUDENT")) return "STUDENT";

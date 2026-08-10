@@ -1,17 +1,9 @@
-const crypto = require("crypto");
 const db = require("../db");
 const { sendEmailVerificationEmail } = require("../utils/email");
+const { generateToken, hashToken } = require("../utils/token");
 
 const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function generateToken() {
-  return crypto.randomBytes(32).toString("base64url");
-}
-
-function hashToken(token) {
-  return crypto.createHash("sha256").update(token).digest("hex");
-}
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -71,9 +63,7 @@ exports.submitMyEmail = async (req, res, next) => {
 
     const { email } = req.body;
     if (!email || !EMAIL_REGEX.test(String(email).trim())) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Email tidak valid" });
+      return res.status(400).json({ ok: false, message: "Email tidak valid" });
     }
     const normalizedEmail = String(email).trim();
 
