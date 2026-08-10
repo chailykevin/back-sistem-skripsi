@@ -6,6 +6,7 @@ const {
   sendEmailVerificationEmail,
 } = require("../utils/email");
 const { generateToken, hashToken } = require("../utils/token");
+const { getUserRoles } = require("../services/userRoles.service");
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -14,19 +15,6 @@ function deriveLegacyUserType(roles = []) {
   if (roles.includes("LECTURER") || roles.includes("KAPRODI"))
     return "LECTURER";
   return roles[0] ?? null;
-}
-
-async function getUserRoles(userId) {
-  const [roleRows] = await db.query(
-    `SELECT DISTINCT r.code
-     FROM user_roles ur
-     INNER JOIN roles r ON r.id = ur.role_id
-     WHERE ur.user_id = ?
-       AND ur.is_active = 1
-       AND r.is_active = 1`,
-    [userId],
-  );
-  return roleRows.map((row) => row.code);
 }
 
 exports.login = async (req, res, next) => {
