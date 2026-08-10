@@ -15,7 +15,7 @@ exports.login = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      data: data,
+      data,
     });
   } catch (err) {
     next(err);
@@ -30,7 +30,7 @@ exports.me = async (req, res, next) => {
 
     res.json({
       ok: true,
-      data: data,
+      data,
     });
   } catch (err) {
     next(err);
@@ -51,7 +51,7 @@ exports.forgotPassword = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      data: data,
+      data,
     });
   } catch (err) {
     next(err);
@@ -78,7 +78,7 @@ exports.resetPassword = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      data: data,
+      data,
     });
   } catch (err) {
     next(err);
@@ -96,7 +96,7 @@ exports.verifyEmail = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      data: data,
+      data,
     });
   } catch (err) {
     next(err);
