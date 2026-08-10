@@ -27,16 +27,27 @@ function formatDateTime(value) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function toDateOnly(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return NaN;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
 function formatDurationHours(startValue, endValue) {
   if (!startValue || !endValue) return "";
-  const start = new Date(startValue).getTime();
-  const end = new Date(endValue).getTime();
+  const start = toDateOnly(startValue);
+  const end = toDateOnly(endValue);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "";
-  const totalHours = (end - start) / (1000 * 60 * 60);
-  const days = Math.floor(totalHours / 24);
-  const hours = Math.round(totalHours % 24);
-  if (days > 0) return `${days} hari ${hours} jam`;
-  return `${hours} jam`;
+  const days = Math.round((end - start) / (1000 * 60 * 60 * 24));
+  return `${days} hari`;
+}
+
+function addRowWithDashes(sheet, data) {
+  const withDashes = {};
+  for (const [key, value] of Object.entries(data)) {
+    withDashes[key] = value === null || value === undefined || value === "" ? "-" : value;
+  }
+  return sheet.addRow(withDashes);
 }
 
 async function sendWorkbook(res, workbook, fileName) {
@@ -70,6 +81,14 @@ async function resolveKaprodiProgramStudi(req, res) {
   return programStudiIds;
 }
 
+function formatPeriodLabel(req) {
+  const tahunAkademik = req.query.tahunAkademik ? String(req.query.tahunAkademik) : null;
+  const periodeAkademik = req.query.periodeAkademik ? String(req.query.periodeAkademik) : null;
+  if (!tahunAkademik || !periodeAkademik) return "Semua Periode";
+  const periodeLabel = periodeAkademik.charAt(0) + periodeAkademik.slice(1).toLowerCase();
+  return `${tahunAkademik.replace("/", "-")} ${periodeLabel}`;
+}
+
 function buildPeriodFilter(req, tableAlias) {
   const tahunAkademik = req.query.tahunAkademik ? String(req.query.tahunAkademik) : null;
   const periodeAkademik = req.query.periodeAkademik ? String(req.query.periodeAkademik) : null;
@@ -87,6 +106,15 @@ function buildPeriodFilter(req, tableAlias) {
   }
 
   return { clauses, params };
+}
+
+async function getProgramStudiLabel(programStudiIds) {
+  const placeholders = programStudiIds.map(() => "?").join(",");
+  const [rows] = await db.query(
+    `SELECT nama FROM program_studi WHERE id IN (${placeholders})`,
+    programStudiIds,
+  );
+  return rows.map((r) => r.nama).join(" & ");
 }
 
 async function getDosenNamesByNidn(nidns) {
@@ -142,6 +170,30 @@ const STAGE_LABELS = {
   PENGUJI_1: "Penguji 1",
 };
 
+const OUTLINE_STATUS_LABELS = {
+  SUBMITTED: "Menunggu Balasan Kaprodi",
+  NEED_REVISION: "Menunggu Revisi Mahasiswa",
+  REJECTED: "Ditolak Kaprodi",
+  ACCEPTED: "Diterima Kaprodi",
+};
+
+const OUTLINE_WAITING_ON = {
+  SUBMITTED: "Kaprodi",
+  NEED_REVISION: "Mahasiswa",
+};
+
+const DISPOSISI_STATUS_LABELS = {
+  SUBMITTED: "Menunggu Balasan Kaprodi",
+  NEED_REVISION: "Menunggu Revisi Mahasiswa",
+  APPROVED: "Diterima Kaprodi",
+  REJECTED: "Ditolak Kaprodi",
+};
+
+const DISPOSISI_WAITING_ON = {
+  SUBMITTED: "Kaprodi",
+  NEED_REVISION: "Mahasiswa",
+};
+
 function resolveWaitingOn(activeStatus) {
   if (activeStatus === "WAITING_SUBMISSION" || activeStatus === "NEED_REVISION") {
     return "Mahasiswa";
@@ -187,6 +239,10 @@ exports.exportOutlineReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Pengajuan Outline - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
@@ -245,11 +301,11 @@ exports.exportOutlineReport = async (req, res, next) => {
     sheet.getRow(1).font = { bold: true };
 
     for (const row of rows) {
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
-        status: row.status,
+        status: OUTLINE_STATUS_LABELS[row.status] ?? row.status,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
         tanggal_submit: formatDateTime(row.created_at),
@@ -260,7 +316,7 @@ exports.exportOutlineReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-outline.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -270,6 +326,10 @@ exports.exportDisposisiReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Disposisi Pembimbing - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
@@ -329,10 +389,10 @@ exports.exportDisposisiReport = async (req, res, next) => {
     sheet.getRow(1).font = { bold: true };
 
     for (const row of rows) {
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
-        status: row.status,
+        status: DISPOSISI_STATUS_LABELS[row.status] ?? row.status,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
         tanggal_submit: formatDateTime(row.submitted_at),
@@ -346,7 +406,7 @@ exports.exportDisposisiReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-disposisi-pembimbing.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -356,6 +416,10 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Konsultasi Outline - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
@@ -429,7 +493,7 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
       const { activeStage, activeStatus, isCompleted, stageRow } =
         resolveActiveKonsultasiOutlineStage(stages, row.is_completed === 1);
 
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
@@ -446,7 +510,7 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-konsultasi-outline.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -456,6 +520,10 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Konsultasi Skripsi - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
@@ -535,7 +603,7 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
         : resolveActiveKonsultasiSkripsiStage(stages);
       const isTransisi = !belumMulai && !isCompleted && !stageRow;
 
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
@@ -553,7 +621,7 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-konsultasi-skripsi.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -586,9 +654,12 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
 
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Proses Skripsi Mahasiswa - ${programStudiLabel} - ${periodLabel}.xlsx`;
+
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
-    const periodFilterActive = periodClauses.length > 0;
 
     const [mahasiswaRows] = await db.query(
       `SELECT npm, nama FROM mahasiswa WHERE program_studi_id IN (${placeholders})`,
@@ -596,7 +667,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     );
 
     const [outlineRows] = await db.query(
-      `SELECT o.id, o.npm, o.judul, o.status, o.pembimbing1_nidn, o.pembimbing2_nidn, o.created_at
+      `SELECT o.id, o.npm, o.judul, o.status, o.pembimbing1_nidn, o.pembimbing2_nidn, o.created_at, o.updated_at
        FROM outline o
        LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        WHERE o.program_studi_id IN (${placeholders}) ${periodClauses.map((c) => `AND ${c}`).join(" ")}
@@ -607,19 +678,17 @@ exports.exportOverallProgressReport = async (req, res, next) => {
 
     // Anchor on every student in the prodi, not just those with an outline —
     // students who never submitted one still need to appear in the report
-    // (unless a period filter is active, since they don't belong to any period).
-    const students = mahasiswaRows
-      .map((m) => ({
-        npm: m.npm,
-        nama_mahasiswa: m.nama,
-        outline: latestOutlineByNpm.get(m.npm) ?? null,
-      }))
-      .filter((s) => !periodFilterActive || s.outline);
+    // as "Belum Memulai", even when a period filter is active.
+    const students = mahasiswaRows.map((m) => ({
+      npm: m.npm,
+      nama_mahasiswa: m.nama,
+      outline: latestOutlineByNpm.get(m.npm) ?? null,
+    }));
 
     if (students.length === 0) {
       const workbook = new ExcelJS.Workbook();
       workbook.addWorksheet("Laporan Keseluruhan");
-      await sendWorkbook(res, workbook, "laporan-keseluruhan.xlsx");
+      await sendWorkbook(res, workbook, fileName);
       return;
     }
 
@@ -635,7 +704,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
 
     if (outlineIds.length > 0) {
       const [disposisiRows] = await db.query(
-        `SELECT id, outline_id, status FROM pengajuan_disposisi_pembimbing WHERE outline_id IN (?)`,
+        `SELECT id, outline_id, status, updated_at FROM pengajuan_disposisi_pembimbing WHERE outline_id IN (?)`,
         [outlineIds],
       );
       for (const r of disposisiRows) disposisiByOutlineId.set(r.outline_id, r);
@@ -687,6 +756,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     const pengajuanSidangKaprodiByPengajuanSidangId = new Map();
     const sidangByskripsiId = new Map();
     const revisiBySidangId = new Map();
+    const revisiStagesByRevisiId = new Map();
     const pengumpulanByskripsiId = new Map();
 
     if (skripsiIds.length > 0) {
@@ -745,6 +815,21 @@ exports.exportOverallProgressReport = async (req, res, next) => {
           [sidangIds],
         );
         for (const r of revisiRows) revisiBySidangId.set(r.sidang_id, r);
+
+        const revisiIds = revisiRows.map((r) => r.id);
+        if (revisiIds.length > 0) {
+          const [revisiStageRows] = await db.query(
+            `SELECT id, revisi_id, signer_role, current_status, updated_at
+             FROM revisi_pasca_sidang_stages
+             WHERE revisi_id IN (?)`,
+            [revisiIds],
+          );
+          for (const s of revisiStageRows) {
+            const list = revisiStagesByRevisiId.get(s.revisi_id) ?? [];
+            list.push(s);
+            revisiStagesByRevisiId.set(s.revisi_id, list);
+          }
+        }
       }
 
       const [pengumpulanRows] = await db.query(
@@ -770,7 +855,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       { header: "Fase", key: "fase", width: 26 },
       { header: "Detail Tahap", key: "detail_tahap", width: 26 },
       { header: "Status", key: "status", width: 18 },
-      { header: "Menunggu", key: "menunggu", width: 18 },
+      { header: "Menunggu", key: "menunggu", width: 18, hidden: true },
       { header: "Durasi Sejak Aksi Terakhir", key: "durasi", width: 22 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
@@ -808,7 +893,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       };
 
       if (!outline) {
-        fase = "Belum Mengajukan Outline";
+        fase = "Belum Memulai";
         status = "";
       } else {
         const skripsi = latestSkripsiByNpm.get(outline.npm) ?? null;
@@ -831,10 +916,16 @@ exports.exportOverallProgressReport = async (req, res, next) => {
             if (isCompleted) status = "Menunggu Pengajuan SK Penelitian";
           } else if (disposisi) {
             fase = "Pengajuan Disposisi Pembimbing";
-            status = disposisi.status;
+            status = DISPOSISI_STATUS_LABELS[disposisi.status] ?? disposisi.status;
+            detailTahap = "-";
+            menunggu = DISPOSISI_WAITING_ON[disposisi.status] ?? "";
+            durasi = formatDurationHours(disposisi.updated_at, now);
           } else {
-            fase = "Outline";
-            status = outline.status;
+            fase = "Pengajuan Outline";
+            status = OUTLINE_STATUS_LABELS[outline.status] ?? outline.status;
+            detailTahap = "-";
+            menunggu = OUTLINE_WAITING_ON[outline.status] ?? "";
+            durasi = formatDurationHours(outline.updated_at, now);
           }
         } else {
           // A skripsi exists for this outline — resolve from the most advanced phase downward.
@@ -859,8 +950,15 @@ exports.exportOverallProgressReport = async (req, res, next) => {
             fase = pengumpulan.status === "COMPLETED" ? "Selesai" : "Pengumpulan Berkas Final";
             status = pengumpulan.status;
           } else if (revisi) {
-            fase = "Revisi Pasca Sidang";
-            status = revisi.is_completed === 1 ? "Selesai" : "Dalam Proses";
+            const stages = revisiStagesByRevisiId.get(revisi.id) ?? [];
+            const isCompleted = revisi.is_completed === 1;
+            const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted);
+            const isTransisi = !isCompleted && !stageRow;
+            fase = isCompleted ? "Selesai" : "Revisi Pasca Sidang";
+            detailTahap = isCompleted ? "" : (isTransisi ? "Transisi" : (STAGE_LABELS[activeStage] ?? ""));
+            status = isCompleted || isTransisi ? "" : (activeStatus ?? "");
+            menunggu = isCompleted || isTransisi ? "" : resolveWaitingOn(activeStatus);
+            durasi = stageRow ? formatDurationHours(stageRow.updated_at, now) : "-";
           } else if (sidang) {
             fase = "Sidang";
             status = sidang.hasil_sidang ?? sidang.status;
@@ -893,7 +991,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
         }
       }
 
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: student.npm,
         nama_mahasiswa: student.nama_mahasiswa ?? "",
         judul: judul ?? "",
@@ -902,12 +1000,12 @@ exports.exportOverallProgressReport = async (req, res, next) => {
         status,
         menunggu,
         durasi,
-        pembimbing1: dosenNames.get(pembimbing1Nidn) ?? "",
-        pembimbing2: dosenNames.get(pembimbing2Nidn) ?? "",
+        pembimbing1: dosenNames.get(pembimbing1Nidn) ?? "-",
+        pembimbing2: dosenNames.get(pembimbing2Nidn) ?? "-",
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-keseluruhan.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -917,6 +1015,10 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Pengajuan Sidang Kaprodi - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "ssp");
@@ -988,7 +1090,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
     sheet.getRow(1).font = { bold: true };
 
     for (const row of rows) {
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
@@ -1011,7 +1113,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-pengajuan-sidang-kaprodi.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -1021,6 +1123,10 @@ exports.exportSidangReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const periodLabel = formatPeriodLabel(req);
+    const fileName = `Laporan Sidang - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
     const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "ssp");
@@ -1096,7 +1202,7 @@ exports.exportSidangReport = async (req, res, next) => {
     sheet.getRow(1).font = { bold: true };
 
     for (const row of rows) {
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
@@ -1119,7 +1225,7 @@ exports.exportSidangReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-sidang.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -1151,6 +1257,9 @@ exports.exportRevisiReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const fileName = `Laporan Revisi Pasca Sidang - ${programStudiLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
 
@@ -1227,7 +1336,7 @@ exports.exportRevisiReport = async (req, res, next) => {
       const isTransisi = !isCompleted && !stageRow;
       const signerNidn = activeStage ? getNidnForRevisiRole(row, activeStage) : null;
 
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
@@ -1244,7 +1353,7 @@ exports.exportRevisiReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-revisi-pasca-sidang.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }
@@ -1258,6 +1367,9 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);
     if (!programStudiIds) return;
+
+    const programStudiLabel = await getProgramStudiLabel(programStudiIds);
+    const fileName = `Laporan Pengumpulan Berkas Final - ${programStudiLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
 
@@ -1331,7 +1443,7 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
       const confirmations = confirmationsByPengumpulan.get(row.pengumpulan_id) ?? new Map();
       const isCompleted = row.status === "COMPLETED";
 
-      sheet.addRow({
+      addRowWithDashes(sheet, {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
@@ -1350,7 +1462,7 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
       });
     }
 
-    await sendWorkbook(res, workbook, "laporan-pengumpulan-berkas-final.xlsx");
+    await sendWorkbook(res, workbook, fileName);
   } catch (err) {
     next(err);
   }

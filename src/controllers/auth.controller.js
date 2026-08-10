@@ -267,8 +267,7 @@ exports.forgotPassword = async (req, res, next) => {
     return res.json({
       ok: true,
       data: {
-        message:
-          "Tautan reset kata sandi telah dikirim ke email terdaftar.",
+        message: "Tautan reset kata sandi telah dikirim ke email terdaftar.",
       },
     });
   } catch (err) {
