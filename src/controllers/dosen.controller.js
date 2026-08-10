@@ -1,14 +1,10 @@
-const db = require("../db");
+const dosenService = require("../services/dosen.service");
 
 exports.list = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
-      `SELECT nidn, nama
-       FROM dosen
-       ORDER BY nama ASC`
-    );
+    const data = await dosenService.listDosen();
 
-    return res.json({ ok: true, data: rows });
+    return res.json({ ok: true, data });
   } catch (err) {
     next(err);
   }
