@@ -1,10 +1,7 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const db = require("../db"); // mysql2 pool
-const {
-  sendPasswordResetEmail,
-  sendEmailVerificationEmail,
-} = require("../utils/email");
+const { sendPasswordResetEmail } = require("../utils/email");
 const { generateToken, hashToken } = require("../utils/token");
 const { getUserRoles } = require("./userRoles.service");
 const { resolveResetEmail } = require("./passwordReset.service");
