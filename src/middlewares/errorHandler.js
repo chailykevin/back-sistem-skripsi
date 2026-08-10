@@ -1,4 +1,10 @@
+const { CustomError } = require("../errors/customError");
+
 module.exports = (err, req, res, next) => {
+  if (err instanceof CustomError) {
+    return res.status(err.statusCode).json(err.errorData);
+  }
+
   const status = err.statusCode || 500;
 
   res.status(status).json({

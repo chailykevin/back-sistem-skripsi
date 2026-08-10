@@ -1,5 +1,4 @@
 const authService = require("../services/auth.service");
-const { CustomError } = require("../errors/customError");
 
 exports.login = async (req, res, next) => {
   try {
@@ -19,10 +18,6 @@ exports.login = async (req, res, next) => {
       data: data,
     });
   } catch (err) {
-    if (err instanceof CustomError) {
-      return res.status(err.statusCode).json(err.errorData);
-    }
-
     next(err);
   }
 };
@@ -38,10 +33,6 @@ exports.me = async (req, res, next) => {
       data: data,
     });
   } catch (err) {
-    if (err instanceof CustomError) {
-      return res.status(err.statusCode).json(err.errorData);
-    }
-
     next(err);
   }
 };
@@ -90,10 +81,6 @@ exports.resetPassword = async (req, res, next) => {
       data: data,
     });
   } catch (err) {
-    if (err instanceof CustomError) {
-      return res.status(err.statusCode).json(err.errorData);
-    }
-
     next(err);
   }
 };
@@ -112,9 +99,6 @@ exports.verifyEmail = async (req, res, next) => {
       data: data,
     });
   } catch (err) {
-    if (err instanceof CustomError) {
-      return res.status(err.statusCode).json(err.errorData);
-    }
     next(err);
   }
 };
