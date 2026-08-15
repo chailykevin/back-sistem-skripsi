@@ -164,6 +164,45 @@ async function getRejectedOutlinesByNpm(npm, excludeId) {
   return rows;
 }
 
+async function getLatestOutlineByNpm(npm) {
+  const [rows] = await db.query(
+    `SELECT
+       o.id,
+       o.judul,
+       o.latar_belakang,
+       o.npm,
+       o.status,
+       rev.decision_note,
+       o.created_at,
+       o.updated_at,
+       m.nama AS mahasiswa_nama,
+       m.sks AS mahasiswa_sks,
+       m.program_studi_id,
+       ps.nama AS program_studi_nama,
+       sub.file_content AS file_outline_mahasiswa,
+       sub.file_name AS file_outline_mahasiswa_name,
+       rev.file_content AS file_outline_kaprodi,
+       rev.file_name AS file_outline_kaprodi_name,
+       sub.submission_no AS file_revision_no,
+       sub.submitted_at AS file_updated_at
+     FROM outline o
+     INNER JOIN mahasiswa m ON m.npm = o.npm
+     INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+     LEFT JOIN outline_submissions sub
+       ON sub.outline_id = o.id
+      AND sub.submission_no = (
+        SELECT MAX(submission_no) FROM outline_submissions WHERE outline_id = o.id
+      )
+     LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
+     WHERE o.npm = ?
+     ORDER BY o.updated_at DESC
+     LIMIT 1`,
+    [npm],
+  );
+
+  return rows[0] ?? null;
+}
+
 module.exports = {
   createOutline,
   getExistingOutlinesByNpm,
@@ -171,4 +210,5 @@ module.exports = {
   hasActiveSkripsi,
   getOutlineDetailById,
   getRejectedOutlinesByNpm,
+  getLatestOutlineByNpm,
 };
