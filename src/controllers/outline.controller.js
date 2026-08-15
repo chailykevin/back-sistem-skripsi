@@ -272,8 +272,6 @@ exports.listForKaprodi = async (req, res, next) => {
       });
     }
 
-    const programStudiId = prodi.id;
-
     // optional filter
     const status = req.query.status ? String(req.query.status) : null;
     const q = req.query.q ? String(req.query.q) : null;
@@ -284,67 +282,19 @@ exports.listForKaprodi = async (req, res, next) => {
       ? String(req.query.periodeAkademik)
       : null;
 
-    const where = [];
-    const params = [];
-
-    where.push("m.program_studi_id = ?");
-    params.push(programStudiId);
-
-    if (status) {
-      where.push("o.status = ?");
-      params.push(status);
-    }
-
-    if (q) {
-      where.push("o.judul LIKE ?");
-      params.push(`%${q}%`);
-    }
-
-    if (tahunAkademik) {
-      where.push("osp.tahun_akademik = ?");
-      params.push(tahunAkademik);
-    }
-
-    if (periodeAkademik) {
-      where.push("osp.periode_akademik = ?");
-      params.push(periodeAkademik);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-    // ambil list outline: hanya latest per mahasiswa
-    const [rows] = await db.query(
-      `SELECT
-         o.id,
-         o.judul,
-         o.status,
-         o.created_at,
-         o.updated_at,
-         o.npm,
-         m.nama AS mahasiswa_nama,
-         m.sks AS mahasiswa_sks,
-         m.program_studi_id,
-         o.submission_period_id,
-         osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik
-       FROM outline o
-       INNER JOIN mahasiswa m ON m.npm = o.npm
-       INNER JOIN (
-         SELECT npm, MAX(id) AS max_id
-         FROM outline
-         GROUP BY npm
-       ) latest ON latest.npm = o.npm AND latest.max_id = o.id
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
-       ${whereSql}
-       ORDER BY o.created_at DESC`,
-      params,
-    );
+    const outlines = await outlineService.listOutlinesForKaprodi({
+      programStudiId: prodi.id,
+      status,
+      q,
+      tahunAkademik,
+      periodeAkademik,
+    });
 
     return res.json({
       ok: true,
       data: {
         programStudi: prodi,
-        outlines: rows,
+        outlines,
       },
     });
   } catch (err) {
