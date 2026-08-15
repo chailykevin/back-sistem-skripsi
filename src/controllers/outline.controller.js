@@ -82,16 +82,14 @@ exports.create = async (req, res, next) => {
     }
 
     // ambil npm mahasiswa dari user login
-    const users = await mahasiswaService.getNpmByUserId(req.user.id);
+    const npm = await mahasiswaService.getNpmByUserId(req.user.id);
 
-    if (users.length === 0 || !users[0].npm) {
+    if (!npm) {
       return res.status(400).json({
         ok: false,
         message: "Mahasiswa tidak valid",
       });
     }
-
-    const npm = users[0].npm;
 
     const programStudiId = req.user?.programStudiId ?? null;
     if (!programStudiId) {
@@ -154,8 +152,7 @@ exports.getById = async (req, res, next) => {
     // Mahasiswa: harus hanya miliknya
     let studentNpm = null;
     if (req.user.hasRole("STUDENT")) {
-      const urows = await mahasiswaService.getNpmByUserId(req.user.id);
-      studentNpm = urows[0]?.npm ?? null;
+      studentNpm = await mahasiswaService.getNpmByUserId(req.user.id);
       if (!studentNpm) {
         return res
           .status(400)
@@ -249,8 +246,7 @@ exports.getLatestMine = async (req, res, next) => {
       });
     }
 
-    const urows = await mahasiswaService.getNpmByUserId(req.user.id);
-    const npm = urows[0]?.npm ?? null;
+    const npm = await mahasiswaService.getNpmByUserId(req.user.id);
 
     if (!npm) {
       return res
@@ -313,8 +309,7 @@ exports.getReviewHistory = async (req, res, next) => {
     // access check
     let targetNpm = null;
     if (req.user.hasRole("STUDENT")) {
-      const urows = await mahasiswaService.getNpmByUserId(req.user.id);
-      targetNpm = urows[0]?.npm ?? null;
+      targetNpm = await mahasiswaService.getNpmByUserId(req.user.id);
       if (!targetNpm) {
         return res
           .status(400)
@@ -657,11 +652,7 @@ exports.resubmit = async (req, res, next) => {
   }
 
   // ambil npm dari user login
-  const [urows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [req.user.id],
-  );
-  const npm = urows[0]?.npm ?? null;
+  const npm = await mahasiswaService.getNpmByUserId(req.user.id);
 
   if (!npm) {
     return res.status(400).json({
