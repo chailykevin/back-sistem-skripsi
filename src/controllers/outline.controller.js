@@ -346,88 +346,22 @@ exports.reviewByKaprodi = async (req, res, next) => {
       });
     }
 
-    const programStudiId = prodi.id;
-
-    // pastikan outline milik mahasiswa di prodi tsb
-    const [orows] = await db.query(
-      `SELECT o.id
-       FROM outline o
-       INNER JOIN mahasiswa m ON m.npm = o.npm
-       WHERE o.id = ? AND m.program_studi_id = ?
-       LIMIT 1`,
-      [outlineId, programStudiId],
-    );
-
-    if (orows.length === 0) {
+    const inProdi = await outlineService.isOutlineInProdi(outlineId, prodi.id);
+    if (!inProdi) {
       return res.status(404).json({
         ok: false,
         message: "Outline not found",
       });
     }
 
-    await db.query(
-      `UPDATE outline SET status = ?, program_studi_id = ? WHERE id = ?`,
-      [status, programStudiId, outlineId],
+    await outlineService.reviewOutlineByKaprodi(
+      outlineId,
+      prodi.id,
+      status,
+      note,
+      kaprodiFile,
+      kaprodiFileOutlineName,
     );
-
-    // find latest submission then upsert review
-    const [[latestSub]] = await db.query(
-      `SELECT id FROM outline_submissions
-       WHERE outline_id = ?
-       ORDER BY submission_no DESC
-       LIMIT 1`,
-      [outlineId],
-    );
-
-    if (latestSub) {
-      await db.query(
-        `INSERT INTO outline_reviews (submission_id, decision_note, file_content, file_name, reviewed_at)
-         VALUES (?, ?, ?, ?, NOW())
-         ON DUPLICATE KEY UPDATE
-           decision_note = VALUES(decision_note),
-           file_content  = VALUES(file_content),
-           file_name     = VALUES(file_name),
-           reviewed_at   = VALUES(reviewed_at)`,
-        [
-          latestSub.id,
-          note.length ? note : null,
-          kaprodiFile,
-          kaprodiFile ? (kaprodiFileOutlineName ?? null) : null,
-        ],
-      );
-    }
-
-    if (status !== "SUBMITTED") {
-      const [oStudentRows] = await db.query(
-        `SELECT u.id, m.nama FROM outline o
-         JOIN mahasiswa m ON m.npm = o.npm
-         JOIN users u ON u.npm = o.npm
-         WHERE o.id = ? LIMIT 1`,
-        [outlineId],
-      );
-      const studentUserId = oStudentRows[0]?.id ?? null;
-      if (studentUserId) {
-        const typeMap = {
-          NEED_REVISION: "OUTLINE_NEED_REVISION",
-          REJECTED: "OUTLINE_REJECTED",
-          ACCEPTED: "OUTLINE_ACCEPTED",
-        };
-        const msgMap = {
-          NEED_REVISION: "Outline Anda memerlukan revisi",
-          REJECTED: "Outline Anda ditolak",
-          ACCEPTED: "Outline Anda diterima",
-        };
-        await db.query(
-          `INSERT INTO notifications (user_id, type, message, link) VALUES (?, ?, ?, ?)`,
-          [
-            studentUserId,
-            typeMap[status],
-            msgMap[status],
-            "/student/pengajuan-outline",
-          ],
-        );
-      }
-    }
 
     return res.json({
       ok: true,

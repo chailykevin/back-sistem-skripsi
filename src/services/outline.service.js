@@ -297,6 +297,105 @@ async function listOutlinesForKaprodi({
   return rows;
 }
 
+async function isOutlineInProdi(id, programStudiId) {
+  const [rows] = await db.query(
+    `SELECT o.id
+     FROM outline o
+     INNER JOIN mahasiswa m ON m.npm = o.npm
+     WHERE o.id = ? AND m.program_studi_id = ?
+     LIMIT 1`,
+    [id, programStudiId],
+  );
+  return rows.length > 0;
+}
+
+async function reviewOutlineByKaprodi(
+  outlineId,
+  programStudiId,
+  status,
+  note,
+  kaprodiFile,
+  kaprodiFileOutlineName,
+) {
+  const conn = await db.getConnection();
+  let txStarted = false;
+  try {
+    await conn.beginTransaction();
+    txStarted = true;
+
+    await conn.query(
+      `UPDATE outline SET status = ?, program_studi_id = ? WHERE id = ?`,
+      [status, programStudiId, outlineId],
+    );
+
+    const [[latestSub]] = await conn.query(
+      `SELECT id FROM outline_submissions
+       WHERE outline_id = ?
+       ORDER BY submission_no DESC
+       LIMIT 1`,
+      [outlineId],
+    );
+
+    if (latestSub) {
+      await conn.query(
+        `INSERT INTO outline_reviews (submission_id, decision_note, file_content, file_name, reviewed_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           decision_note = VALUES(decision_note),
+           file_content  = VALUES(file_content),
+           file_name     = VALUES(file_name),
+           reviewed_at   = VALUES(reviewed_at)`,
+        [
+          latestSub.id,
+          note.length ? note : null,
+          kaprodiFile,
+          kaprodiFile ? (kaprodiFileOutlineName ?? null) : null,
+        ],
+      );
+    }
+
+    if (status !== "SUBMITTED") {
+      const [oStudentRows] = await conn.query(
+        `SELECT u.id, m.nama FROM outline o
+         JOIN mahasiswa m ON m.npm = o.npm
+         JOIN users u ON u.npm = o.npm
+         WHERE o.id = ? LIMIT 1`,
+        [outlineId],
+      );
+      const studentUserId = oStudentRows[0]?.id ?? null;
+      if (studentUserId) {
+        const typeMap = {
+          NEED_REVISION: "OUTLINE_NEED_REVISION",
+          REJECTED: "OUTLINE_REJECTED",
+          ACCEPTED: "OUTLINE_ACCEPTED",
+        };
+        const msgMap = {
+          NEED_REVISION: "Outline Anda memerlukan revisi",
+          REJECTED: "Outline Anda ditolak",
+          ACCEPTED: "Outline Anda diterima",
+        };
+        await insertNotification(
+          conn,
+          studentUserId,
+          typeMap[status],
+          msgMap[status],
+          "/student/pengajuan-outline",
+        );
+      }
+    }
+
+    await conn.commit();
+    txStarted = false;
+  } catch (err) {
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 module.exports = {
   createOutline,
   getExistingOutlinesByNpm,
@@ -308,4 +407,6 @@ module.exports = {
   getOutlineNpmInProdi,
   getOutlineReviewHistory,
   listOutlinesForKaprodi,
+  isOutlineInProdi,
+  reviewOutlineByKaprodi,
 };
