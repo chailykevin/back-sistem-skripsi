@@ -27,13 +27,21 @@ async function getLecturerNidn(userId) {
 }
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
-  const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNpm = String(npm ?? "")
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "")
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "_");
   return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
 }
 
 function buildKartuPreviewFileName(npm, namaMahasiswa) {
-  return buildKartuFileName(npm, namaMahasiswa, "Kartu Konsultasi Outline Preview");
+  return buildKartuFileName(
+    npm,
+    namaMahasiswa,
+    "Kartu Konsultasi Outline Preview",
+  );
 }
 
 async function getKaprodiProgramStudiIdsByNidn(nidn) {
@@ -594,10 +602,26 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     ];
 
     assertSignatures([
-      { role: "Mahasiswa", nama: psRow?.nama_mahasiswa, signatureImage: mahasiswaRow?.signature_image },
-      { role: "Pembimbing 2", nama: psRow?.pembimbing2_nama, signatureImage: p2Row?.signature_image },
-      { role: "Pembimbing 1", nama: psRow?.pembimbing1_nama, signatureImage: p1Row?.signature_image },
-      { role: "Kaprodi", nama: psRow?.kaprodi_nama, signatureImage: kaprodiRow?.signature_image },
+      {
+        role: "Mahasiswa",
+        nama: psRow?.nama_mahasiswa,
+        signatureImage: mahasiswaRow?.signature_image,
+      },
+      {
+        role: "Pembimbing 2",
+        nama: psRow?.pembimbing2_nama,
+        signatureImage: p2Row?.signature_image,
+      },
+      {
+        role: "Pembimbing 1",
+        nama: psRow?.pembimbing1_nama,
+        signatureImage: p1Row?.signature_image,
+      },
+      {
+        role: "Kaprodi",
+        nama: psRow?.kaprodi_nama,
+        signatureImage: kaprodiRow?.signature_image,
+      },
     ]);
 
     const kartuForHalaman = {
@@ -730,6 +754,10 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
     return { kartu };
   }
 
+  if (hasRole(req, "KAPRODI")) {
+    return { kartu };
+  }
+
   if (req.user.userType === "LECTURER") {
     const nidn = await getLecturerNidn(req.user.id);
     if (
@@ -739,10 +767,6 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
       return { error: { status: 403, message: "Forbidden" } };
     }
     return { kartu, nidn };
-  }
-
-  if (hasRole(req, "KAPRODI")) {
-    return { kartu };
   }
 
   return { error: { status: 403, message: "Forbidden" } };
@@ -1472,7 +1496,9 @@ exports.initFromApprovedPengajuan = async (req, res, next) => {
 
   const npm = await getStudentNpm(req.user.id);
   if (!npm) {
-    return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    return res
+      .status(400)
+      .json({ ok: false, message: "Mahasiswa tidak valid" });
   }
 
   const conn = await db.getConnection();
@@ -1487,7 +1513,9 @@ exports.initFromApprovedPengajuan = async (req, res, next) => {
       [outlineId, npm],
     );
     if (outlineRows.length === 0) {
-      return res.status(404).json({ ok: false, message: "Outline tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Outline tidak ditemukan" });
     }
     const outline = outlineRows[0];
     if (outline.status !== "ACCEPTED") {
@@ -1518,7 +1546,8 @@ exports.initFromApprovedPengajuan = async (req, res, next) => {
       });
     }
 
-    const pembimbing2Nidn = outline.pembimbing2_nidn ?? pengajuanRows[0].pembimbing2_ditetapkan_nidn;
+    const pembimbing2Nidn =
+      outline.pembimbing2_nidn ?? pengajuanRows[0].pembimbing2_ditetapkan_nidn;
 
     // Guard: return existing if already initialized
     const [existingKartu] = await conn.query(
@@ -1526,7 +1555,10 @@ exports.initFromApprovedPengajuan = async (req, res, next) => {
       [outlineId],
     );
     if (existingKartu.length > 0) {
-      return res.json({ ok: true, data: { kartuId: existingKartu[0].id, already_exists: true } });
+      return res.json({
+        ok: true,
+        data: { kartuId: existingKartu[0].id, already_exists: true },
+      });
     }
 
     await conn.beginTransaction();
@@ -1551,9 +1583,13 @@ exports.initFromApprovedPengajuan = async (req, res, next) => {
     await conn.commit();
     txStarted = false;
 
-    return res.status(201).json({ ok: true, data: { kartuId: insKartu.insertId } });
+    return res
+      .status(201)
+      .json({ ok: true, data: { kartuId: insKartu.insertId } });
   } catch (err) {
-    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
   } finally {
     conn.release();
@@ -1785,7 +1821,8 @@ exports.listForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "You are not assigned as Kaprodi" });
     }
 
-    const { stage, status, q, tahunAkademik, periodeAkademik } = req.query || {};
+    const { stage, status, q, tahunAkademik, periodeAkademik } =
+      req.query || {};
     const where = ["o.program_studi_id IN (?)"];
     const params = [programStudiIds];
 
