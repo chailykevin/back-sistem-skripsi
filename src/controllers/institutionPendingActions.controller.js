@@ -1,10 +1,8 @@
-const {
-  getPendingActionsForRecipientRole,
-} = require("../services/institutionPendingActions.service");
+const institutionService = require("../services/institution.service");
 
 // GET /perpustakaan/pending-actions
 exports.getPerpustakaanPendingActions = (req, res, next) =>
-  getPendingActionsForRecipientRole(
+  institutionService.getPendingActionsByRole(
     "PERPUSTAKAAN_STAFF",
     "PERPUSTAKAAN",
     req,
@@ -14,4 +12,4 @@ exports.getPerpustakaanPendingActions = (req, res, next) =>
 
 // GET /lppm/pending-actions
 exports.getLppmPendingActions = (req, res, next) =>
-  getPendingActionsForRecipientRole("LPPM", "LPPM", req, res, next);
+  institutionService.getPendingActionsByRole("LPPM", "LPPM", req, res, next);

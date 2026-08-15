@@ -17,7 +17,7 @@ async function getPengumpulanBerkasFinaNotificationByRole(db, recipientRole) {
   };
 }
 
-async function getPendingActionsForRecipientRole(
+async function getPendingActionsByRole(
   roleCode,
   recipientRole,
   req,
@@ -26,12 +26,10 @@ async function getPendingActionsForRecipientRole(
 ) {
   try {
     if (!req.user.hasRole(roleCode)) {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: `Only ${roleCode} can access this endpoint`,
-        });
+      return res.status(403).json({
+        ok: false,
+        message: `Only ${roleCode} can access this endpoint`,
+      });
     }
 
     const data = await getPengumpulanBerkasFinaNotificationByRole(
@@ -48,4 +46,4 @@ async function getPendingActionsForRecipientRole(
   }
 }
 
-module.exports = { getPendingActionsForRecipientRole };
+module.exports = { getPendingActionsByRole };
