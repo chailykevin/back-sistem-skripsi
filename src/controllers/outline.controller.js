@@ -220,10 +220,9 @@ exports.getReviewHistory = async (req, res, next) => {
     }
 
     // access check
-    let targetNpm = null;
     if (req.user.hasRole("STUDENT")) {
-      targetNpm = await mahasiswaService.getNpmByUserId(req.user.id);
-      if (!targetNpm) {
+      const studentNpm = await mahasiswaService.getNpmByUserId(req.user.id);
+      if (!studentNpm) {
         return res
           .status(400)
           .json({ ok: false, message: "Mahasiswa tidak valid" });
@@ -239,41 +238,15 @@ exports.getReviewHistory = async (req, res, next) => {
         });
       }
 
-      const [orows] = await db.query(
-        `SELECT o.npm
-         FROM outline o
-         INNER JOIN mahasiswa m ON m.npm = o.npm
-         WHERE o.id = ? AND m.program_studi_id = ?
-         LIMIT 1`,
-        [id, prodi.id],
-      );
-      if (orows.length === 0) {
+      const npm = await outlineService.getOutlineNpmInProdi(id, prodi.id);
+      if (!npm) {
         return res
           .status(404)
           .json({ ok: false, message: "Outline not found" });
       }
-      targetNpm = orows[0].npm;
     }
 
-    const [rows] = await db.query(
-      `SELECT
-         sub.submission_no AS revision_no,
-         sub.file_content AS file_outline_mahasiswa,
-         sub.file_name AS file_outline_mahasiswa_name,
-         rev.file_content AS file_outline_kaprodi,
-         rev.file_name AS file_outline_kaprodi_name,
-         rev.decision_note,
-         sub.submitted_at AS updated_at,
-         o.id AS outline_id,
-         o.judul,
-         o.status
-       FROM outline_submissions sub
-       INNER JOIN outline o ON o.id = sub.outline_id
-       LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
-       WHERE o.id = ?
-       ORDER BY sub.submission_no DESC`,
-      [id],
-    );
+    const rows = await outlineService.getOutlineReviewHistory(id);
 
     return res.json({ ok: true, data: rows });
   } catch (err) {

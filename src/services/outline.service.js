@@ -203,6 +203,41 @@ async function getLatestOutlineByNpm(npm) {
   return rows[0] ?? null;
 }
 
+async function getOutlineNpmInProdi(id, programStudiId) {
+  const [rows] = await db.query(
+    `SELECT o.npm
+     FROM outline o
+     INNER JOIN mahasiswa m ON m.npm = o.npm
+     WHERE o.id = ? AND m.program_studi_id = ?
+     LIMIT 1`,
+    [id, programStudiId],
+  );
+  return rows[0]?.npm ?? null;
+}
+
+async function getOutlineReviewHistory(id) {
+  const [rows] = await db.query(
+    `SELECT
+       sub.submission_no AS revision_no,
+       sub.file_content AS file_outline_mahasiswa,
+       sub.file_name AS file_outline_mahasiswa_name,
+       rev.file_content AS file_outline_kaprodi,
+       rev.file_name AS file_outline_kaprodi_name,
+       rev.decision_note,
+       sub.submitted_at AS updated_at,
+       o.id AS outline_id,
+       o.judul,
+       o.status
+     FROM outline_submissions sub
+     INNER JOIN outline o ON o.id = sub.outline_id
+     LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
+     WHERE o.id = ?
+     ORDER BY sub.submission_no DESC`,
+    [id],
+  );
+  return rows;
+}
+
 module.exports = {
   createOutline,
   getExistingOutlinesByNpm,
@@ -211,4 +246,6 @@ module.exports = {
   getOutlineDetailById,
   getRejectedOutlinesByNpm,
   getLatestOutlineByNpm,
+  getOutlineNpmInProdi,
+  getOutlineReviewHistory,
 };
