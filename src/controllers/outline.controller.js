@@ -1,13 +1,7 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
-
-async function getNpmByUserId(userId) {
-  const [users] = await db.query(`SELECT npm FROM users WHERE id = ? LIMIT 1`, [
-    userId,
-  ]);
-
-  return users;
-}
+const outlineService = require("../services/outline.service");
+const mahasiswaService = require("../services/mahasiswa.service");
 
 function validateJudul(judul) {
   if (judul.length < 5) return "Judul minimal 5 karakter";
@@ -16,7 +10,8 @@ function validateJudul(judul) {
 }
 
 function validateLatarBelakang(latarBelakang) {
-  if (latarBelakang.length > 1500) return "Latar belakang maksimal 1500 karakter";
+  if (latarBelakang.length > 1500)
+    return "Latar belakang maksimal 1500 karakter";
   return null;
 }
 
@@ -79,13 +74,15 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: judulError });
     }
 
-    const latarBelakangError = validateLatarBelakang(String(latarBelakang).trim());
+    const latarBelakangError = validateLatarBelakang(
+      String(latarBelakang).trim(),
+    );
     if (latarBelakangError) {
       return res.status(400).json({ ok: false, message: latarBelakangError });
     }
 
     // ambil npm mahasiswa dari user login
-    const users = await getNpmByUserId(req.user.id);
+    const users = await mahasiswaService.getNpmByUserId(req.user.id);
 
     if (users.length === 0 || !users[0].npm) {
       return res.status(400).json({
@@ -104,18 +101,8 @@ exports.create = async (req, res, next) => {
       });
     }
 
-    // cek outline sebelumnya untuk npm ini
-    const [existingOutlines] = await db.query(
-      `SELECT id, status
-       FROM outline
-       WHERE npm = ?`,
-      [npm],
-    );
-
     // boleh lanjut hanya jika belum pernah submit, atau semua outline lama REJECTED
-    const hasNonRejected = existingOutlines.some(
-      (outline) => String(outline.status || "").toUpperCase() !== "REJECTED",
-    );
+    const hasNonRejected = await outlineService.hasNonRejectedOutline(npm);
 
     if (hasNonRejected) {
       return res.status(400).json({
@@ -125,10 +112,7 @@ exports.create = async (req, res, next) => {
     }
 
     // block if student has an active IN_PROGRESS skripsi
-    const [[activeSkripsi]] = await db.query(
-      `SELECT id FROM skripsi WHERE npm = ? AND status = 'IN_PROGRESS' LIMIT 1`,
-      [npm],
-    );
+    const activeSkripsi = await outlineService.hasActiveSkripsi(npm);
     if (activeSkripsi) {
       return res.status(409).json({
         ok: false,
@@ -138,52 +122,18 @@ exports.create = async (req, res, next) => {
 
     const submissionPeriodId = req.openPeriod?.id ?? null;
 
-    const [mahasiswaRows] = await db.query(
-      `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
-      [npm],
+    const namaMahasiswa = await mahasiswaService.getMahasiswaNameByNpm(npm);
+
+    await outlineService.createOutline(
+      judul,
+      latarBelakang,
+      npm,
+      programStudiId,
+      submissionPeriodId,
+      fileOutline,
+      fileOutlineName,
+      namaMahasiswa,
     );
-    const namaMahasiswa = mahasiswaRows[0]?.nama ?? npm;
-
-    const conn = await db.getConnection();
-    let txStarted = false;
-    try {
-      await conn.beginTransaction();
-      txStarted = true;
-
-      const [insertResult] = await conn.query(
-        `INSERT INTO outline
-         (judul, latar_belakang, npm, status, program_studi_id, submission_period_id)
-         VALUES (?, ?, ?, 'SUBMITTED', ?, ?)`,
-        [judul, latarBelakang, npm, programStudiId, submissionPeriodId],
-      );
-
-      const outlineId = insertResult?.insertId ?? null;
-      if (outlineId) {
-        await conn.query(
-          `INSERT INTO outline_submissions
-           (outline_id, submission_no, file_content, file_name)
-           VALUES (?, 1, ?, ?)`,
-          [outlineId, fileOutline, fileOutlineName ?? null],
-        );
-      }
-
-      await notifyKaprodiOfOutline(
-        conn,
-        programStudiId,
-        "OUTLINE_SUBMITTED",
-        `Mahasiswa ${namaMahasiswa} mengajukan outline baru`,
-      );
-
-      await conn.commit();
-      txStarted = false;
-    } catch (err) {
-      try {
-        if (txStarted) await conn.rollback();
-      } catch (_) {}
-      throw err;
-    } finally {
-      conn.release();
-    }
 
     res.status(201).json({
       ok: true,
@@ -204,7 +154,7 @@ exports.getById = async (req, res, next) => {
     // Mahasiswa: harus hanya miliknya
     let studentNpm = null;
     if (req.user.hasRole("STUDENT")) {
-      const urows = await getNpmByUserId(req.user.id);
+      const urows = await mahasiswaService.getNpmByUserId(req.user.id);
       studentNpm = urows[0]?.npm ?? null;
       if (!studentNpm) {
         return res
@@ -299,7 +249,7 @@ exports.getLatestMine = async (req, res, next) => {
       });
     }
 
-    const urows = await getNpmByUserId(req.user.id);
+    const urows = await mahasiswaService.getNpmByUserId(req.user.id);
     const npm = urows[0]?.npm ?? null;
 
     if (!npm) {
@@ -363,7 +313,7 @@ exports.getReviewHistory = async (req, res, next) => {
     // access check
     let targetNpm = null;
     if (req.user.hasRole("STUDENT")) {
-      const urows = await getNpmByUserId(req.user.id);
+      const urows = await mahasiswaService.getNpmByUserId(req.user.id);
       targetNpm = urows[0]?.npm ?? null;
       if (!targetNpm) {
         return res
