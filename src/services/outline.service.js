@@ -1,5 +1,6 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const mahasiswaService = require("./mahasiswa.service");
 
 async function notifyKaprodiOfOutline(conn, programStudiId, type, message) {
   const [kaprodiUserRows] = await conn.query(
@@ -396,6 +397,86 @@ async function reviewOutlineByKaprodi(
   }
 }
 
+async function isOutlineOwnedByStudent(outlineId, npm) {
+  const [rows] = await db.query(
+    `SELECT id FROM outline WHERE id = ? AND npm = ? LIMIT 1`,
+    [outlineId, npm],
+  );
+  return rows.length > 0;
+}
+
+async function resubmitOutline(
+  outlineId,
+  npm,
+  programStudiId,
+  judulVal,
+  latarVal,
+  fileVal,
+  fileNameVal,
+) {
+  const conn = await db.getConnection();
+  let txStarted = false;
+  try {
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const sets = [];
+    const params = [];
+
+    if (judulVal !== null && judulVal.length > 0) {
+      sets.push("judul = ?");
+      params.push(judulVal);
+    }
+    if (latarVal !== null && latarVal.length > 0) {
+      sets.push("latar_belakang = ?");
+      params.push(latarVal);
+    }
+    sets.push("program_studi_id = ?");
+    params.push(programStudiId);
+    sets.push("status = 'SUBMITTED'");
+
+    const sql = `UPDATE outline SET ${sets.join(", ")} WHERE id = ?`;
+    params.push(outlineId);
+
+    await conn.query(sql, params);
+
+    if (fileVal !== null && fileVal.length > 0) {
+      const [[maxRow]] = await conn.query(
+        `SELECT MAX(submission_no) AS max_sub
+         FROM outline_submissions
+         WHERE outline_id = ?`,
+        [outlineId],
+      );
+      const nextSub = Number(maxRow?.max_sub || 0) + 1;
+      await conn.query(
+        `INSERT INTO outline_submissions
+         (outline_id, submission_no, file_content, file_name)
+         VALUES (?, ?, ?, ?)`,
+        [outlineId, nextSub, fileVal, fileNameVal ?? null],
+      );
+    }
+
+    const namaMahasiswa = await mahasiswaService.getMahasiswaNameByNpm(npm);
+
+    await notifyKaprodiOfOutline(
+      conn,
+      programStudiId,
+      "OUTLINE_RESUBMITTED",
+      `Mahasiswa ${namaMahasiswa} mengajukan ulang outline`,
+    );
+
+    await conn.commit();
+    txStarted = false;
+  } catch (err) {
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 module.exports = {
   createOutline,
   getExistingOutlinesByNpm,
@@ -409,4 +490,6 @@ module.exports = {
   listOutlinesForKaprodi,
   isOutlineInProdi,
   reviewOutlineByKaprodi,
+  isOutlineOwnedByStudent,
+  resubmitOutline,
 };

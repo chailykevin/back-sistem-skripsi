@@ -1,5 +1,4 @@
 const db = require("../db");
-const { insertNotification } = require("../utils/notify");
 const outlineService = require("../services/outline.service");
 const mahasiswaService = require("../services/mahasiswa.service");
 
@@ -28,27 +27,6 @@ async function getKaprodiProgramStudi(userId) {
     [nidn],
   );
   return prodiRows[0] ?? null;
-}
-
-async function notifyKaprodiOfOutline(conn, programStudiId, type, message) {
-  const [kaprodiUserRows] = await conn.query(
-    `SELECT u.id FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-     JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
-     WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
-     LIMIT 1`,
-    [programStudiId],
-  );
-  if (kaprodiUserRows[0]?.id) {
-    await insertNotification(
-      conn,
-      kaprodiUserRows[0].id,
-      type,
-      message,
-      "/kaprodi/pengajuan-outline/outlines",
-    );
-  }
 }
 
 exports.create = async (req, res, next) => {
@@ -440,89 +418,29 @@ exports.resubmit = async (req, res, next) => {
   }
 
   // pastikan outline milik mahasiswa ini
-  const [orows] = await db.query(
-    `SELECT id
-       FROM outline
-       WHERE id = ? AND npm = ?
-       LIMIT 1`,
-    [outlineId, npm],
-  );
-
-  if (orows.length === 0) {
+  const owned = await outlineService.isOutlineOwnedByStudent(outlineId, npm);
+  if (!owned) {
     return res.status(404).json({
       ok: false,
       message: "Outline not found",
     });
   }
 
-  const conn = await db.getConnection();
   try {
-    await conn.beginTransaction();
-
-    // build update dinamis (outline metadata)
-    const sets = [];
-    const params = [];
-
-    if (judulVal !== null && judulVal.length > 0) {
-      sets.push("judul = ?");
-      params.push(judulVal);
-    }
-    if (latarVal !== null && latarVal.length > 0) {
-      sets.push("latar_belakang = ?");
-      params.push(latarVal);
-    }
-    // keep program_studi_id in sync
-    sets.push("program_studi_id = ?");
-    params.push(programStudiId);
-
-    // resubmit => status kembali SUBMITTED
-    sets.push("status = 'SUBMITTED'");
-
-    const sql = `UPDATE outline SET ${sets.join(", ")} WHERE id = ?`;
-    params.push(outlineId);
-
-    await conn.query(sql, params);
-
-    if (fileVal !== null && fileVal.length > 0) {
-      const [[maxRow]] = await conn.query(
-        `SELECT MAX(submission_no) AS max_sub
-         FROM outline_submissions
-         WHERE outline_id = ?`,
-        [outlineId],
-      );
-      const nextSub = Number(maxRow?.max_sub || 0) + 1;
-      await conn.query(
-        `INSERT INTO outline_submissions
-         (outline_id, submission_no, file_content, file_name)
-         VALUES (?, ?, ?, ?)`,
-        [outlineId, nextSub, fileVal, fileNameVal ?? null],
-      );
-    }
-
-    const [mRows] = await conn.query(
-      `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
-      [npm],
-    );
-    const namaMahasiswa = mRows[0]?.nama ?? npm;
-
-    await notifyKaprodiOfOutline(
-      conn,
+    await outlineService.resubmitOutline(
+      outlineId,
+      npm,
       programStudiId,
-      "OUTLINE_RESUBMITTED",
-      `Mahasiswa ${namaMahasiswa} mengajukan ulang outline`,
+      judulVal,
+      latarVal,
+      fileVal,
+      fileNameVal,
     );
-
-    await conn.commit();
     return res.json({
       ok: true,
       message: "Outline resubmitted",
     });
   } catch (err) {
-    try {
-      await conn.rollback();
-    } catch (_) {}
     next(err);
-  } finally {
-    conn.release();
   }
 };
