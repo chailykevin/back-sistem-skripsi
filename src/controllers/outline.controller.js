@@ -160,78 +160,25 @@ exports.getById = async (req, res, next) => {
       }
     }
 
-    const whereNpm = studentNpm ? "AND o.npm = ?" : "";
-    const params = studentNpm ? [id, studentNpm] : [id];
-
-    const [rows] = await db.query(
-      `SELECT
-         o.id,
-         o.judul,
-         o.latar_belakang,
-         o.npm,
-         o.status,
-         rev.decision_note,
-         o.created_at,
-         o.updated_at,
-         m.nama AS mahasiswa_nama,
-         m.sks AS mahasiswa_sks,
-         m.program_studi_id,
-         ps.nama AS program_studi_nama,
-         sub.file_content AS file_outline_mahasiswa,
-         sub.file_name AS file_outline_mahasiswa_name,
-         rev.file_content AS file_outline_kaprodi,
-         rev.file_name AS file_outline_kaprodi_name,
-         sub.submission_no AS file_revision_no,
-         sub.submitted_at AS file_updated_at,
-         prev_rev.decision_note AS previous_decision_note
-       FROM outline o
-       INNER JOIN mahasiswa m ON m.npm = o.npm
-       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-       LEFT JOIN outline_submissions sub
-         ON sub.outline_id = o.id
-        AND sub.submission_no = (
-          SELECT MAX(submission_no) FROM outline_submissions WHERE outline_id = o.id
-        )
-       LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
-       LEFT JOIN outline_submissions prev_sub
-         ON prev_sub.outline_id = o.id
-        AND prev_sub.submission_no = (
-          SELECT MAX(submission_no) - 1 FROM outline_submissions WHERE outline_id = o.id
-        )
-       LEFT JOIN outline_reviews prev_rev ON prev_rev.submission_id = prev_sub.id
-       WHERE o.id = ? ${whereNpm}
-       LIMIT 1`,
-      params,
-    );
-
-    if (!rows || rows.length === 0) {
+    const outline = await outlineService.getOutlineDetailById(id, studentNpm);
+    if (!outline) {
       return res.status(404).json({ ok: false, message: "Outline not found" });
     }
 
     if (req.user.hasRole("LECTURER", "KAPRODI")) {
-      const [otherRows] = await db.query(
-        `SELECT
-           id,
-           judul,
-           status,
-           created_at,
-           updated_at
-         FROM outline
-         WHERE npm = ?
-           AND id <> ?
-           AND status = 'REJECTED'
-         ORDER BY created_at DESC`,
-        [rows[0].npm, id],
+      const relatedOutlines = await outlineService.getRejectedOutlinesByNpm(
+        outline.npm,
+        id,
       );
 
       return res.json({
         ok: true,
-        data: rows[0],
-        relatedOutlines: otherRows,
+        data: outline,
+        relatedOutlines,
       });
     }
 
-    return res.json({ ok: true, data: rows[0] });
+    return res.json({ ok: true, data: outline });
   } catch (err) {
     next(err);
   }
