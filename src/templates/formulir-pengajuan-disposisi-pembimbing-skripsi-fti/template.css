@@ -1,0 +1,122 @@
+@page {
+  size: A4;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 12pt;
+}
+.page {
+  width: 210mm;
+  min-height: 296mm;
+  padding: 10mm 20mm;
+}
+h1,
+h2 {
+  margin: 0;
+  font-size: 12pt;
+  font-weight: bold;
+  text-align: center;
+  text-decoration: underline;
+}
+.application-details {
+  margin-top: 10mm;
+}
+.application-details > div,
+.disposition-details > div {
+  display: grid;
+  grid-template-columns: 59mm 5mm 1fr;
+  min-height: 7.2mm;
+  line-height: 1.15;
+}
+.application-details > .referral-row {
+  grid-template-columns: 59mm 5mm 1fr;
+  align-items: center;
+}
+.application-details > .company-row {
+  margin-left: 64mm;
+  grid-template-columns: 42mm 5mm max-content;
+  white-space: nowrap;
+}
+.requirements-row {
+  margin-top: 1mm;
+}
+.requirements-row ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.checkbox-group,
+.checkbox-option,
+.requirement-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5mm;
+}
+.checkbox-group {
+  gap: 4mm;
+  vertical-align: middle;
+}
+.checkbox {
+  display: inline-flex;
+  width: 4mm;
+  height: 4mm;
+  align-items: center;
+  justify-content: center;
+  border: 0.3mm solid #000;
+  font-size: 10pt;
+  line-height: 1;
+  flex: 0 0 4mm;
+}
+.requirements-row li {
+  display: flex;
+  align-items: center;
+  min-height: 7.2mm;
+}
+.submission {
+  margin-top: 16mm;
+  text-align: right;
+}
+.submission-signature {
+  width: 62mm;
+  margin: 5mm 0 0 auto;
+  text-align: center;
+}
+.signature-space {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28mm;
+  height: var(--signature-height, 22mm);
+  margin: 0 auto;
+}
+.signature-image {
+  max-width: 100%;
+  max-height: 100%;
+}
+.signature-name {
+  font-weight: bold;
+  text-decoration: underline;
+}
+.disposition {
+  margin-top: 28mm;
+}
+.disposition h2 {
+  margin-bottom: 10mm;
+  text-align: left;
+}
+.head-approval {
+  width: 70mm;
+  margin: 7mm 0 0 auto;
+  text-align: center;
+  line-height: 1.25;
+}

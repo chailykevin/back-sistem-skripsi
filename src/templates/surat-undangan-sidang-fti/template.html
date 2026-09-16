@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="id">
+  <head><meta charset="UTF-8" /><title>Surat Undangan Sidang</title></head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <img class="masthead-logo" src="{{logoUWDP}}" alt="Logo Universitas Widya Dharma Pontianak" />
+        <div class="masthead-text"><div class="university">UNIVERSITAS</div><div class="university">WIDYA DHARMA PONTIANAK</div><div class="faculty">FAKULTAS TEKNOLOGI INFORMASI</div><div class="decree-number">SK MENRISTEKDIKTI NO. 784/KPT/I/2019</div><div class="address">Jalan H.O.S. Cokroaminoto No. 445 Telp. 731966 – 742063. Fax. 739191</div><div class="city">Pontianak, Kalbar</div></div>
+      </header>
+      <section class="letter-meta"><div><span>Nomor</span><span>:</span><span>{{nomorSurat}}</span><span>{{tanggalSurat}}</span></div><div><span>Lamp</span><span>:</span><span>{{lampiran}}</span></div><div><span>Hal</span><span>:</span><strong>Ujian Sarjana</strong></div></section>
+      <section class="recipients"><div>Kepada Yth. :</div><div>1. {{namaPembimbingPertama}}</div><div>2. {{namaPembimbingKedua}}</div><div>3. {{namaPengujiPertama}}</div><div>4. {{namaPengujiKedua}}</div><div>Di</div><div class="recipient-city">Pontianak</div></section>
+      <p>Sesuai dengan Surat Keputusan Dekan Fakultas Teknologi Informasi Nomor {{nomorSk}} Tanggal {{tanggalSk}} maka dengan ini diberitahukan kepada bapak/ibu bahwa pelaksanaan ujian skripsi sarjana atas :</p>
+      <section class="details"><div><span>Nama</span><span>:</span><strong>{{namaMahasiswa}}</strong></div><div><span>N P M</span><span>:</span><span>{{npm}}</span></div><div><span>Program Studi</span><span>:</span><strong>{{programStudi}}</strong></div><div class="title-row"><span>Judul Skripsi</span><span>:</span><span>{{judulSkripsi}}</span></div></section>
+      <p>Yang akan dilaksanakan pada :</p>
+      <section class="details exam-details"><div><span>Hari, Tanggal</span><span>:</span><strong>{{tanggalSidang}}</strong></div><div><span>P u k u l</span><span>:</span><strong>{{waktuSidang}}</strong></div><div><span>Tempat</span><span>:</span><strong>{{tempatSidang}}</strong></div></section>
+      <p>Berhubung padatnya jadwal mahasiswa yang akan menempuh ujian skripsi, maka dimohon bapak/ibu hadir tepat pada waktunya.</p>
+      <p>Demikian kami sampaikan. Atas perhatian dan kesediaan bapak/ibu, kami ucapkan terima kasih.</p>
+      <section class="signing"><div>Ketua Program Studi {{programStudi}},</div><div class="signature-space">{{signatureKetuaProgramStudi}}</div><strong>{{namaKetuaProgramStudi}}</strong></section>
+      <footer><div class="copy-heading">Tembusan :</div><div>Yth. Sdr/i: <strong>{{namaMahasiswa}}</strong></div><div>NPM: <strong>{{npm}}</strong></div><div class="dress-code">Pakaian Penguji dan Mahasiswa:<br />- Pria: Pakaian Sipil Lengkap<br />- Wanita: Business Dress</div></footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Kartu Penulisan Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <img src="{{logoUWDP}}" alt="Logo Universitas Widya Dharma Pontianak" />
+        <div>
+          <div>UNIVERSITAS WIDYA DHARMA PONTIANAK</div>
+          <div class="faculty">FAKULTAS TEKNOLOGI INFORMASI</div>
+        </div>
+      </header>
+
+      <h1>KARTU PENULISAN SKRIPSI</h1>
+      <div class="letter-number">{{nomorSk}}</div>
+
+      <section class="student-details">
+        <div class="student-first-row">
+          <span>Nama Mahasiswa</span><span>:</span><strong>{{namaMahasiswa}}</strong>
+          <span>NPM</span><span>:</span><strong>{{npm}}</strong>
+        </div>
+        <div><span>Program Studi</span><span>:</span><strong>{{programStudi}}</strong></div>
+        <div class="thesis-title"><span>Judul Skripsi</span><span>:</span><strong>{{judulSkripsi}}</strong></div>
+        <div><span>Pembimbing Pertama</span><span>:</span><strong>{{namaPembimbingPertama}}</strong></div>
+        <div><span>Pembimbing Kedua</span><span>:</span><strong>{{namaPembimbingKedua}}</strong></div>
+        <div><span>Tanggal Mulai Menulis</span><span>:</span><strong class="writing-date">{{tanggalMulaiMenulis}}</strong></div>
+        <div><span>Tanggal Selesai Menulis</span><span>:</span><strong class="writing-date">{{tanggalSelesaiMenulis}}</strong></div>
+      </section>
+
+      <section class="approvals">
+        <div>
+          <div>Pembimbing Pertama,</div>
+          <div class="signature-space">{{signaturePembimbingPertama}}</div>
+          <strong>{{namaPembimbingPertama}}</strong>
+        </div>
+        <div>
+          <div>Pembimbing Kedua,</div>
+          <div class="signature-space">{{signaturePembimbingKedua}}</div>
+          <strong>{{namaPembimbingKedua}}</strong>
+        </div>
+        <div>
+          <div>Ketua Program Studi,</div>
+          <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+          <strong>{{namaKetuaProgramStudi}}</strong>
+        </div>
+      </section>
+
+      <h2>CATATAN KONSULTASI</h2>
+      <table class="consultation-table">
+        <thead><tr><th>TANGGAL</th><th>K E T E R A N G A N</th><th>P A R A F</th></tr></thead>
+        <tbody>{{catatanKonsultasiRows}}</tbody>
+      </table>
+    </main>
+  </body>
+</html>

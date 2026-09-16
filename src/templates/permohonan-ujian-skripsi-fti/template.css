@@ -1,0 +1,106 @@
+@page {
+  size: 8.5in 14in;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 12pt;
+  line-height: 1.5;
+}
+.page {
+  width: 8.5in;
+  min-height: 14in;
+  padding: 14.8mm 19.05mm 4.95mm;
+}
+.recipient {
+  width: 76mm;
+  margin-left: auto;
+}
+.recipient-gap {
+  margin-top: 3mm;
+}
+h1 {
+  margin: 9mm 0 5mm;
+  font-size: 12pt;
+  font-weight: 400;
+}
+p {
+  margin: 0 0 3.5mm;
+  text-align: justify;
+}
+.biodata {
+  margin-left: 3.8mm;
+}
+.biodata > div {
+  display: grid;
+  grid-template-columns: 40mm 4mm 1fr;
+  min-height: 6.4mm;
+}
+.biodata > .two-columns {
+  grid-template-columns: 30mm 4mm 37mm 28mm 4mm 1fr;
+}
+.thesis-intro {
+  margin-top: 3mm;
+}
+.thesis-title {
+  margin: 3mm 0;
+  padding-left: 3.8mm;
+}
+.dynamic-value {
+  margin-left: 8.4pt;
+}
+.underlined {
+  text-decoration: underline;
+}
+.requirements {
+  margin: 0 0 3mm;
+  padding-left: 7.5mm;
+  list-style-type: decimal;
+}
+.requirements > li {
+  margin-bottom: 2mm;
+  padding-left: 1mm;
+}
+.requirements ol {
+  margin: 2mm 0 0;
+  padding-left: 6mm;
+  list-style-type: lower-alpha;
+}
+.requirements ol li {
+  margin-bottom: 2mm;
+  padding-left: 1mm;
+}
+.requirements .requirement-value {
+  display: grid;
+  grid-template-columns: 45mm 4mm 1fr;
+}
+.signatures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 28mm;
+  margin: 7mm 9mm 0 3.8mm;
+  text-align: center;
+}
+.signature-space {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22mm;
+}
+.signature-image {
+  max-width: 35mm;
+  max-height: 20mm;
+}
+.signatures strong {
+  display: block;
+  text-decoration: underline;
+}

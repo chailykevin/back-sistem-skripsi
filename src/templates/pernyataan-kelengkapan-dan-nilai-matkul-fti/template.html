@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Surat Pernyataan Kelengkapan dan Nilai Mata Kuliah</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>SURAT PERNYATAAN</h1>
+
+      <table class="recipient-table">
+        <tbody>
+          <tr>
+            <td>Yth</td>
+            <td>:</td>
+            <td>Ketua Program Studi {{programStudi}}</td>
+          </tr>
+          <tr>
+            <td></td>
+            <td></td>
+            <td>Fakultas Teknologi Informasi</td>
+          </tr>
+          <tr>
+            <td></td>
+            <td></td>
+            <td>Universitas Widya Dharma Pontianak</td>
+          </tr>
+          <tr>
+            <td>Di</td>
+            <td>:</td>
+            <td>Pontianak</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>Dengan hormat,</p>
+      <p>Saya yang bertanda tangan di bawah ini:</p>
+      <table class="identity-table">
+        <tbody>
+          <tr>
+            <td>Nama</td>
+            <td>:</td>
+            <td>{{namaMahasiswa}}</td>
+          </tr>
+          <tr>
+            <td>NPM</td>
+            <td>:</td>
+            <td>{{npm}}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>Menyatakan dengan sebenar-benarnya bahwa:</p>
+      <ol>
+        <li>
+          Semua data dan informasi yang telah saya berikan secara tertulis dalam
+          semua kelengkapan yang dipersyaratkan sebelum Ujian Skripsi /
+          Komprehensif diselenggarakan adalah <span class="bold-underline">BENAR</span>.
+        </li>
+        <li>
+          Memiliki nilai D minimal 2 mata kuliah
+          <p class="exception-note">
+            (<strong>kecuali untuk Sistem Informasi:</strong> Penddkan Kewarganegaraan, Logika
+            &amp; Algoritma, Pend. Ag. Kat/Et. Sosial, Konsep Sisfo, Sistem
+            Basis Data, Analisis &amp; Perancangan Sisfo, Metodologi Penelitian,
+            Bhs Indonesia dan Etika Profesi dengan nilai C).<br />(<strong>kecuali untuk
+            Informatika:</strong> Pend. Ag. Kat/Et. Sosial, Algoritma dan Pemrograman,
+            Logika Pemrograman, Statistika, Sistem Basis Data, Penddkan
+            Kewarganegaraan, Logika Informatika, Pemrograman Visual, Metodologi
+            Penelitian, Kerja Praktek, Bahasa Indonesia dan Etika Profesi dengan
+            nilai C).
+          </p>
+        </li>
+        <li>Sudah menempuh minimal 140 SKS.</li>
+        <li>Tidak sedang menempuh mata kuliah di semester sisipan.</li>
+      </ol>
+
+      <p>
+        Saya siap mempertanggungjawabkan kebenaran data dan informasi yang saya
+        berikan dengan sanksi pembatalan hasil Ujian Skripsi / Komprehensif yang
+        telah ditempuh jika saya memberikan data dan informasi yang tidak benar.
+      </p>
+
+      <section class="signature-block">
+        <div>Pontianak, {{tanggal}}</div>
+        <div>Hormat saya,</div>
+        <div class="signature-space">{{signatureMahasiswa}}</div>
+        <strong>{{namaMahasiswa}}</strong>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+/* Source DOCX: Legal (8.5 × 14 in), 1 in side and top margins. */
+@page { size: 8.5in 14in; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { color: #000; font-family: Cambria, "Times New Roman", serif; font-size: 12pt; }
+.page { width: 8.5in; min-height: 14in; padding: 0.6in 1in 0.79in; }
+.simple-header { display: flex; align-items: center; gap: 0.16in; color: #7030A0; font-size: 11pt; font-weight: bold; line-height: 1.2; }
+.simple-header img { width: 0.8in; height: 0.9in; object-fit: contain; }
+h1 { margin: 0.36in 0 0.28in; text-align: center; font-size: 14pt; font-weight: bold; }
+.details { width: 100%; }
+.details > div { display: grid; grid-template-columns: 2.1in 0.18in 1fr; min-height: 0.32in; line-height: 1.2; }
+.details .title-row { min-height: 0.58in; }
+.second-details { margin-top: 0.2in; }
+.notes { margin-top: 0.28in; }
+.notes-content { min-height: 2.15in; padding: 0.08in; border: 0.75pt solid #000; line-height: 1.5; }
+.signing { width: 2.25in; margin: 0.3in 0 0 auto; line-height: 1.25; }
+.signature-space { display: flex; align-items: center; justify-content: center; width: 1.8in; height: 0.8in; border-bottom: 0.75pt solid #000; }
+.signature-image { max-width: 1.6in; max-height: 0.72in; object-fit: contain; }
+.signing strong { display: block; }

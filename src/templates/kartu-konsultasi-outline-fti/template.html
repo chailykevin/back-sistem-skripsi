@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Kartu Konsultasi Outline</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <img
+          class="crest"
+          src="{{crestImage}}"
+          alt="Lambang Universitas Widya Dharma Pontianak"
+        />
+        <div>UNIVERSITAS WIDYA DHARMA PONTIANAK</div>
+        <div>FAKULTAS TEKNOLOGI INFORMASI</div>
+      </header>
+
+      <h1>KARTU KONSULTASI OUTLINE</h1>
+
+      <section class="student-info">
+        <div>
+          <span>Nama Mahasiswa</span><span>:</span
+          ><span>{{namaMahasiswa}}</span>
+        </div>
+        <div>
+          <span>Nomor Pokok Mahasiswa</span><span>:</span
+          ><span>{{nomorPokokMahasiswa}}</span>
+        </div>
+        <div>
+          <span>Program Studi</span><span>:</span><span>{{programStudi}}</span>
+        </div>
+        <div>
+          <span>Judul Skripsi</span><span>:</span><span>{{judulSkripsi}}</span>
+        </div>
+        <div>
+          <span>Dosen Pembimbing Pertama</span><span>:</span
+          ><span>{{namaPembimbingPertama}}</span>
+        </div>
+        <div>
+          <span>Dosen Pembimbing Kedua</span><span>:</span
+          ><span>{{namaPembimbingKedua}}</span>
+        </div>
+      </section>
+
+      <section class="approval">
+        <div class="approval-title">Disetujui,</div>
+        <div class="approval-grid">
+          <div class="signature">
+            <div>Pembimbing Pertama,</div>
+            <div class="signature-space" aria-label="Ruang tanda tangan pembimbing pertama">{{signaturePembimbingPertama}}</div>
+            <div class="signature-name">{{namaPembimbingPertama}}</div>
+          </div>
+          <div class="signature">
+            <div>Pembimbing Kedua,</div>
+            <div class="signature-space" aria-label="Ruang tanda tangan pembimbing kedua">{{signaturePembimbingKedua}}</div>
+            <div class="signature-name">{{namaPembimbingKedua}}</div>
+          </div>
+        </div>
+      </section>
+
+      <h2>CATATAN KONSULTASI</h2>
+
+      <table class="consultation-table">
+        <thead>
+          <tr>
+            <th>TANGGAL</th>
+            <th>KETERANGAN</th>
+            <th>PARAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{catatanKonsultasiRows}}
+        </tbody>
+      </table>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,120 @@
+@page {
+  size: 8.5in 13in;
+  margin: 0;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 12pt;
+}
+
+.page {
+  width: 8.5in;
+  min-height: 13in;
+  padding: 2cm;
+}
+
+.header {
+  position: relative;
+  padding-left: 2cm;
+  font-size: 14pt;
+  font-weight: bold;
+  line-height: 1.15;
+}
+
+.crest {
+  position: absolute;
+  top: -0.4cm;
+  left: 0.15cm;
+  width: 17.5mm;
+  height: auto;
+}
+
+h1 {
+  margin: 10.4mm 0 6.35mm;
+  text-align: center;
+  font-size: 12pt;
+  font-weight: bold;
+  line-height: 1.15;
+  text-decoration: underline;
+}
+
+.student-info { margin-left: 12.5mm; }
+
+.student-info > div {
+  display: grid;
+  grid-template-columns: 52.5mm 2.5mm 1fr;
+  line-height: 1.33;
+}
+
+.approval { margin-top: 5.75mm; }
+
+.approval-title { text-align: center; line-height: 1.15; }
+
+.approval-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 6.3mm;
+  text-align: center;
+}
+
+.signature { line-height: 1.15; }
+
+.signature-space {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 25.4mm;
+  height: 25.4mm;
+  margin: 0 auto;
+}
+
+.signature-image {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.signature-name { font-weight: bold; text-decoration: underline; }
+
+h2 {
+  margin: 17.3mm 0 6.6mm;
+  text-align: center;
+  font-size: 12pt;
+  font-weight: bold;
+  letter-spacing: 3px;
+  line-height: 1.15;
+  text-decoration: underline;
+}
+
+.consultation-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.consultation-table th,
+.consultation-table td {
+  border: 1px solid #000;
+  padding: 0;
+  text-align: center;
+  vertical-align: middle;
+  line-height: 1.15;
+}
+
+.consultation-table th { height: 7mm; font-weight: bold; }
+
+.consultation-table th:nth-child(1),
+.consultation-table td:nth-child(1) { width: 18.45%; }
+
+.consultation-table th:nth-child(2),
+.consultation-table td:nth-child(2) { width: 62.6%; }
+
+.consultation-table th:nth-child(3),
+.consultation-table td:nth-child(3) { width: 18.95%; }
+
+.consultation-table tbody tr { height: 11mm; }
