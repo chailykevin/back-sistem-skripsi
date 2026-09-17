@@ -3,6 +3,9 @@ const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const {
+  generateFormulirPengajuanDisposisiPembimbingSkripsiFTI,
+} = require("../services/generateFormulirPengajuanDisposisiPembimbingSkripsiFTI.js");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
@@ -27,9 +30,14 @@ function formatDateId(date) {
 }
 
 function buildFormulirFileName(npm, namaMahasiswa) {
-  const safeNpm = String(npm ?? "").trim().replace(/[^\w.-]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[^\w\s.-]+/g, "").replace(/\s+/g, " ");
-  return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.docx`;
+  const safeNpm = String(npm ?? "")
+    .trim()
+    .replace(/[^\w.-]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "")
+    .trim()
+    .replace(/[^\w\s.-]+/g, "")
+    .replace(/\s+/g, " ");
+  return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.pdf`;
 }
 
 function checkbox(value) {
@@ -115,77 +123,123 @@ function assertSignatures(checks) {
 }
 
 async function generateFormulirDoc(data) {
-  const {
-    npm,
-    namaMahasiswa,
-    programStudiNama,
-    noHp,
-    sks,
-    judulSkripsi,
-    pembimbing1DiajukanNama,
-    pembimbing2DiajukanNama,
-    perluSuratPengantar,
-    namaPerusahaan,
-    studentSignature,
-    submittedAt,
-    programStudiNamaUpper,
-    disposisiDate,
-    keputusan,
-    dosenPembimbing1,
-    dosenPembimbing2,
-    catatan,
-    syaratTranskrip,
-    syaratKrs,
-    syaratMetodologi,
-    namaKaprodi,
-    kaprodiSignature,
-  } = data;
-
-  const templateBuffer = await readFile(
-    path.join(
-      __dirname,
-      "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
-    ),
-  );
-
-  const patches = {
-    npm: textPatch(npm ?? ""),
-    nama_mahasiswa: textPatch(namaMahasiswa ?? ""),
-    nama: textPatch(namaMahasiswa ?? ""),
-    program_studi: textPatch(programStudiNama ?? ""),
-    no_hp: textPatch(noHp ?? ""),
-    sks: textPatch(String(sks ?? "")),
-    judul: textPatch(judulSkripsi ?? ""),
-    calon_dosen_pembimbing_1: textPatch(pembimbing1DiajukanNama ?? ""),
-    calon_dosen_pembimbing_2: textPatch(pembimbing2DiajukanNama ?? ""),
-    perlu_surat_pengantar: textPatch(
-      perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak",
-    ),
-    nama_perusahaan: textPatch(namaPerusahaan || "-"),
-    today_date: textPatch(formatDateId(submittedAt ?? new Date())),
-    signature: signatureImagePatch(studentSignature),
-    nama_program_studi: textPatch(
-      programStudiNamaUpper ??
-        (programStudiNama ? String(programStudiNama).toUpperCase() : ""),
-    ),
-    disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
-    keputusan: textPatch(keputusan ?? ""),
-    dosen_pembimbing_1: textPatch(dosenPembimbing1 ?? ""),
-    dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
-    catatan: textPatch(catatan || "-"),
-    syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
-    syarat_krs: textPatch(checkbox(syaratKrs)),
-    syarat_metodologi: textPatch(checkbox(syaratMetodologi)),
-    nama_kaprodi: textPatch(namaKaprodi ?? ""),
-    kaprodi_signature: signatureImagePatch(kaprodiSignature),
+  const dataPengajuanDisposisiPembimbingSkripsi = {
+    mahasiswa: {
+      npm: data.npm,
+      nama: data.namaMahasiswa,
+      programStudi: data.programStudiNama,
+      nomorHp: data.noHp,
+      sksDiperoleh: data.sks,
+      judulDiajukan: data.judulSkripsi,
+      dosenPembimbingPertama: data.pembimbing1DiajukanNama,
+      dosenPembimbingKedua: data.pembimbing2DiajukanNama,
+    },
+    pengajuan: {
+      perluSuratPengantar: {
+        ya: data.perluSuratPengantar,
+        tidak: !data.perluSuratPengantar,
+      },
+      namaPerusahaan: data.namaPerusahaan,
+      syaratAdministratif: {
+        salinanTranskripNilai: data.syaratTranskrip,
+        kartuRencanaStudi: data.syaratKrs,
+        lulusMetodologiPenelitian: data.syaratMetodologi,
+      },
+      tanggal: data.submittedAt,
+      namaPemohon: data.namaMahasiswa,
+      signaturePath: data.studentSignature,
+    },
+    disposisi: {
+      programStudi: data.programStudiNama,
+      tanggal: data.disposisiDate,
+      keputusan: data.keputusan,
+      dosenPembimbingPertama: data.dosenPembimbing1,
+      dosenPembimbingKedua: data.dosenPembimbing2,
+      catatan: data.catatan,
+      namaKetuaProgramStudi: data.namaKaprodi,
+      signatureBase64: data.kaprodiSignature,
+    },
   };
 
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer.toString("base64");
+  const outputBuffer =
+    await generateFormulirPengajuanDisposisiPembimbingSkripsiFTI(
+      dataPengajuanDisposisiPembimbingSkripsi,
+    );
+
+  //DOCX GENERATOR
+
+  // const {
+  //   npm,
+  //   namaMahasiswa,
+  //   programStudiNama,
+  //   noHp,
+  //   sks,
+  //   judulSkripsi,
+  //   pembimbing1DiajukanNama,
+  //   pembimbing2DiajukanNama,
+  //   perluSuratPengantar,
+  //   namaPerusahaan,
+  //   studentSignature,
+  //   submittedAt,
+  //   programStudiNamaUpper,
+  //   disposisiDate,
+  //   keputusan,
+  //   dosenPembimbing1,
+  //   dosenPembimbing2,
+  //   catatan,
+  //   syaratTranskrip,
+  //   syaratKrs,
+  //   syaratMetodologi,
+  //   namaKaprodi,
+  //   kaprodiSignature,
+  // } = data;
+
+  // const templateBuffer = await readFile(
+  //   path.join(
+  //     __dirname,
+  //     "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
+  //   ),
+  // );
+
+  // const patches = {
+  //   npm: textPatch(npm ?? ""),
+  //   nama_mahasiswa: textPatch(namaMahasiswa ?? ""),
+  //   nama: textPatch(namaMahasiswa ?? ""),
+  //   program_studi: textPatch(programStudiNama ?? ""),
+  //   no_hp: textPatch(noHp ?? ""),
+  //   sks: textPatch(String(sks ?? "")),
+  //   judul: textPatch(judulSkripsi ?? ""),
+  //   calon_dosen_pembimbing_1: textPatch(pembimbing1DiajukanNama ?? ""),
+  //   calon_dosen_pembimbing_2: textPatch(pembimbing2DiajukanNama ?? ""),
+  //   perlu_surat_pengantar: textPatch(
+  //     perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak",
+  //   ),
+  //   nama_perusahaan: textPatch(namaPerusahaan || "-"),
+  //   today_date: textPatch(formatDateId(submittedAt ?? new Date())),
+  //   signature: signatureImagePatch(studentSignature),
+  //   nama_program_studi: textPatch(
+  //     programStudiNamaUpper ??
+  //       (programStudiNama ? String(programStudiNama).toUpperCase() : ""),
+  //   ),
+  //   disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
+  //   keputusan: textPatch(keputusan ?? ""),
+  //   dosen_pembimbing_1: textPatch(dosenPembimbing1 ?? ""),
+  //   dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
+  //   catatan: textPatch(catatan || "-"),
+  //   syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
+  //   syarat_krs: textPatch(checkbox(syaratKrs)),
+  //   syarat_metodologi: textPatch(checkbox(syaratMetodologi)),
+  //   nama_kaprodi: textPatch(namaKaprodi ?? ""),
+  //   kaprodi_signature: signatureImagePatch(kaprodiSignature),
+  // };
+
+  // const outputBuffer = await patchDocument({
+  //   outputType: "nodebuffer",
+  //   data: templateBuffer,
+  //   patches,
+  // });
+
+  return Buffer.from(outputBuffer).toString("base64");
 }
 
 async function upsertFileByType(
@@ -232,8 +286,12 @@ exports.listForKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const tahunAkademik = req.query.tahunAkademik ? String(req.query.tahunAkademik) : null;
-    const periodeAkademik = req.query.periodeAkademik ? String(req.query.periodeAkademik) : null;
+    const tahunAkademik = req.query.tahunAkademik
+      ? String(req.query.tahunAkademik)
+      : null;
+    const periodeAkademik = req.query.periodeAkademik
+      ? String(req.query.periodeAkademik)
+      : null;
 
     const where = ["ps.kaprodi_nidn = ?"];
     const params = [nidn];
@@ -654,8 +712,16 @@ exports.review = async (req, res, next) => {
     };
 
     assertSignatures([
-      { role: "Mahasiswa", nama: rd.nama_mahasiswa, signatureImage: rd.student_signature },
-      { role: "Kaprodi", nama: rd.kaprodi_nama, signatureImage: rd.kaprodi_signature },
+      {
+        role: "Mahasiswa",
+        nama: rd.nama_mahasiswa,
+        signatureImage: rd.student_signature,
+      },
+      {
+        role: "Kaprodi",
+        nama: rd.kaprodi_nama,
+        signatureImage: rd.kaprodi_signature,
+      },
     ]);
 
     console.log("[review] generating formulir doc");

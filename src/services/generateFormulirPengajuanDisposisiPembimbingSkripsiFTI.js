@@ -1,19 +1,30 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
-const templatePath = path.join(__dirname, "../templates/formulir-pengajuan-disposisi-pembimbing-skripsi-fti/template.html");
-const cssPath = path.join(__dirname, "../templates/formulir-pengajuan-disposisi-pembimbing-skripsi-fti/template.css");
-const projectRootUrl = path.join(__dirname, "../");
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
-
+const templatePath = path.join(
+  __dirname,
+  "../templates/formulir-pengajuan-disposisi-pembimbing-skripsi-fti/template.html",
+);
+const cssPath = path.join(
+  __dirname,
+  "../templates/formulir-pengajuan-disposisi-pembimbing-skripsi-fti/template.css",
+);
 function renderCheckbox(label, checked) {
   return `<span class="checkbox-option"><span class="checkbox">${checked ? "&#10003;" : ""}</span>${escapeHtml(label)}</span>`;
+}
+
+/**
+ * Renders an optional signature from a raw base64 PNG string or a data URL.
+ * Use null when the signature should remain blank.
+ */
+function renderBase64Signature(base64, alt) {
+  if (base64 === null || base64 === undefined || base64 === "") return "";
+
+  const source = base64.startsWith("data:")
+    ? base64
+    : `data:image/png;base64,${base64}`;
+  return `<img class="signature-image" src="${escapeHtml(source)}" alt="${escapeHtml(alt)}" />`;
 }
 
 function renderRequirements(requirements) {
@@ -39,9 +50,9 @@ async function renderTemplate(template, data) {
     throw new Error('Keputusan must be either "Diterima" or "Ditolak".');
   }
   const [signaturePemohon, signatureKetuaProgramStudi] = await Promise.all([
-    renderSignature(pengajuan.signaturePath, "Tanda tangan pemohon"),
-    renderSignature(
-      disposisi.signaturePath,
+    renderBase64Signature(pengajuan.signatureBase64, "Tanda tangan pemohon"),
+    renderBase64Signature(
+      disposisi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
   ]);
@@ -83,9 +94,7 @@ async function renderTemplate(template, data) {
     .replace("{{signatureKetuaProgramStudi}}", signatureKetuaProgramStudi);
 }
 
-async function generateFormulirPengajuanDisposisiPembimbingSkripsiFTI(
-  data,
-) {
+async function generateFormulirPengajuanDisposisiPembimbingSkripsiFTI(data) {
   const [template, css] = await Promise.all([
     fs.readFile(templatePath, "utf8"),
     fs.readFile(cssPath, "utf8"),
