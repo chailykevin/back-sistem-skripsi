@@ -8,7 +8,7 @@ async function renderTemplate(template, data) {
   const [logoUWDP, signature] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
     renderSignature(
-      data.ketuaProgramStudi.signaturePath,
+      data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
   ]);

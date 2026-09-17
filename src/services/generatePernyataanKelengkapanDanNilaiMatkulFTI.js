@@ -27,7 +27,7 @@ async function renderTemplate(template, data) {
     )
     .replace(
       "{{signatureMahasiswa}}",
-      await renderSignature(data.mahasiswa.signaturePath),
+      await renderSignature(data.mahasiswa.signatureBase64),
     );
 }
 

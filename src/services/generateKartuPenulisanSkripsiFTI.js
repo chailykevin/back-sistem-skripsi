@@ -15,13 +15,13 @@ const mimeTypes = {
 async function renderConsultationRows(rows) {
   const rowsToRender =
     rows.length === 0
-      ? [{ tanggal: "", keterangan: "", parafPath: null }]
+      ? [{ tanggal: "", keterangan: "", parafBase64: null }]
       : rows;
   return (
     await Promise.all(
       rowsToRender.map(
-        async ({ tanggal, keterangan, parafPath }) => `
-    <tr><td>${escapeHtml(tanggal)}</td><td>${escapeHtml(keterangan)}</td><td>${await renderSignature(parafPath, "Paraf")}</td></tr>`,
+        async ({ tanggal, keterangan, parafBase64 }) => `
+    <tr><td>${escapeHtml(tanggal)}</td><td>${escapeHtml(keterangan)}</td><td>${await renderSignature(parafBase64, "Paraf")}</td></tr>`,
       ),
     )
   ).join("");
@@ -37,15 +37,15 @@ async function renderTemplate(template, data) {
   ] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
     renderSignature(
-      data.pembimbing.pertama.signaturePath,
+      data.pembimbing.pertama.signatureBase64,
       "Tanda tangan pembimbing pertama",
     ),
     renderSignature(
-      data.pembimbing.kedua.signaturePath,
+      data.pembimbing.kedua.signatureBase64,
       "Tanda tangan pembimbing kedua",
     ),
     renderSignature(
-      data.ketuaProgramStudi.signaturePath,
+      data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
     renderConsultationRows(data.catatanKonsultasi),

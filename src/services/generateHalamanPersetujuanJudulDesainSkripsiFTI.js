@@ -70,17 +70,17 @@ async function renderTemplate(template, data) {
     signaturePembimbingKedua,
     signatureKetuaProgramStudi,
   ] = await Promise.all([
-    renderSignature(data.mahasiswa.signaturePath, "Tanda tangan mahasiswa"),
+    renderSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
     renderSignature(
-      data.pembimbing.pertama.signaturePath,
+      data.pembimbing.pertama.signatureBase64,
       "Tanda tangan pembimbing pertama",
     ),
     renderSignature(
-      data.pembimbing.kedua.signaturePath,
+      data.pembimbing.kedua.signatureBase64,
       "Tanda tangan pembimbing kedua",
     ),
     renderSignature(
-      data.ketuaProgramStudi.signaturePath,
+      data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
   ]);

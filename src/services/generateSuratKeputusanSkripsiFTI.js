@@ -15,7 +15,7 @@ const mimeTypes = {
 async function renderTemplate(template, data) {
   const [logoUWDP, signatureDekan] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(data.dekan.signaturePath),
+    renderSignature(data.dekan.signatureBase64),
   ]);
   const values = {
     "{{nomorSurat}}": data.nomorSurat,

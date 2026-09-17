@@ -3,8 +3,14 @@ const { escapeHtml } = require("./shared/html.js");
 const { imageToDataUrl, renderSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
-const templatePath = path.join(__dirname, "../templates/kartu-konsultasi-outline-fti/template.html");
-const cssPath = path.join(__dirname, "../templates/kartu-konsultasi-outline-fti/template.css");
+const templatePath = path.join(
+  __dirname,
+  "../templates/kartu-konsultasi-outline-fti/template.html",
+);
+const cssPath = path.join(
+  __dirname,
+  "../templates/kartu-konsultasi-outline-fti/template.css",
+);
 const projectRootUrl = path.join(__dirname, "../");
 
 const mimeTypes = {
@@ -36,11 +42,11 @@ async function renderTemplate(template, data) {
     await Promise.all([
       imageToDataUrl("assets/logo-UWDP.png"),
       renderSignature(
-        pembimbing.pertama.signaturePath,
+        pembimbing.pertama.signatureBase64,
         "Tanda tangan pembimbing pertama",
       ),
       renderSignature(
-        pembimbing.kedua.signaturePath,
+        pembimbing.kedua.signatureBase64,
         "Tanda tangan pembimbing kedua",
       ),
       renderConsultationRows(catatanKonsultasi),

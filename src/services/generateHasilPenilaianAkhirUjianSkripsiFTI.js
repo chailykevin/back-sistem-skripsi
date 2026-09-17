@@ -39,7 +39,7 @@ async function renderTemplate(template, data) {
   const average = grandTotal / scores.length;
   const [logoUWDP, signaturePimpinanSidang] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(pembimbingPertama.signaturePath),
+    renderSignature(pembimbingPertama.signatureBase64),
   ]);
   const values = {
     "{{logoUWDP}}": logoUWDP,

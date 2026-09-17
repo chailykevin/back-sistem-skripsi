@@ -17,7 +17,7 @@ async function renderTemplate(template, data) {
 
   const [logoFTI, signature] = await Promise.all([
     imageToDataUrl("assets/logo-FTI.png"),
-    renderSignature(data.penguji.signaturePath, "Tanda tangan penguji"),
+    renderSignature(data.penguji.signatureBase64, "Tanda tangan penguji"),
   ]);
   const values = {
     "{{logoFTI}}": logoFTI,

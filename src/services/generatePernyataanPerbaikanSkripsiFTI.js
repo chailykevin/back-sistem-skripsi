@@ -24,10 +24,10 @@ function toTitleCase(value) {
 async function renderTemplate(template, data) {
   const [signatureKetuaProgramStudi, signatureMahasiswa] = await Promise.all([
     renderSignature(
-      data.ketuaProgramStudi.signaturePath,
+      data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
-    renderSignature(data.mahasiswa.signaturePath, "Tanda tangan mahasiswa"),
+    renderSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
   ]);
   const values = {
     "{{namaMahasiswa}}": data.mahasiswa.nama,

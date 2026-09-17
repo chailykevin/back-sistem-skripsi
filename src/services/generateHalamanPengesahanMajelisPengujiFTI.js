@@ -7,18 +7,18 @@ const cssPath = path.join(__dirname, "../templates/halaman-pengesahan-majelis-pe
 async function renderTemplate(template, data) {
   const { mahasiswa, majelisPenguji } = data;
   const [student, ketua, sekretaris, utama, anggota] = await Promise.all([
-    signature(mahasiswa.signaturePath, "Tanda tangan mahasiswa"),
-    signature(majelisPenguji.ketua.signaturePath, "Tanda tangan ketua"),
+    signature(mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
+    signature(majelisPenguji.ketua.signatureBase64, "Tanda tangan ketua"),
     signature(
-      majelisPenguji.sekretaris.signaturePath,
+      majelisPenguji.sekretaris.signatureBase64,
       "Tanda tangan sekretaris",
     ),
     signature(
-      majelisPenguji.pengujiUtama.signaturePath,
+      majelisPenguji.pengujiUtama.signatureBase64,
       "Tanda tangan penguji utama",
     ),
     signature(
-      majelisPenguji.anggotaPenguji.signaturePath,
+      majelisPenguji.anggotaPenguji.signatureBase64,
       "Tanda tangan anggota penguji",
     ),
   ]);

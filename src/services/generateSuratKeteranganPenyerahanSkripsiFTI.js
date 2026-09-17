@@ -9,31 +9,31 @@ async function renderTemplate(template, data) {
   const [perpus, lppm, first, second, utama, anggota, sekretaris, student] =
     await Promise.all([
       signature(
-        penerimaan.perpustakaan.signaturePath,
+        penerimaan.perpustakaan.signatureBase64,
         "Tanda tangan perpustakaan",
       ),
-      signature(penerimaan.lppm.signaturePath, "Tanda tangan LPPM"),
+      signature(penerimaan.lppm.signatureBase64, "Tanda tangan LPPM"),
       signature(
-        penerimaan.pembimbingPertama.signaturePath,
+        penerimaan.pembimbingPertama.signatureBase64,
         "Tanda tangan pembimbing pertama",
       ),
       signature(
-        penerimaan.pembimbingKedua.signaturePath,
+        penerimaan.pembimbingKedua.signatureBase64,
         "Tanda tangan pembimbing kedua",
       ),
       signature(
-        penerimaan.pengujiUtama.signaturePath,
+        penerimaan.pengujiUtama.signatureBase64,
         "Tanda tangan penguji utama",
       ),
       signature(
-        penerimaan.anggotaPenguji.signaturePath,
+        penerimaan.anggotaPenguji.signatureBase64,
         "Tanda tangan anggota penguji",
       ),
       signature(
-        sekretarisProgramStudi.signaturePath,
+        sekretarisProgramStudi.signatureBase64,
         "Tanda tangan sekretaris program studi",
       ),
-      signature(mahasiswa.signaturePath, "Tanda tangan mahasiswa"),
+      signature(mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
     ]);
   const values = {
     "{{namaMahasiswa}}": mahasiswa.nama,

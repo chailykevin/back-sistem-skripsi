@@ -1,5 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
+const { renderSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(
@@ -12,19 +13,6 @@ const cssPath = path.join(
 );
 function renderCheckbox(label, checked) {
   return `<span class="checkbox-option"><span class="checkbox">${checked ? "&#10003;" : ""}</span>${escapeHtml(label)}</span>`;
-}
-
-/**
- * Renders an optional signature from a raw base64 PNG string or a data URL.
- * Use null when the signature should remain blank.
- */
-function renderBase64Signature(base64, alt) {
-  if (base64 === null || base64 === undefined || base64 === "") return "";
-
-  const source = base64.startsWith("data:")
-    ? base64
-    : `data:image/png;base64,${base64}`;
-  return `<img class="signature-image" src="${escapeHtml(source)}" alt="${escapeHtml(alt)}" />`;
 }
 
 function renderRequirements(requirements) {
@@ -50,8 +38,8 @@ async function renderTemplate(template, data) {
     throw new Error('Keputusan must be either "Diterima" or "Ditolak".');
   }
   const [signaturePemohon, signatureKetuaProgramStudi] = await Promise.all([
-    renderBase64Signature(pengajuan.signatureBase64, "Tanda tangan pemohon"),
-    renderBase64Signature(
+    renderSignature(pengajuan.signatureBase64, "Tanda tangan pemohon"),
+    renderSignature(
       disposisi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),

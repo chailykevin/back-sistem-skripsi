@@ -6,16 +6,16 @@ const templatePath = path.join(__dirname, "../templates/halaman-pengesahan-dekan
 const cssPath = path.join(__dirname, "../templates/halaman-pengesahan-dekan-fti/template.css");
 async function renderTemplate(template, data) {
   const [student, first, second, dean] = await Promise.all([
-    signature(data.mahasiswa.signaturePath, "Tanda tangan mahasiswa"),
+    signature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
     signature(
-      data.pembimbing.pertama.signaturePath,
+      data.pembimbing.pertama.signatureBase64,
       "Tanda tangan pembimbing pertama",
     ),
     signature(
-      data.pembimbing.kedua.signaturePath,
+      data.pembimbing.kedua.signatureBase64,
       "Tanda tangan pembimbing kedua",
     ),
-    signature(data.dekan.signaturePath, "Tanda tangan dekan"),
+    signature(data.dekan.signatureBase64, "Tanda tangan dekan"),
   ]);
   const values = {
     "{{judulSkripsi}}": data.mahasiswa.judulSkripsi,

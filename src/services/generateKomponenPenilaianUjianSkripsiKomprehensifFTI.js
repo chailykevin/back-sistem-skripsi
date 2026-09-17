@@ -46,7 +46,7 @@ async function renderTemplate(template, data) {
     throw new TypeError("komponenPenilaian must be an array.");
   const [logoUWDP, signature] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(data.penilai.signaturePath),
+    renderSignature(data.penilai.signatureBase64),
   ]);
   const values = {
     "{{logoUWDP}}": logoUWDP,
