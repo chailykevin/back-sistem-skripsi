@@ -3,6 +3,9 @@ const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const {
+  generateKartuKonsultasiOutlineFTI,
+} = require("../services/generateKartuKonsultasiOutlineFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -33,7 +36,7 @@ function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNama = String(namaMahasiswa ?? "")
     .trim()
     .replace(/[/\\:*?"<>|]+/g, "_");
-  return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
+  return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
 function buildKartuPreviewFileName(npm, namaMahasiswa) {
@@ -1380,16 +1383,53 @@ exports.previewKartuDocx = async (req, res, next) => {
     }
 
     const logs = await getKartuLogs(db, kartu.id);
-    const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
-      kartu,
-      logs,
+
+    const dataKartuKonsultasiOutlineFTI = {
+      mahasiswa: {
+        nama: kartu.nama_mahasiswa,
+        nomorPokok: kartu.npm,
+        programStudi: kartu.program_studi_nama,
+        judulSkripsi: kartu.judul_skripsi,
+      },
+      pembimbing: {
+        pertama: {
+          nama: kartu.pembimbing1_nama,
+          signatureBase64: kartu.pembimbing1_signature,
+        },
+        kedua: {
+          nama: kartu.pembimbing2_nama,
+          signatureBase64: kartu.pembimbing2_signature,
+        },
+      },
+      catatanKonsultasi: [],
+    };
+
+    for (let i = 1; i <= 18; i += 1) {
+      const log = logs[i - 1];
+      const keterangan = log
+        ? `${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`
+        : "";
+
+      dataKartuKonsultasiOutlineFTI.catatanKonsultasi[`tanggal_${i}`] =
+        textPatch(log ? formatKartuDate(log.logged_at) : "");
+      dataKartuKonsultasiOutlineFTI.catatanKonsultasi[`keterangan_${i}`] =
+        textPatch(keterangan);
+      dataKartuKonsultasiOutlineFTI.catatanKonsultasi[`paraf_${i}`] =
+        signatureImagePatch(log?.reviewer_signature);
+    }
+
+    const outputBuffer = await generateKartuKonsultasiOutlineFTI(
+      dataKartuKonsultasiOutlineFTI,
     );
+
+    // const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
+    //   kartu,
+    //   logs,
+    // );
+
     const fileName = buildKartuPreviewFileName(kartu.npm, kartu.nama_mahasiswa);
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    );
+    res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader("Content-Length", outputBuffer.length);
     return res.send(outputBuffer);
