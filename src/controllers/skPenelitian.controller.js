@@ -3,6 +3,9 @@ const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const {
+  generateHalamanPersetujuanJudulDesainSkripsiFTI,
+} = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -33,7 +36,7 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
   const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
-  return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
+  return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
 function textPatch(value) {
@@ -600,7 +603,7 @@ exports.initSkPenelitian = async (req, res, next) => {
     );
     const skId = ins.insertId;
 
-    // Generate halaman persetujuan DOCX and store directly into sk files
+    // Generate halaman persetujuan PDF and store directly into sk files
     try {
       const [[mahasiswaRow]] = await conn.query(
         `SELECT signature_image FROM users WHERE npm = ? LIMIT 1`,
@@ -640,30 +643,40 @@ exports.initSkPenelitian = async (req, res, next) => {
          WHERE ps.id = ? LIMIT 1`,
         [kartu.npm, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
       );
-      const kartuForHalaman = {
-        ...kartu,
-        nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
-        pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
-        pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+      const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
+        mahasiswa: {
+          nama: psRow?.nama_mahasiswa ?? "",
+          npm: kartu.npm,
+          signatureBase64: mahasiswaRow?.signature_image ?? null,
+        },
+        pembimbing: {
+          pertama: {
+            nama: psRow?.pembimbing1_nama ?? "",
+            signatureBase64: p1Row?.signature_image ?? null,
+          },
+          kedua: {
+            nama: psRow?.pembimbing2_nama ?? "",
+            signatureBase64: p2Row?.signature_image ?? null,
+          },
+        },
+        ketuaProgramStudi: {
+          nama: psRow?.kaprodi_nama ?? "",
+          signatureBase64: kaprodiRow?.signature_image ?? null,
+        },
+        programStudi: psRow?.program_studi_nama ?? "",
+        judulSkripsi: kartu.judul_skripsi ?? "",
+        tahun: String(new Date().getFullYear()),
       };
 
-      const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-        kartu: kartuForHalaman,
-        signatures: [
-          { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
-          { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
-          { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
-          { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
-        ],
-        programStudiNama: psRow?.program_studi_nama ?? "",
-        namaKaprodi: psRow?.kaprodi_nama ?? "",
-      });
+      const halamanBuffer =
+        await generateHalamanPersetujuanJudulDesainSkripsiFTI(
+          dataHalamanPersetujuanJudulDesainSkripsiFTI,
+        );
 
-      const mimeDocx =
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      const mimePdf = "application/pdf";
       const halamanFileName = buildKartuFileName(
         kartu.npm,
-        kartuForHalaman.nama_mahasiswa,
+        psRow?.nama_mahasiswa,
         "Halaman Persetujuan Judul",
       );
 
@@ -671,10 +684,47 @@ exports.initSkPenelitian = async (req, res, next) => {
         `INSERT INTO pengajuan_sk_penelitian_files
            (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
          VALUES (?, 'HALAMAN_PERSETUJUAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
-        [skId, halamanFileName, mimeDocx, halamanBuffer.toString("base64")],
+        [
+          skId,
+          halamanFileName,
+          mimePdf,
+          Buffer.from(halamanBuffer).toString("base64"),
+        ],
       );
+
+      // DOCX generator (legacy)
+      // const kartuForHalaman = {
+      //   ...kartu,
+      //   nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
+      //   pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
+      //   pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+      // };
+      // const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
+      //   kartu: kartuForHalaman,
+      //   signatures: [
+      //     { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
+      //     { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
+      //     { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
+      //     { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
+      //   ],
+      //   programStudiNama: psRow?.program_studi_nama ?? "",
+      //   namaKaprodi: psRow?.kaprodi_nama ?? "",
+      // });
+      // const mimeDocx =
+      //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      // const halamanFileName = buildKartuFileName(
+      //   kartu.npm,
+      //   kartuForHalaman.nama_mahasiswa,
+      //   "Halaman Persetujuan Judul",
+      // );
+      // await conn.query(
+      //   `INSERT INTO pengajuan_sk_penelitian_files
+      //      (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+      //    VALUES (?, 'HALAMAN_PERSETUJUAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
+      //   [skId, halamanFileName, mimeDocx, halamanBuffer.toString("base64")],
+      // );
     } catch (_) {
-      // Non-fatal: SK init still succeeds even if halaman DOCX generation fails
+      // Non-fatal: SK init still succeeds even if halaman generation fails
     }
 
     await conn.commit();

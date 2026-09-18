@@ -6,6 +6,9 @@ const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   generateKartuKonsultasiOutlineFTI,
 } = require("../services/generateKartuKonsultasiOutlineFTI.js");
+const {
+  generateHalamanPersetujuanJudulDesainSkripsiFTI,
+} = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -619,24 +622,25 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       ],
     );
 
-    const halamanSignatures = [
-      {
-        signer_role: "MAHASISWA",
-        signature_image: mahasiswaRow?.signature_image ?? null,
-      },
-      {
-        signer_role: "PEMBIMBING_2",
-        signature_image: p2Row?.signature_image ?? null,
-      },
-      {
-        signer_role: "PEMBIMBING_1",
-        signature_image: p1Row?.signature_image ?? null,
-      },
-      {
-        signer_role: "KAPRODI",
-        signature_image: kaprodiRow?.signature_image ?? null,
-      },
-    ];
+    // DOCX generator (legacy)
+    // const halamanSignatures = [
+    //   {
+    //     signer_role: "MAHASISWA",
+    //     signature_image: mahasiswaRow?.signature_image ?? null,
+    //   },
+    //   {
+    //     signer_role: "PEMBIMBING_2",
+    //     signature_image: p2Row?.signature_image ?? null,
+    //   },
+    //   {
+    //     signer_role: "PEMBIMBING_1",
+    //     signature_image: p1Row?.signature_image ?? null,
+    //   },
+    //   {
+    //     signer_role: "KAPRODI",
+    //     signature_image: kaprodiRow?.signature_image ?? null,
+    //   },
+    // ];
 
     assertSignatures([
       {
@@ -661,30 +665,68 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       },
     ]);
 
-    const kartuForHalaman = {
-      ...kartu,
-      nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
-      judul_skripsi: psRow?.judul_skripsi ?? "",
-      pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
-      pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+    const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
+      mahasiswa: {
+        nama: psRow?.nama_mahasiswa ?? "",
+        npm: kartu.npm,
+        signatureBase64: mahasiswaRow?.signature_image ?? null,
+      },
+      pembimbing: {
+        pertama: {
+          nama: psRow?.pembimbing1_nama ?? "",
+          signatureBase64: p1Row?.signature_image ?? null,
+        },
+        kedua: {
+          nama: psRow?.pembimbing2_nama ?? "",
+          signatureBase64: p2Row?.signature_image ?? null,
+        },
+      },
+      ketuaProgramStudi: {
+        nama: psRow?.kaprodi_nama ?? "",
+        signatureBase64: kaprodiRow?.signature_image ?? null,
+      },
+      programStudi: psRow?.program_studi_nama ?? "",
+      judulSkripsi: psRow?.judul_skripsi ?? "",
+      tahun: String(new Date().getFullYear()),
     };
 
-    const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-      kartu: kartuForHalaman,
-      signatures: halamanSignatures,
-      programStudiNama: psRow?.program_studi_nama ?? "",
-      namaKaprodi: psRow?.kaprodi_nama ?? "",
-    });
+    const halamanBuffer =
+      await generateHalamanPersetujuanJudulDesainSkripsiFTI(
+        dataHalamanPersetujuanJudulDesainSkripsiFTI,
+      );
 
     halamanFile = {
-      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      mime: "application/pdf",
       name: buildKartuFileName(
         kartu.npm,
         psRow?.nama_mahasiswa,
         "Halaman Persetujuan Judul",
       ),
-      content: halamanBuffer.toString("base64"),
+      content: Buffer.from(halamanBuffer).toString("base64"),
     };
+
+    // const kartuForHalaman = {
+    //   ...kartu,
+    //   nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
+    //   judul_skripsi: psRow?.judul_skripsi ?? "",
+    //   pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
+    //   pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
+    // };
+    // const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
+    //   kartu: kartuForHalaman,
+    //   signatures: halamanSignatures,
+    //   programStudiNama: psRow?.program_studi_nama ?? "",
+    //   namaKaprodi: psRow?.kaprodi_nama ?? "",
+    // });
+    // halamanFile = {
+    //   mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    //   name: buildKartuFileName(
+    //     kartu.npm,
+    //     psRow?.nama_mahasiswa,
+    //     "Halaman Persetujuan Judul",
+    //   ),
+    //   content: halamanBuffer.toString("base64"),
+    // };
   } catch (halamanErr) {
     console.log(
       "[autoSubmitSkPenelitian] halaman persetujuan generation skipped",

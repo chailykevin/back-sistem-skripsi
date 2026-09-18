@@ -1,19 +1,85 @@
-@page { size: A4; margin: 0; }
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body { color: #000; font-family: "Times New Roman", serif; font-size: 12pt; }
-.page { width: 210mm; min-height: 297mm; padding: 30mm 30mm 30mm 40mm; text-align: center; }
-h1 { margin: 0; font-size: 14pt; font-weight: bold; line-height: 1.2; }
-h1 span { display: block; }
-.design-title { margin-top: 22mm; font-size: 14pt; font-weight: bold; }
-.signature-space { display: flex; align-items: center; justify-content: center; width: 34mm; height: 16mm; margin: 0 auto; }
-.signature-image { max-width: 100%; max-height: 100%; }
-.signature-name { font-weight: bold; text-decoration: underline; }
-.student-approval { margin-top: 4mm; font-size: 14pt; line-height: 1.15; }
-.student-approval .signature-space { height: 8mm; }
-.supervisor-approval { margin-top: 14mm; }
-.approval-label { margin-bottom: 14mm; }
-.supervisor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; line-height: 1.15; }
-.head-approval { margin-top: 11mm; line-height: 1.15; }
-.head-approval .signature-space { margin-top: 2mm; }
-footer { margin-top: 17mm; font-weight: bold; line-height: 1.15; }
+@page {
+  size: A4;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 12pt;
+}
+.page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 30mm 30mm 30mm 40mm;
+  text-align: center;
+}
+h1 {
+  margin: 0;
+  font-size: 14pt;
+  font-weight: bold;
+  line-height: 1.2;
+}
+h1 span {
+  display: block;
+}
+.design-title {
+  margin-top: 22mm;
+  font-size: 14pt;
+  font-weight: bold;
+}
+.signature-space {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34mm;
+  height: 16mm;
+  margin: 0 auto;
+}
+.signature-image {
+  max-width: 100%;
+  max-height: 100%;
+}
+.signature-name {
+  font-weight: bold;
+  text-decoration: underline;
+}
+.student-approval {
+  margin-top: 4mm;
+  font-size: 14pt;
+  line-height: 1.15;
+}
+.student-approval .signature-space {
+  height: 8mm;
+}
+.supervisor-approval {
+  margin-top: 14mm;
+}
+.approval-label {
+  margin-bottom: 14mm;
+}
+.supervisor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10mm;
+  line-height: 1.15;
+}
+.head-approval {
+  margin-top: 11mm;
+  line-height: 1.15;
+}
+.head-approval .signature-space {
+  margin-top: 2mm;
+}
+footer {
+  margin-top: 17mm;
+  font-weight: bold;
+  line-height: 1.15;
+}
