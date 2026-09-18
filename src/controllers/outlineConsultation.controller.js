@@ -399,9 +399,42 @@ async function generateAndStoreFinalKartuDocx(
   }
 
   const logs = await getKartuLogs(queryable, kartu.id);
-  const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(kartu, logs);
-  const mimeType =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+  // DOCX generator (legacy)
+  // const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
+  //   kartu,
+  //   logs,
+  // );
+  // const mimeType =
+  //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+  const dataKartuKonsultasiOutlineFTI = {
+    mahasiswa: {
+      nama: kartu.nama_mahasiswa,
+      nomorPokok: kartu.npm,
+      programStudi: kartu.program_studi_nama,
+      judulSkripsi: kartu.judul_skripsi,
+    },
+    pembimbing: {
+      pertama: {
+        nama: kartu.pembimbing1_nama,
+        signatureBase64: kartu.pembimbing1_signature,
+      },
+      kedua: {
+        nama: kartu.pembimbing2_nama,
+        signatureBase64: kartu.pembimbing2_signature,
+      },
+    },
+    catatanKonsultasi: logs.map((log) => ({
+      tanggal: formatKartuDate(log.logged_at),
+      keterangan: `${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`,
+      signatureBase64: log.reviewer_signature,
+    })),
+  };
+  const outputBuffer = await generateKartuKonsultasiOutlineFTI(
+    dataKartuKonsultasiOutlineFTI,
+  );
+  const mimeType = "application/pdf";
   const fileName = buildKartuFileName(
     kartu.npm,
     kartu.nama_mahasiswa,
@@ -413,7 +446,7 @@ async function generateAndStoreFinalKartuDocx(
      SET file_content = ?, file_name = ?, mime_type = ?, generated_by_user_id = ?, generated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
     [
-      outputBuffer.toString("base64"),
+      Buffer.from(outputBuffer).toString("base64"),
       fileName,
       mimeType,
       generatedByUserId,
@@ -425,7 +458,8 @@ async function generateAndStoreFinalKartuDocx(
   return {
     id: kartu.id,
     kartuId: kartu.id,
-    fileType: "FINAL_DOCX",
+    // fileType: "FINAL_DOCX",
+    fileType: "FINAL_PDF",
     fileName,
     mimeType,
   };
@@ -1401,22 +1435,14 @@ exports.previewKartuDocx = async (req, res, next) => {
           signatureBase64: kartu.pembimbing2_signature,
         },
       },
-      catatanKonsultasi: [],
+      // The PDF service renders this as an array of table-row objects.
+      // Keep the card to its 18 available consultation rows.
+      catatanKonsultasi: logs.slice(0, 18).map((log) => ({
+        tanggal: formatKartuDate(log.logged_at),
+        keterangan: `${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`,
+        signatureBase64: log.reviewer_signature,
+      })),
     };
-
-    for (let i = 1; i <= 18; i += 1) {
-      const log = logs[i - 1];
-      const keterangan = log
-        ? `${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`
-        : "";
-
-      dataKartuKonsultasiOutlineFTI.catatanKonsultasi[`tanggal_${i}`] =
-        textPatch(log ? formatKartuDate(log.logged_at) : "");
-      dataKartuKonsultasiOutlineFTI.catatanKonsultasi[`keterangan_${i}`] =
-        textPatch(keterangan);
-      dataKartuKonsultasiOutlineFTI.catatanKonsultasi[`paraf_${i}`] =
-        signatureImagePatch(log?.reviewer_signature);
-    }
 
     const outputBuffer = await generateKartuKonsultasiOutlineFTI(
       dataKartuKonsultasiOutlineFTI,

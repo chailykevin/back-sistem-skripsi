@@ -118,3 +118,10 @@ h2 {
 .consultation-table td:nth-child(3) { width: 18.95%; }
 
 .consultation-table tbody tr { height: 11mm; }
+
+.consultation-signature {
+  display: block;
+  max-width: 35mm;
+  max-height: 10mm;
+  margin: 0 auto;
+}

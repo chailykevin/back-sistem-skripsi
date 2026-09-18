@@ -24,12 +24,19 @@ async function renderConsultationRows(rows) {
     rows.length === 0 ? [{ tanggal: "", keterangan: "" }] : rows;
   const renderedRows = await Promise.all(
     rowsToRender.map(
-      ({ tanggal, keterangan }) => `
+      async ({ tanggal, keterangan, signatureBase64 }) => {
+        const signature = await renderSignature(
+          signatureBase64,
+          "Paraf reviewer konsultasi",
+          "consultation-signature",
+        );
+        return `
         <tr>
           <td>${escapeHtml(tanggal)}</td>
           <td>${escapeHtml(keterangan)}</td>
-          <td></td>
-        </tr>`,
+          <td>${signature}</td>
+        </tr>`;
+      },
     ),
   );
 
