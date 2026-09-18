@@ -3,7 +3,12 @@ const { insertNotification } = require("../utils/notify");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
-const { getOpenPeriod: getSidangOpenPeriod } = require("../services/sidangSubmissionPeriod.service");
+const {
+  getOpenPeriod: getSidangOpenPeriod,
+} = require("../services/sidangSubmissionPeriod.service");
+const {
+  generateKartuPenulisanSkripsiFTI,
+} = require("../services/generateKartuPenulisanSkripsiFTI.js");
 
 const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 const CHAPTER_LABEL = {
@@ -22,9 +27,13 @@ function nextChapterGroup(current) {
 }
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
-  const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
-  return `${safeNpm} - ${safeNama} - ${suffix}.docx`;
+  const safeNpm = String(npm ?? "")
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "")
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "_");
+  return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
 async function getStudentNpm(userId) {
@@ -297,6 +306,51 @@ async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra = {}) {
   });
 }
 
+function assertKartuKonsultasiSkripsiLogSignatures(logs) {
+  assertSignatures(
+    logs.map((log, idx) => ({
+      role: `Paraf ${idx + 1} (${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)})`,
+      nama: log.reviewer_nama,
+      signatureImage: log.reviewer_signature,
+    })),
+  );
+}
+
+function buildKartuKonsultasiSkripsiPdfData(kartu, logs, extra = {}) {
+  return {
+    nomorSk: extra.nomorSk ?? "",
+    mahasiswa: {
+      nama: kartu.nama_mahasiswa,
+      npm: kartu.npm,
+      programStudi: kartu.program_studi_nama,
+      judulSkripsi: kartu.judul_skripsi,
+    },
+    pembimbing: {
+      pertama: {
+        nama: kartu.pembimbing1_nama,
+        signatureBase64: kartu.pembimbing1_signature,
+      },
+      kedua: {
+        nama: kartu.pembimbing2_nama,
+        signatureBase64: kartu.pembimbing2_signature,
+      },
+    },
+    ketuaProgramStudi: {
+      nama: extra.kaprodiNama ?? "",
+      signatureBase64: extra.kaprodiSignature ?? null,
+    },
+    tanggalMulaiMenulis: extra.tanggalMulai ?? "",
+    tanggalSelesaiMenulis: kartu.completed_at
+      ? formatKartuDate(kartu.completed_at)
+      : "",
+    catatanKonsultasi: logs.slice(0, 53).map((log) => ({
+      tanggal: formatKartuDate(log.logged_at),
+      keterangan: `${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`,
+      parafBase64: log.reviewer_signature,
+    })),
+  };
+}
+
 async function fetchKartuExtra(queryable, kartuId, skripsiId) {
   const [[skRow]] = await queryable.query(
     `SELECT psk.nomor_surat, psk.verified_at
@@ -383,15 +437,34 @@ async function generateAndStoreFinalKartuDocx(
   const kartuFull = await fetchKartuDenorm(queryable, kartu);
 
   assertSignatures([
-    { role: "Pembimbing 1", nama: kartuFull.pembimbing1_nama, signatureImage: kartuFull.pembimbing1_signature },
-    { role: "Pembimbing 2", nama: kartuFull.pembimbing2_nama, signatureImage: kartuFull.pembimbing2_signature },
-    { role: "Kaprodi", nama: extra.kaprodiNama, signatureImage: extra.kaprodiSignature },
+    {
+      role: "Pembimbing 1",
+      nama: kartuFull.pembimbing1_nama,
+      signatureImage: kartuFull.pembimbing1_signature,
+    },
+    {
+      role: "Pembimbing 2",
+      nama: kartuFull.pembimbing2_nama,
+      signatureImage: kartuFull.pembimbing2_signature,
+    },
+    {
+      role: "Kaprodi",
+      nama: extra.kaprodiNama,
+      signatureImage: extra.kaprodiSignature,
+    },
   ]);
 
-  const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
-    kartuFull,
-    logs,
-    extra,
+  assertKartuKonsultasiSkripsiLogSignatures(logs);
+
+  // DOCX generator (legacy)
+  // const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
+  //   kartuFull,
+  //   logs,
+  //   extra,
+  // );
+
+  const outputBuffer = await generateKartuPenulisanSkripsiFTI(
+    buildKartuKonsultasiSkripsiPdfData(kartuFull, logs, extra),
   );
   const fileName = buildKartuFileName(
     kartuFull.npm,
@@ -402,10 +475,15 @@ async function generateAndStoreFinalKartuDocx(
   await queryable.query(
     `UPDATE kartu_konsultasi_skripsi
      SET file_content = ?, file_name = ?,
-         mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+         mime_type = 'application/pdf',
          generated_by_user_id = ?, generated_at = NOW()
      WHERE id = ?`,
-    [outputBuffer.toString("base64"), fileName, generatedByUserId, kartuId],
+    [
+      Buffer.from(outputBuffer).toString("base64"),
+      fileName,
+      generatedByUserId,
+      kartuId,
+    ],
   );
 
   return { kartuId, fileName };
@@ -1846,10 +1924,17 @@ exports.previewKartuDocx = async (req, res, next) => {
     const logs = await getKartuLogs(db, kartu.id);
     const extra = await fetchKartuExtra(db, kartu.id, kartu.skripsi_id);
     const kartuFull = await fetchKartuDenorm(db, kartu);
-    const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
-      kartuFull,
-      logs,
-      extra,
+    assertKartuKonsultasiSkripsiLogSignatures(logs);
+
+    // DOCX generator (legacy)
+    // const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
+    //   kartuFull,
+    //   logs,
+    //   extra,
+    // );
+
+    const outputBuffer = await generateKartuPenulisanSkripsiFTI(
+      buildKartuKonsultasiSkripsiPdfData(kartuFull, logs, extra),
     );
     const fileName = buildKartuFileName(
       kartuFull.npm,
@@ -1857,10 +1942,7 @@ exports.previewKartuDocx = async (req, res, next) => {
       "Kartu Penulisan Skripsi Preview",
     );
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    );
+    res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.setHeader("Content-Length", outputBuffer.length);
     return res.send(outputBuffer);
