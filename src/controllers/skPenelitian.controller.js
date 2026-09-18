@@ -12,6 +12,9 @@ const {
 const {
   generatePernyataanPenyelesaianSkripsiFTI,
 } = require("../services/generatePernyataanPenyelesaianSkripsiFTI.js");
+const {
+  generateSuratKeteranganFTI,
+} = require("../services/generateSuratKeteranganFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -558,14 +561,31 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   // Generate SURAT_KETERANGAN if needed
   if (pj.perlu_surat_pengantar) {
-    const suratBuffer = await buildSuratKeteranganDocxBuffer({
-      namaMahasiswa: kartu.nama_mahasiswa,
-      npm: kartu.npm,
+    // DOCX generator (legacy)
+    // const suratBuffer = await buildSuratKeteranganDocxBuffer({
+    //   namaMahasiswa: kartu.nama_mahasiswa,
+    //   npm: kartu.npm,
+    //   programStudi: kartu.program_studi_nama,
+    //   lokasi: pj.nama_perusahaan ?? "",
+    //   judul: kartu.judul_skripsi,
+    // });
+    // const suratBase64 = suratBuffer.toString("base64");
+
+    const dataSuratKeteranganFTI = {
+      mahasiswa: {
+        nama: kartu.nama_mahasiswa,
+        npm: kartu.npm,
+      },
       programStudi: kartu.program_studi_nama,
       lokasi: pj.nama_perusahaan ?? "",
-      judul: kartu.judul_skripsi,
-    });
-    const suratBase64 = suratBuffer.toString("base64");
+      judulSkripsi: kartu.judul_skripsi,
+    };
+    const suratBuffer = await generateSuratKeteranganFTI(
+      dataSuratKeteranganFTI,
+    );
+    const suratBase64 = Buffer.from(suratBuffer).toString("base64");
+    const mimeSuratPdf = "application/pdf";
+
     await conn.query(
       `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_KETERANGAN'`,
       [sk.id],
@@ -574,7 +594,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
       `INSERT INTO pengajuan_sk_penelitian_files
          (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
        VALUES (?, 'SURAT_KETERANGAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-      [sk.id, `Surat_Keterangan_${kartu.npm}.docx`, mimeDocx, suratBase64],
+      [sk.id, `Surat_Keterangan_${kartu.npm}.pdf`, mimeSuratPdf, suratBase64],
     );
   }
 }
