@@ -44,6 +44,27 @@ function validateChoice(choice, roster, label) {
   }
 }
 
+function resolvePengujiChoice(name, type) {
+  const roster = type === "utama" ? pengujiUtama : pengujiKedua;
+  const normalizedName = String(name ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleUpperCase("id-ID");
+  const choice = roster.findIndex(
+    (candidate) =>
+      candidate.replace(/\s+/g, " ").toLocaleUpperCase("id-ID") ===
+      normalizedName,
+  );
+
+  if (choice === -1) {
+    throw new Error(
+      `Selected ${type} examiner is not in the permitted examiner roster: ${name ?? ""}`,
+    );
+  }
+
+  return choice + 1;
+}
+
 function renderRows(roster, selectedNumber) {
   return roster
     .map(
@@ -120,4 +141,5 @@ async function generateUsulanPengujiFTI(data) {
 
 module.exports = {
   generateUsulanPengujiFTI,
+  resolvePengujiChoice,
 };
