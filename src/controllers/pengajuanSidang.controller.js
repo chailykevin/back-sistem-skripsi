@@ -8,6 +8,9 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const AdmZip = require("adm-zip");
+const {
+  generatePermohonanUjianSkripsiFTI,
+} = require("../services/generatePermohonanUjianSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -1165,7 +1168,9 @@ exports.uploadFiles = async (req, res, next) => {
         // as unverified. Kaprodi's overall VALID gate is untouched.
         const carryKaprodiStatus = existing?.kaprodi_status ?? null;
         const carryVerifiedAt =
-          existing?.kaprodi_status === "VERIFIED" ? null : (existing?.kaprodi_verified_at ?? null);
+          existing?.kaprodi_status === "VERIFIED"
+            ? null
+            : (existing?.kaprodi_verified_at ?? null);
 
         await conn.query(
           `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = ?`,
@@ -2445,28 +2450,58 @@ exports.submitKaprodi = async (req, res, next) => {
       },
     ]);
 
-    const lembarBuffer = await buildLembarPermohonanUjianBuffer({
-      todayDate,
-      fakultas: docData?.fakultas_nama ?? "",
-      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-      npm: docData?.npm ?? npm,
-      ttl,
-      prodi: docData?.prodi_nama ?? "",
-      tahunMasuk,
-      alamat: kaprodi.alamat ?? "",
-      noHp: kaprodi.no_hp ?? "",
-      noWa: kaprodi.no_wa ?? "",
-      statusPernikahan: kaprodi.status_pernikahan ?? "",
-      judulSkripsi: docData?.judul_skripsi ?? "",
-      ujianCount,
-      ujianCountString,
-      ipk: kaprodi.ipk,
-      sks: docData?.sks,
-      ttdKaprodi: docData?.kaprodi_sig ?? null,
-      namaKaprodi,
-      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    });
-    const lembarBase64 = lembarBuffer.toString("base64");
+    // DOCX generator (legacy)
+    // const lembarBuffer = await buildLembarPermohonanUjianBuffer({
+    //   todayDate,
+    //   fakultas: docData?.fakultas_nama ?? "",
+    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+    //   npm: docData?.npm ?? npm,
+    //   ttl,
+    //   prodi: docData?.prodi_nama ?? "",
+    //   tahunMasuk,
+    //   alamat: kaprodi.alamat ?? "",
+    //   noHp: kaprodi.no_hp ?? "",
+    //   noWa: kaprodi.no_wa ?? "",
+    //   statusPernikahan: kaprodi.status_pernikahan ?? "",
+    //   judulSkripsi: docData?.judul_skripsi ?? "",
+    //   ujianCount,
+    //   ujianCountString,
+    //   ipk: kaprodi.ipk,
+    //   sks: docData?.sks,
+    //   ttdKaprodi: docData?.kaprodi_sig ?? null,
+    //   namaKaprodi,
+    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    // });
+    // const lembarBase64 = lembarBuffer.toString("base64");
+
+    const dataPermohonanUjianSkripsiFTI = {
+      tanggal: todayDate,
+      mahasiswa: {
+        nama: docData?.nama_mahasiswa ?? npm,
+        npm: docData?.npm ?? npm,
+        tempatTanggalLahir: ttl,
+        programStudi: docData?.prodi_nama ?? "",
+        tahunMasuk,
+        alamat: kaprodi.alamat ?? "",
+        noHp: kaprodi.no_hp ?? "",
+        noWa: kaprodi.no_wa ?? "",
+        status: kaprodi.status_pernikahan ?? "",
+        judulSkripsi: docData?.judul_skripsi ?? "",
+        ujianKe: ujianCountString,
+        ipk: kaprodi.ipk ?? "",
+        sks: docData?.sks ?? "",
+        signatureBase64: docData?.mahasiswa_sig ?? null,
+      },
+      ketuaProgramStudi: {
+        nama: namaKaprodi,
+        signatureBase64: docData?.kaprodi_sig ?? null,
+      },
+    };
+    const lembarBuffer = await generatePermohonanUjianSkripsiFTI(
+      dataPermohonanUjianSkripsiFTI,
+    );
+    const lembarBase64 = Buffer.from(lembarBuffer).toString("base64");
+    const mimeLembarPdf = "application/pdf";
 
     // Auto-create pengajuan_sidang DRAFT if none exists, then upsert the file
     let [[existingSidang]] = await conn.query(
@@ -2494,8 +2529,8 @@ exports.submitKaprodi = async (req, res, next) => {
        VALUES (?, 'LEMBAR_PERMOHONAN_UJIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [
         existingSidang.id,
-        `Lembar_Permohonan_Ujian_${npm}.docx`,
-        MIME_DOCX,
+        `Lembar_Permohonan_Ujian_${npm}.pdf`,
+        mimeLembarPdf,
         lembarBase64,
       ],
     );
@@ -2913,7 +2948,9 @@ exports.reviewKaprodi = async (req, res, next) => {
       );
       const verifiedSet = new Set(
         fileRows
-          .filter((r) => r.kaprodi_status === "VERIFIED" && r.kaprodi_verified_at)
+          .filter(
+            (r) => r.kaprodi_status === "VERIFIED" && r.kaprodi_verified_at,
+          )
           .map((r) => r.file_type),
       );
       const unverifiedFiles = KAPRODI_REQUIRED_FILE_TYPES.filter(
@@ -3024,8 +3061,12 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
     const filterByStatus =
       statusParam && VALID_KAPRODI_STATUSES.includes(statusParam);
 
-    const tahunAkademik = req.query?.tahunAkademik ? String(req.query.tahunAkademik) : null;
-    const periodeAkademik = req.query?.periodeAkademik ? String(req.query.periodeAkademik) : null;
+    const tahunAkademik = req.query?.tahunAkademik
+      ? String(req.query.tahunAkademik)
+      : null;
+    const periodeAkademik = req.query?.periodeAkademik
+      ? String(req.query.periodeAkademik)
+      : null;
 
     const conditions = [
       `ps.id IN (${kaprodiProgramStudiIds.map(() => "?").join(",")})`,
