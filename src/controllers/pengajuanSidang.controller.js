@@ -3495,25 +3495,58 @@ exports.submitDisposisi = async (req, res, next) => {
       },
     ]);
 
-    const usulanBuffer = await buildLembarUsulanPengujiBufferFull({
-      prodi: docData?.prodi_nama ?? "",
-      fakultas: docData?.fakultas_nama ?? "",
-      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-      npm,
-      namaDospem1: docData?.dospem1_nama ?? "",
-      namaDospem2: docData?.dospem2_nama ?? "",
-      judul: docData?.judul_skripsi ?? "",
-      todayDate: formatTanggalIndonesia(new Date()),
-      penguji1Nama: pg1RowDisposisi?.nama ?? null,
-      penguji2Nama: pg2RowDisposisi?.nama ?? null,
-      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-      namaKaprodi: docData?.nama_kaprodi ?? "",
-      sidangDate: sidangDateFormatted,
-      sidangTime: waktuSidangFormatted,
-      disposisiDate: disposisiDateFormatted,
-      ttdKaprodi: docData?.kaprodi_sig ?? null,
-    });
-    const usulanBase64 = usulanBuffer.toString("base64");
+    // DOCX generator (legacy)
+    // const usulanBuffer = await buildLembarUsulanPengujiBufferFull({
+    //   prodi: docData?.prodi_nama ?? "",
+    //   fakultas: docData?.fakultas_nama ?? "",
+    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+    //   npm,
+    //   namaDospem1: docData?.dospem1_nama ?? "",
+    //   namaDospem2: docData?.dospem2_nama ?? "",
+    //   judul: docData?.judul_skripsi ?? "",
+    //   todayDate: formatTanggalIndonesia(new Date()),
+    //   penguji1Nama: pg1RowDisposisi?.nama ?? null,
+    //   penguji2Nama: pg2RowDisposisi?.nama ?? null,
+    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    //   namaKaprodi: docData?.nama_kaprodi ?? "",
+    //   sidangDate: sidangDateFormatted,
+    //   sidangTime: waktuSidangFormatted,
+    //   disposisiDate: disposisiDateFormatted,
+    //   ttdKaprodi: docData?.kaprodi_sig ?? null,
+    // });
+    // const usulanBase64 = usulanBuffer.toString("base64");
+
+    const dataUsulanPengujiFTI = {
+      tanggal: formatTanggalIndonesia(new Date()),
+      programStudi: docData?.prodi_nama ?? "",
+      ketuaProgramStudi: {
+        nama: docData?.nama_kaprodi ?? "",
+        signatureBase64: docData?.kaprodi_sig ?? null,
+      },
+      mahasiswa: {
+        nama: docData?.nama_mahasiswa ?? npm,
+        npm,
+        pembimbingUtama: docData?.dospem1_nama ?? "",
+        pembimbingKedua: docData?.dospem2_nama ?? "",
+        judulSkripsi: docData?.judul_skripsi ?? "",
+        signatureBase64: docData?.mahasiswa_sig ?? null,
+      },
+      pilihanPenguji: {
+        utamaNomor: resolvePengujiChoice(pg1RowDisposisi?.nama, "utama"),
+        keduaNomor: resolvePengujiChoice(pg2RowDisposisi?.nama, "kedua"),
+      },
+      disposisi: {
+        pengujiUtama: pg1RowDisposisi?.nama ?? "",
+        pengujiKedua: pg2RowDisposisi?.nama ?? "",
+        tanggalUjian: sidangDateFormatted,
+        waktuUjian: waktuSidangFormatted,
+        tanggalDisposisi: disposisiDateFormatted,
+        signatureBase64: docData?.kaprodi_sig ?? null,
+      },
+    };
+    const usulanBuffer = await generateUsulanPengujiFTI(dataUsulanPengujiFTI);
+    const usulanBase64 = Buffer.from(usulanBuffer).toString("base64");
+    const mimeUsulanPdf = "application/pdf";
 
     await conn.query(
       `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_USULAN_PENGUJI'`,
@@ -3523,7 +3556,12 @@ exports.submitDisposisi = async (req, res, next) => {
       `INSERT INTO pengajuan_sidang_files
          (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
        VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-      [sidang.id, `Lembar_Usulan_Penguji_${npm}.docx`, MIME_DOCX, usulanBase64],
+      [
+        sidang.id,
+        `Lembar_Usulan_Penguji_${npm}.pdf`,
+        mimeUsulanPdf,
+        usulanBase64,
+      ],
     );
 
     await conn.query(
