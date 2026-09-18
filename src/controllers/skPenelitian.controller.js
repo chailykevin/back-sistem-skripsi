@@ -9,6 +9,9 @@ const {
 const {
   generateSuratKeputusanSkripsiFTI,
 } = require("../services/generateSuratKeputusanSkripsiFTI.js");
+const {
+  generatePernyataanPenyelesaianSkripsiFTI,
+} = require("../services/generatePernyataanPenyelesaianSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -496,18 +499,43 @@ async function generateSkDocuments(conn, sk, outlineId) {
   );
 
   // Generate SURAT_PENYELESAIAN_SKRIPSI (always)
-  const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
-    namaMahasiswa: kartu.nama_mahasiswa,
-    npm: kartu.npm,
-    alamat: "",
-    noHp: "",
-    judulSkripsi: kartu.judul_skripsi,
-    ttdKaprodi: kaprodi?.signature_image ?? null,
-    namaKaprodi: kaprodi?.nama_kaprodi ?? "",
-    ttdMahasiswa: mahasiswaUser?.signature_image ?? null,
-    prodi: kartu.program_studi_nama,
-  });
-  const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
+  // DOCX generator (legacy)
+  // const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
+  //   namaMahasiswa: kartu.nama_mahasiswa,
+  //   npm: kartu.npm,
+  //   alamat: "",
+  //   noHp: "",
+  //   judulSkripsi: kartu.judul_skripsi,
+  //   ttdKaprodi: kaprodi?.signature_image ?? null,
+  //   namaKaprodi: kaprodi?.nama_kaprodi ?? "",
+  //   ttdMahasiswa: mahasiswaUser?.signature_image ?? null,
+  //   prodi: kartu.program_studi_nama,
+  // });
+  // const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
+
+  const dataPernyataanPenyelesaianSkripsiFTI = {
+    mahasiswa: {
+      nama: kartu.nama_mahasiswa,
+      npm: kartu.npm,
+      alamat: "",
+      noHp: "",
+      judulSkripsi: kartu.judul_skripsi,
+      signatureBase64: mahasiswaUser?.signature_image ?? null,
+    },
+    ketuaProgramStudi: {
+      nama: kaprodi?.nama_kaprodi ?? "",
+      programStudi: kartu.program_studi_nama,
+      signatureBase64: kaprodi?.signature_image ?? null,
+    },
+  };
+  const penyelesaianBuffer = await generatePernyataanPenyelesaianSkripsiFTI(
+    dataPernyataanPenyelesaianSkripsiFTI,
+  );
+  const penyelesaianBase64 = Buffer.from(penyelesaianBuffer).toString(
+    "base64",
+  );
+  const mimePenyelesaianPdf = "application/pdf";
+
   await conn.query(
     `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
     [sk.id],
@@ -523,7 +551,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
         kartu.nama_mahasiswa,
         "Surat Penyelesaian Skripsi",
       ),
-      mimeDocx,
+      mimePenyelesaianPdf,
       penyelesaianBase64,
     ],
   );
