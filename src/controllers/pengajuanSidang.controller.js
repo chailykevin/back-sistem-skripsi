@@ -11,6 +11,9 @@ const AdmZip = require("adm-zip");
 const {
   generatePermohonanUjianSkripsiFTI,
 } = require("../services/generatePermohonanUjianSkripsiFTI.js");
+const {
+  generatePernyataanPerbaikanSkripsiFTI,
+} = require("../services/generatePernyataanPerbaikanSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -2536,19 +2539,41 @@ exports.submitKaprodi = async (req, res, next) => {
     );
 
     // Generate SURAT_PERNYATAAN_PERBAIKAN
-    const perbaikanBuffer = await buildSuratPernyataanPerbaikanBuffer({
-      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-      npm: docData?.npm ?? npm,
-      alamat: kaprodi.alamat ?? "",
-      noHp: kaprodi.no_hp ?? "",
-      judulSkripsi: docData?.judul_skripsi ?? "",
-      fakultas: docData?.fakultas_nama ?? "",
-      ttdKaprodi: docData?.kaprodi_sig ?? null,
-      namaKaprodi,
-      prodi: docData?.prodi_nama ?? "",
-      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    });
-    const perbaikanBase64 = perbaikanBuffer.toString("base64");
+    // DOCX generator (legacy)
+    // const perbaikanBuffer = await buildSuratPernyataanPerbaikanBuffer({
+    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+    //   npm: docData?.npm ?? npm,
+    //   alamat: kaprodi.alamat ?? "",
+    //   noHp: kaprodi.no_hp ?? "",
+    //   judulSkripsi: docData?.judul_skripsi ?? "",
+    //   fakultas: docData?.fakultas_nama ?? "",
+    //   ttdKaprodi: docData?.kaprodi_sig ?? null,
+    //   namaKaprodi,
+    //   prodi: docData?.prodi_nama ?? "",
+    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    // });
+    // const perbaikanBase64 = perbaikanBuffer.toString("base64");
+
+    const dataPernyataanPerbaikanSkripsiFTI = {
+      mahasiswa: {
+        nama: docData?.nama_mahasiswa ?? npm,
+        npm: docData?.npm ?? npm,
+        alamat: kaprodi.alamat ?? "",
+        noHp: kaprodi.no_hp ?? "",
+        judulSkripsi: docData?.judul_skripsi ?? "",
+        signatureBase64: docData?.mahasiswa_sig ?? null,
+      },
+      ketuaProgramStudi: {
+        nama: namaKaprodi,
+        programStudi: docData?.prodi_nama ?? "",
+        signatureBase64: docData?.kaprodi_sig ?? null,
+      },
+    };
+    const perbaikanBuffer = await generatePernyataanPerbaikanSkripsiFTI(
+      dataPernyataanPerbaikanSkripsiFTI,
+    );
+    const perbaikanBase64 = Buffer.from(perbaikanBuffer).toString("base64");
+    const mimePerbaikanPdf = "application/pdf";
 
     await conn.query(
       `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PERBAIKAN'`,
@@ -2560,8 +2585,8 @@ exports.submitKaprodi = async (req, res, next) => {
        VALUES (?, 'SURAT_PERNYATAAN_PERBAIKAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [
         existingSidang.id,
-        `Surat_Pernyataan_Perbaikan_${npm}.docx`,
-        MIME_DOCX,
+        `Surat_Pernyataan_Perbaikan_${npm}.pdf`,
+        mimePerbaikanPdf,
         perbaikanBase64,
       ],
     );
