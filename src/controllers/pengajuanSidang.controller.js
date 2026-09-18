@@ -21,6 +21,9 @@ const {
   generateUsulanPengujiFTI,
   resolvePengujiChoice,
 } = require("../services/generateUsulanPengujiFTI.js");
+const {
+  generatePernyataanPenyelesaianSkripsiFTI,
+} = require("../services/generatePernyataanPenyelesaianSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -2726,19 +2729,46 @@ exports.submitKaprodi = async (req, res, next) => {
       [skripsiId],
     );
     if (skRow) {
-      const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
-        namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-        npm: docData?.npm ?? npm,
-        alamat: kaprodi.alamat ?? "",
-        noHp: kaprodi.no_hp ?? "",
-        judulSkripsi: docData?.judul_skripsi ?? "",
-        ttdKaprodi: docData?.kaprodi_sig ?? null,
-        namaKaprodi,
-        ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-        prodi: docData?.prodi_nama ?? "",
-      });
-      const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
-      const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.docx`;
+      // DOCX generator (legacy)
+      // const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
+      //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+      //   npm: docData?.npm ?? npm,
+      //   alamat: kaprodi.alamat ?? "",
+      //   noHp: kaprodi.no_hp ?? "",
+      //   judulSkripsi: docData?.judul_skripsi ?? "",
+      //   ttdKaprodi: docData?.kaprodi_sig ?? null,
+      //   namaKaprodi,
+      //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+      //   prodi: docData?.prodi_nama ?? "",
+      // });
+      // const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
+      // const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.docx`;
+
+      const dataPernyataanPenyelesaianSkripsiFTI = {
+        mahasiswa: {
+          nama: docData?.nama_mahasiswa ?? npm,
+          npm: docData?.npm ?? npm,
+          alamat: kaprodi.alamat ?? "",
+          noHp: kaprodi.no_hp ?? "",
+          judulSkripsi: docData?.judul_skripsi ?? "",
+          signatureBase64: docData?.mahasiswa_sig ?? null,
+        },
+        ketuaProgramStudi: {
+          nama: namaKaprodi,
+          programStudi: docData?.prodi_nama ?? "",
+          signatureBase64: docData?.kaprodi_sig ?? null,
+        },
+      };
+      const penyelesaianBuffer =
+        await generatePernyataanPenyelesaianSkripsiFTI(
+          dataPernyataanPenyelesaianSkripsiFTI,
+        );
+      const penyelesaianBase64 = Buffer.from(penyelesaianBuffer).toString(
+        "base64",
+      );
+      const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.pdf`;
+      const mimePenyelesaianPdf = "application/pdf";
+
       await conn.query(
         `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
         [skRow.id],
@@ -2747,7 +2777,12 @@ exports.submitKaprodi = async (req, res, next) => {
         `INSERT INTO pengajuan_sk_penelitian_files
            (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
          VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-        [skRow.id, penyelesaianFileName, MIME_DOCX, penyelesaianBase64],
+        [
+          skRow.id,
+          penyelesaianFileName,
+          mimePenyelesaianPdf,
+          penyelesaianBase64,
+        ],
       );
       // Also update the copy already attached to pengajuan_sidang_files
       await conn.query(
@@ -2757,7 +2792,7 @@ exports.submitKaprodi = async (req, res, next) => {
         [
           penyelesaianBase64,
           penyelesaianFileName,
-          MIME_DOCX,
+          mimePenyelesaianPdf,
           existingSidang.id,
         ],
       );
