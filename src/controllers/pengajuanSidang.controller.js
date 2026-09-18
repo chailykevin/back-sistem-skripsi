@@ -14,6 +14,9 @@ const {
 const {
   generatePernyataanPerbaikanSkripsiFTI,
 } = require("../services/generatePernyataanPerbaikanSkripsiFTI.js");
+const {
+  generatePernyataanKelengkapanDanNilaiMatkulFTI,
+} = require("../services/generatePernyataanKelengkapanDanNilaiMatkulFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -2592,15 +2595,34 @@ exports.submitKaprodi = async (req, res, next) => {
     );
 
     // Generate SURAT_PERNYATAAN_KELENGKAPAN
-    const kelengkapanBuffer = await buildSuratPernyataanKelengkapanBuffer({
-      prodi: docData?.prodi_nama ?? "",
-      fakultas: docData?.fakultas_nama ?? "",
-      namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-      npm: docData?.npm ?? npm,
-      todayDate,
-      ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    });
-    const kelengkapanBase64 = kelengkapanBuffer.toString("base64");
+    // DOCX generator (legacy)
+    // const kelengkapanBuffer = await buildSuratPernyataanKelengkapanBuffer({
+    //   prodi: docData?.prodi_nama ?? "",
+    //   fakultas: docData?.fakultas_nama ?? "",
+    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
+    //   npm: docData?.npm ?? npm,
+    //   todayDate,
+    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
+    // });
+    // const kelengkapanBase64 = kelengkapanBuffer.toString("base64");
+
+    const dataPernyataanKelengkapanDanNilaiMatkulFTI = {
+      mahasiswa: {
+        nama: docData?.nama_mahasiswa ?? npm,
+        npm: docData?.npm ?? npm,
+        programStudi: docData?.prodi_nama ?? "",
+        signatureBase64: docData?.mahasiswa_sig ?? null,
+      },
+      tanggal: todayDate,
+    };
+    const kelengkapanBuffer =
+      await generatePernyataanKelengkapanDanNilaiMatkulFTI(
+        dataPernyataanKelengkapanDanNilaiMatkulFTI,
+      );
+    const kelengkapanBase64 = Buffer.from(kelengkapanBuffer).toString(
+      "base64",
+    );
+    const mimeKelengkapanPdf = "application/pdf";
 
     await conn.query(
       `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_KELENGKAPAN'`,
@@ -2612,8 +2634,8 @@ exports.submitKaprodi = async (req, res, next) => {
        VALUES (?, 'SURAT_PERNYATAAN_KELENGKAPAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
       [
         existingSidang.id,
-        `Surat_Pernyataan_Kelengkapan_${npm}.docx`,
-        MIME_DOCX,
+        `Surat_Pernyataan_Kelengkapan_${npm}.pdf`,
+        mimeKelengkapanPdf,
         kelengkapanBase64,
       ],
     );
