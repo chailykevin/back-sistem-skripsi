@@ -2487,7 +2487,7 @@ exports.submitKaprodi = async (req, res, next) => {
         noWa: kaprodi.no_wa ?? "",
         status: kaprodi.status_pernikahan ?? "",
         judulSkripsi: docData?.judul_skripsi ?? "",
-        ujianKe: ujianCountString,
+        ujianKe: `${ujianCount} (${ujianCountString})`,
         ipk: kaprodi.ipk ?? "",
         sks: docData?.sks ?? "",
         signatureBase64: docData?.mahasiswa_sig ?? null,
