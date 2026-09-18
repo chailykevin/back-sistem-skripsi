@@ -38,7 +38,7 @@ function calculateTotal(rows) {
       );
     return sum + row.nilai;
   }, 0);
-  return String(total);
+  return total.toFixed(2);
 }
 
 async function renderTemplate(template, data) {

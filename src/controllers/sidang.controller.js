@@ -3,6 +3,9 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
+const {
+  generateKomponenPenilaianUjianSkripsiKomprehensifFTI,
+} = require("../services/generateKomponenPenilaianUjianSkripsiKomprehensifFTI");
 
 const MIME_DOCX =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -199,9 +202,7 @@ exports.getSidang = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const sidang = await getSidangBySkripsiId(db, skripsiId);
@@ -285,7 +286,13 @@ exports.getSidang = async (req, res, next) => {
     // For lecturers during ONGOING: hide other participants' scores and file_content but keep submitted_at
     // Pembimbing 1 and Pembimbing 2 see all scores (either can submit hasil penilaian akhir)
     const sanitizePenilaianForLecturer = (row) => {
-      if (!isOngoing || !callerRole || callerRole === "PEMBIMBING_1" || callerRole === "PEMBIMBING_2") return row;
+      if (
+        !isOngoing ||
+        !callerRole ||
+        callerRole === "PEMBIMBING_1" ||
+        callerRole === "PEMBIMBING_2"
+      )
+        return row;
       if (row.role === callerRole) {
         const { file_content, ...safe } = row;
         return safe;
@@ -329,7 +336,14 @@ exports.getSidang = async (req, res, next) => {
         return { ...safe, has_submitted: hasSubmitted };
       }
       if (callerRole && row.role !== callerRole) {
-        const { note, hasil_sidang, file_content, file_name, submitted_at, ...safe } = row;
+        const {
+          note,
+          hasil_sidang,
+          file_content,
+          file_name,
+          submitted_at,
+          ...safe
+        } = row;
         return { ...safe, has_submitted: hasSubmitted };
       }
       const { file_content, ...safe } = row;
@@ -356,9 +370,7 @@ exports.startSidang = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -377,12 +389,11 @@ exports.startSidang = async (req, res, next) => {
 
     const callerRole = resolveSidangRole(sidang, nidn);
     if (callerRole !== "PEMBIMBING_1" && callerRole !== "PEMBIMBING_2") {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Hanya Pembimbing 1 atau Pembimbing 2 yang dapat memulai sidang",
-        });
+      return res.status(403).json({
+        ok: false,
+        message:
+          "Hanya Pembimbing 1 atau Pembimbing 2 yang dapat memulai sidang",
+      });
     }
 
     if (sidang.status === "ONGOING") {
@@ -425,7 +436,13 @@ exports.startSidang = async (req, res, next) => {
     ]) {
       const lecId = await resolveUserId(db, lecNidn);
       if (lecId) {
-        await insertNotification(db, lecId, "SIDANG_STARTED", lecturerMsg, lecturerSidangLink);
+        await insertNotification(
+          db,
+          lecId,
+          "SIDANG_STARTED",
+          lecturerMsg,
+          lecturerSidangLink,
+        );
       }
     }
 
@@ -442,9 +459,7 @@ exports.submitNotulen = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -456,9 +471,7 @@ exports.submitNotulen = async (req, res, next) => {
 
     const { note } = req.body;
     if (!note) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "note wajib diisi" });
+      return res.status(400).json({ ok: false, message: "note wajib diisi" });
     }
 
     await conn.beginTransaction();
@@ -506,7 +519,10 @@ exports.submitNotulen = async (req, res, next) => {
 
     const callerNama =
       role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama;
-    const pembimbing1UserId = await resolveUserId(conn, sidang.pembimbing1_nidn);
+    const pembimbing1UserId = await resolveUserId(
+      conn,
+      sidang.pembimbing1_nidn,
+    );
     if (pembimbing1UserId) {
       await insertNotification(
         conn,
@@ -538,9 +554,7 @@ exports.submitPenilaian = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -676,44 +690,97 @@ exports.submitPenilaian = async (req, res, next) => {
             ? sidang.penguji1_nama
             : sidang.penguji2_nama;
 
-    const templatePath = path.join(
-      __dirname,
-      "../templates/template_komponen_penilaian.docx",
-    );
-    const templateBuffer = await readFile(templatePath);
-    const outputBuffer = await patchDocument({
-      outputType: "nodebuffer",
-      data: templateBuffer,
-      patches: {
-        nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-        npm: textPatch(sidang.npm),
-        prodi: textPatch(sidang.program_studi_nama),
-        ujian_ke: textPatch(ujianKeStr),
-        tanggal_sidang: textPatch(tanggalFormatted),
-        judul_skripsi: textPatch(sidang.judul_skripsi),
-        bobot_isi: textPatch(`${BOBOT.isi * 100}%`),
-        bobot_bahasa: textPatch(`${BOBOT.bahasa * 100}%`),
-        bobot_tsp: textPatch(`${BOBOT.tsp * 100}%`),
-        bobot_penguasaan: textPatch(`${BOBOT.penguasaan * 100}%`),
-        bobot_penunjang: textPatch(`${BOBOT.penunjang * 100}%`),
-        nilai_isi: textPatch(nIsi),
-        keterangan_isi: textPatch(keteranganIsi ?? ""),
-        nilai_bahasa: textPatch(nBahasa),
-        keterangan_bahasa: textPatch(keteranganBahasa ?? ""),
-        nilai_tsp: textPatch(nTsp),
-        keterangan_tsp: textPatch(keteranganTsp ?? ""),
-        nilai_penguasaan: textPatch(nPenguasaan),
-        keterangan_penguasaan: textPatch(keteranganPenguasaan ?? ""),
-        nilai_penunjang: textPatch(nPenunjang),
-        keterangan_penunjang: textPatch(keteranganPenunjang ?? ""),
-        total_nilai: textPatch(totalNilai.toFixed(2)),
-        role: textPatch(ROLE_LABEL[role]),
-        ttd_penguji_or_pembimbing: signaturePatch(sigRow?.signature_image),
-        nama_penguji_or_pembimbing: textPatch(participantNama),
-      },
-    });
-    const fileBase64 = outputBuffer.toString("base64");
-    const fileName = `Penilaian_${role}_${sidang.npm}.docx`;
+    // DOCX generator (legacy)
+    // const templatePath = path.join(
+    //   __dirname,
+    //   "../templates/template_komponen_penilaian.docx",
+    // );
+    // const templateBuffer = await readFile(templatePath);
+    // const outputBuffer = await patchDocument({
+    //   outputType: "nodebuffer",
+    //   data: templateBuffer,
+    //   patches: {
+    //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
+    //     npm: textPatch(sidang.npm),
+    //     prodi: textPatch(sidang.program_studi_nama),
+    //     ujian_ke: textPatch(ujianKeStr),
+    //     tanggal_sidang: textPatch(tanggalFormatted),
+    //     judul_skripsi: textPatch(sidang.judul_skripsi),
+    //     bobot_isi: textPatch(`${BOBOT.isi * 100}%`),
+    //     bobot_bahasa: textPatch(`${BOBOT.bahasa * 100}%`),
+    //     bobot_tsp: textPatch(`${BOBOT.tsp * 100}%`),
+    //     bobot_penguasaan: textPatch(`${BOBOT.penguasaan * 100}%`),
+    //     bobot_penunjang: textPatch(`${BOBOT.penunjang * 100}%`),
+    //     nilai_isi: textPatch(nIsi),
+    //     keterangan_isi: textPatch(keteranganIsi ?? ""),
+    //     nilai_bahasa: textPatch(nBahasa),
+    //     keterangan_bahasa: textPatch(keteranganBahasa ?? ""),
+    //     nilai_tsp: textPatch(nTsp),
+    //     keterangan_tsp: textPatch(keteranganTsp ?? ""),
+    //     nilai_penguasaan: textPatch(nPenguasaan),
+    //     keterangan_penguasaan: textPatch(keteranganPenguasaan ?? ""),
+    //     nilai_penunjang: textPatch(nPenunjang),
+    //     keterangan_penunjang: textPatch(keteranganPenunjang ?? ""),
+    //     total_nilai: textPatch(totalNilai.toFixed(2)),
+    //     role: textPatch(ROLE_LABEL[role]),
+    //     ttd_penguji_or_pembimbing: signaturePatch(sigRow?.signature_image),
+    //     nama_penguji_or_pembimbing: textPatch(participantNama),
+    //   },
+    // });
+    // const fileBase64 = outputBuffer.toString("base64");
+    // const fileName = `Penilaian_${role}_${sidang.npm}.docx`;
+
+    const outputBuffer =
+      await generateKomponenPenilaianUjianSkripsiKomprehensifFTI({
+        mahasiswa: {
+          nama: sidang.nama_mahasiswa,
+          npm: sidang.npm,
+          programStudi: sidang.program_studi_nama,
+          judulSkripsi: sidang.judul_skripsi,
+        },
+        ujianKe: ujianKeStr,
+        tanggalUjian: tanggalFormatted,
+        tanggalDokumen: tanggalFormatted,
+        penilai: {
+          role: ROLE_LABEL[role],
+          nama: participantNama,
+          signatureBase64: sigRow?.signature_image ?? null,
+        },
+        komponenPenilaian: [
+          {
+            komponen: "ISI",
+            bobot: BOBOT.isi * 100,
+            nilai: nIsi,
+            keterangan: keteranganIsi ?? "",
+          },
+          {
+            komponen: "BAHASA",
+            bobot: BOBOT.bahasa * 100,
+            nilai: nBahasa,
+            keterangan: keteranganBahasa ?? "",
+          },
+          {
+            komponen: "TEKNIK & SISTEMATIKA PENULISAN",
+            bobot: BOBOT.tsp * 100,
+            nilai: nTsp,
+            keterangan: keteranganTsp ?? "",
+          },
+          {
+            komponen: "PENGUASAAN MATERI",
+            bobot: BOBOT.penguasaan * 100,
+            nilai: nPenguasaan,
+            keterangan: keteranganPenguasaan ?? "",
+          },
+          {
+            komponen: "KOMPONEN PENUNJANG",
+            bobot: BOBOT.penunjang * 100,
+            nilai: nPenunjang,
+            keterangan: keteranganPenunjang ?? "",
+          },
+        ],
+      });
+    const fileBase64 = Buffer.from(outputBuffer).toString("base64");
+    const fileName = `Penilaian_${role}_${sidang.npm}.pdf`;
 
     await conn.query(
       `UPDATE sidang_penilaian
@@ -751,7 +818,10 @@ exports.submitPenilaian = async (req, res, next) => {
           : role === "PENGUJI_1"
             ? sidang.penguji1_nama
             : sidang.penguji2_nama;
-      const pembimbing1UserId = await resolveUserId(conn, sidang.pembimbing1_nidn);
+      const pembimbing1UserId = await resolveUserId(
+        conn,
+        sidang.pembimbing1_nidn,
+      );
       if (pembimbing1UserId) {
         await insertNotification(
           conn,
@@ -784,9 +854,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -842,7 +910,8 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       txStarted = false;
       return res.status(403).json({
         ok: false,
-        message: "Hanya Pembimbing 1 atau Pembimbing 2 yang dapat mengisi hasil penilaian akhir",
+        message:
+          "Hanya Pembimbing 1 atau Pembimbing 2 yang dapat mengisi hasil penilaian akhir",
       });
     }
 
@@ -899,7 +968,11 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     );
 
     assertSignatures([
-      { role: "Pembimbing 1", nama: sidang.pembimbing1_nama, signatureImage: sigRow?.signature_image },
+      {
+        role: "Pembimbing 1",
+        nama: sidang.pembimbing1_nama,
+        signatureImage: sigRow?.signature_image,
+      },
     ]);
 
     const tanggalFormatted = sidang.tanggal_sidang
@@ -1087,7 +1160,8 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     }
 
     // Notify student + all 4 participants of LULUS / TIDAK_LULUS result
-    const notifType = hasilSidang === "LULUS" ? "SIDANG_LULUS" : "SIDANG_TIDAK_LULUS";
+    const notifType =
+      hasilSidang === "LULUS" ? "SIDANG_LULUS" : "SIDANG_TIDAK_LULUS";
     const studentSidangLink = `/student/sidang`;
     const lecturerSidangLink = `/pembimbing/sidang/${skripsiId}`;
     const [[studentRow]] = await conn.query(
@@ -1099,7 +1173,13 @@ exports.submitHasilPenilaian = async (req, res, next) => {
         hasilSidang === "LULUS"
           ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi dengan nilai ${rata.toFixed(2)} (${grade}).`
           : "Anda dinyatakan TIDAK LULUS dalam sidang skripsi. Anda dapat mengikuti ujian ulang.";
-      await insertNotification(conn, studentRow.id, notifType, studentMsg, studentSidangLink);
+      await insertNotification(
+        conn,
+        studentRow.id,
+        notifType,
+        studentMsg,
+        studentSidangLink,
+      );
     }
     const lecturerMsg =
       hasilSidang === "LULUS"
@@ -1113,7 +1193,13 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     ]) {
       const lecId = await resolveUserId(conn, lecNidn);
       if (lecId) {
-        await insertNotification(conn, lecId, notifType, lecturerMsg, lecturerSidangLink);
+        await insertNotification(
+          conn,
+          lecId,
+          notifType,
+          lecturerMsg,
+          lecturerSidangLink,
+        );
       }
     }
 
@@ -1178,7 +1264,13 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
         `UPDATE sidang_notulen
          SET hasil_sidang = ?, file_content = ?, file_name = ?, updated_at = NOW()
          WHERE sidang_id = ? AND role = ?`,
-        [hasilSidang, fileBase64, `Notulen_${role}_${sidang.npm}.docx`, sidang.id, role],
+        [
+          hasilSidang,
+          fileBase64,
+          `Notulen_${role}_${sidang.npm}.docx`,
+          sidang.id,
+          role,
+        ],
       );
     }
   } catch (err) {
@@ -1229,8 +1321,16 @@ async function generateAndStoreBeritaAcara(
   ]);
 
   assertSignatures([
-    { role: "Pembimbing 1", nama: sidang.pembimbing1_nama, signatureImage: sig1 },
-    { role: "Pembimbing 2", nama: sidang.pembimbing2_nama, signatureImage: sig2 },
+    {
+      role: "Pembimbing 1",
+      nama: sidang.pembimbing1_nama,
+      signatureImage: sig1,
+    },
+    {
+      role: "Pembimbing 2",
+      nama: sidang.pembimbing2_nama,
+      signatureImage: sig2,
+    },
     { role: "Penguji 1", nama: sidang.penguji1_nama, signatureImage: sigPg1 },
     { role: "Penguji 2", nama: sidang.penguji2_nama, signatureImage: sigPg2 },
   ]);
@@ -1268,10 +1368,7 @@ async function generateAndStoreBeritaAcara(
   const fileBase64 = outputBuffer.toString("base64");
   const fileName = `Berita_Acara_${sidang.npm}.docx`;
 
-  await conn.query(
-    `DELETE FROM sidang_files WHERE sidang_id = ?`,
-    [sidang.id],
-  );
+  await conn.query(`DELETE FROM sidang_files WHERE sidang_id = ?`, [sidang.id]);
   await conn.query(
     `INSERT INTO sidang_files (sidang_id, file_name, file_content) VALUES (?, ?, ?)`,
     [sidang.id, fileName, fileBase64],
@@ -1388,7 +1485,9 @@ exports.getKaprodiSidang = async (req, res, next) => {
     }
 
     const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
+    const programStudiIds = nidn
+      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+      : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });
     }
@@ -1447,7 +1546,8 @@ exports.getKaprodiSidang = async (req, res, next) => {
 };
 
 async function resolveSidangFileAccess(req, sidang) {
-  if (req.user.hasRole("SEKRETARIAT") || req.user.hasRole("KAPRODI")) return true;
+  if (req.user.hasRole("SEKRETARIAT") || req.user.hasRole("KAPRODI"))
+    return true;
   if (req.user.hasRole("STUDENT")) {
     const npm = await getStudentNpm(req.user.id);
     return npm === sidang.npm;
@@ -1491,14 +1591,16 @@ exports.getBeritaAcara = async (req, res, next) => {
       [skripsiId],
     );
     if (!sidang) {
-      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Sidang tidak ditemukan" });
     }
 
     if (req.user.hasRole("STUDENT")) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    if (!await resolveSidangFileAccess(req, sidang)) {
+    if (!(await resolveSidangFileAccess(req, sidang))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -1507,13 +1609,19 @@ exports.getBeritaAcara = async (req, res, next) => {
       [sidang.id],
     );
     if (!fileRow) {
-      return res.status(404).json({ ok: false, message: "Berita acara belum tersedia" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Berita acara belum tersedia" });
     }
 
     return sendDocx(
       res,
       fileRow,
-      buildSidangDownloadFileName(sidang.npm, sidang.nama_mahasiswa, "Berita Acara Hasil Ujian"),
+      buildSidangDownloadFileName(
+        sidang.npm,
+        sidang.nama_mahasiswa,
+        "Berita Acara Hasil Ujian",
+      ),
     );
   } catch (err) {
     next(err);
@@ -1541,14 +1649,16 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
       [skripsiId],
     );
     if (!sidang) {
-      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Sidang tidak ditemukan" });
     }
 
     if (req.user.hasRole("STUDENT")) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    if (!await resolveSidangFileAccess(req, sidang)) {
+    if (!(await resolveSidangFileAccess(req, sidang))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -1557,20 +1667,31 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
       [sidang.id],
     );
     if (!fileRow) {
-      return res.status(404).json({ ok: false, message: "Hasil penilaian belum tersedia" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Hasil penilaian belum tersedia" });
     }
 
     return sendDocx(
       res,
       fileRow,
-      buildSidangDownloadFileName(sidang.npm, sidang.nama_mahasiswa, "Hasil Penilaian Akhir"),
+      buildSidangDownloadFileName(
+        sidang.npm,
+        sidang.nama_mahasiswa,
+        "Hasil Penilaian Akhir",
+      ),
     );
   } catch (err) {
     next(err);
   }
 };
 
-const VALID_PENILAIAN_ROLES = ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"];
+const VALID_PENILAIAN_ROLES = [
+  "PEMBIMBING_1",
+  "PEMBIMBING_2",
+  "PENGUJI_1",
+  "PENGUJI_2",
+];
 const VALID_NOTULEN_ROLES = ["PENGUJI_1", "PENGUJI_2"];
 const SIDANG_ROLE_LABELS = {
   PEMBIMBING_1: "Pembimbing 1",
@@ -1608,14 +1729,16 @@ exports.getPenilaianFile = async (req, res, next) => {
       [skripsiId],
     );
     if (!sidang) {
-      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Sidang tidak ditemukan" });
     }
 
     if (req.user.hasRole("STUDENT")) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    if (!await resolveSidangFileAccess(req, sidang)) {
+    if (!(await resolveSidangFileAccess(req, sidang))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -1624,7 +1747,9 @@ exports.getPenilaianFile = async (req, res, next) => {
       [sidang.id, role],
     );
     if (!fileRow) {
-      return res.status(404).json({ ok: false, message: "Formulir penilaian belum tersedia" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Formulir penilaian belum tersedia" });
     }
 
     return sendDocx(
@@ -1670,10 +1795,12 @@ exports.getNotulenFile = async (req, res, next) => {
       [skripsiId],
     );
     if (!sidang) {
-      return res.status(404).json({ ok: false, message: "Sidang tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Sidang tidak ditemukan" });
     }
 
-    if (!await resolveSidangFileAccess(req, sidang)) {
+    if (!(await resolveSidangFileAccess(req, sidang))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -1682,7 +1809,9 @@ exports.getNotulenFile = async (req, res, next) => {
       [sidang.id, role],
     );
     if (!fileRow) {
-      return res.status(404).json({ ok: false, message: "Notulen belum tersedia" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Notulen belum tersedia" });
     }
 
     return sendDocx(
@@ -1715,8 +1844,13 @@ exports.getSekretariatSidang = async (req, res, next) => {
     }
 
     const parsedProgramStudiId = programStudiId ? Number(programStudiId) : null;
-    if (programStudiId !== undefined && (!Number.isFinite(parsedProgramStudiId) || parsedProgramStudiId <= 0)) {
-      return res.status(400).json({ ok: false, message: "Invalid programStudiId" });
+    if (
+      programStudiId !== undefined &&
+      (!Number.isFinite(parsedProgramStudiId) || parsedProgramStudiId <= 0)
+    ) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid programStudiId" });
     }
 
     const [rows] = await db.query(
@@ -1749,7 +1883,12 @@ exports.getSekretariatSidang = async (req, res, next) => {
        WHERE (? IS NULL OR s.status = ?)
          AND (? IS NULL OR prog.id = ?)
        ORDER BY s.created_at DESC`,
-      [status ?? null, status ?? null, parsedProgramStudiId, parsedProgramStudiId],
+      [
+        status ?? null,
+        status ?? null,
+        parsedProgramStudiId,
+        parsedProgramStudiId,
+      ],
     );
 
     return res.json({ ok: true, data: rows });
