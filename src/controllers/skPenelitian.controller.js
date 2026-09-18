@@ -6,6 +6,9 @@ const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   generateHalamanPersetujuanJudulDesainSkripsiFTI,
 } = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
+const {
+  generateSuratKeputusanSkripsiFTI,
+} = require("../services/generateSuratKeputusanSkripsiFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -34,8 +37,12 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
 }
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
-  const safeNpm = String(npm ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNpm = String(npm ?? "")
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "")
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, "_");
   return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
@@ -285,7 +292,11 @@ async function buildHalamanPersetujuanDocxBuffer({
     ttd_kaprodi: signatureImagePatch(sigMap["KAPRODI"]),
   };
 
-  return patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  return patchDocument({
+    outputType: "nodebuffer",
+    data: templateBuffer,
+    patches,
+  });
 }
 
 async function generateSkDocuments(conn, sk, outlineId) {
@@ -379,9 +390,21 @@ async function generateSkDocuments(conn, sk, outlineId) {
   );
 
   assertSignatures([
-    { role: "Dekan", nama: dekan.nama_dekan, signatureImage: dekan.signature_image },
-    { role: "Kaprodi", nama: kaprodi?.nama_kaprodi, signatureImage: kaprodi?.signature_image },
-    { role: "Mahasiswa", nama: kartu.nama_mahasiswa, signatureImage: mahasiswaUser?.signature_image },
+    {
+      role: "Dekan",
+      nama: dekan.nama_dekan,
+      signatureImage: dekan.signature_image,
+    },
+    {
+      role: "Kaprodi",
+      nama: kaprodi?.nama_kaprodi,
+      signatureImage: kaprodi?.signature_image,
+    },
+    {
+      role: "Mahasiswa",
+      nama: kartu.nama_mahasiswa,
+      signatureImage: mahasiswaUser?.signature_image,
+    },
   ]);
 
   // Generate nomor_surat sequence (count SKs completed this month for same prodi)
@@ -409,20 +432,46 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   const tanggal = formatTanggalIndonesia(now);
 
-  // Generate SK_PENELITIAN DOCX
-  const skBuffer = await buildSkDocxBuffer({
+  // DOCX generator (legacy)
+  // const skBuffer = await buildSkDocxBuffer({
+  //   nomorSurat,
+  //   prodi: kartu.program_studi_nama,
+  //   namaMahasiswa: kartu.nama_mahasiswa,
+  //   npm: kartu.npm,
+  //   dospem1Nama: kartu.pembimbing1_nama,
+  //   dospem2Nama: kartu.pembimbing2_nama,
+  //   judulSkripsi: kartu.judul_skripsi,
+  //   tanggal,
+  //   dekanSignature: dekan.signature_image,
+  //   namaDekan: dekan.nama_dekan,
+  // });
+  // const skBase64 = skBuffer.toString("base64");
+  // const mimeDocx =
+  //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+  const dataSuratKeputusanSkripsiFTI = {
     nomorSurat,
-    prodi: kartu.program_studi_nama,
-    namaMahasiswa: kartu.nama_mahasiswa,
-    npm: kartu.npm,
-    dospem1Nama: kartu.pembimbing1_nama,
-    dospem2Nama: kartu.pembimbing2_nama,
+    programStudi: kartu.program_studi_nama,
+    mahasiswa: {
+      nama: kartu.nama_mahasiswa,
+      npm: kartu.npm,
+    },
+    pembimbing: {
+      pertama: kartu.pembimbing1_nama,
+      kedua: kartu.pembimbing2_nama,
+    },
     judulSkripsi: kartu.judul_skripsi,
     tanggal,
-    dekanSignature: dekan.signature_image,
-    namaDekan: dekan.nama_dekan,
-  });
-  const skBase64 = skBuffer.toString("base64");
+    dekan: {
+      nama: dekan.nama_dekan,
+      signatureBase64: dekan.signature_image,
+    },
+  };
+  const skBuffer = await generateSuratKeputusanSkripsiFTI(
+    dataSuratKeputusanSkripsiFTI,
+  );
+  const skBase64 = Buffer.from(skBuffer).toString("base64");
+  const mimePdf = "application/pdf";
   const mimeDocx =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -436,8 +485,12 @@ async function generateSkDocuments(conn, sk, outlineId) {
      VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
     [
       sk.id,
-      buildKartuFileName(kartu.npm, kartu.nama_mahasiswa, "SK Penunjukan Pembimbing"),
-      mimeDocx,
+      buildKartuFileName(
+        kartu.npm,
+        kartu.nama_mahasiswa,
+        "SK Penunjukan Pembimbing",
+      ),
+      mimePdf,
       skBase64,
     ],
   );
@@ -465,7 +518,11 @@ async function generateSkDocuments(conn, sk, outlineId) {
      VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
     [
       sk.id,
-      buildKartuFileName(kartu.npm, kartu.nama_mahasiswa, "Surat Penyelesaian Skripsi"),
+      buildKartuFileName(
+        kartu.npm,
+        kartu.nama_mahasiswa,
+        "Surat Penyelesaian Skripsi",
+      ),
       mimeDocx,
       penyelesaianBase64,
     ],
@@ -641,7 +698,12 @@ exports.initSkPenelitian = async (req, res, next) => {
          LEFT JOIN dosen d1 ON d1.nidn = ?
          LEFT JOIN dosen d2 ON d2.nidn = ?
          WHERE ps.id = ? LIMIT 1`,
-        [kartu.npm, kartu.pembimbing1_nidn, kartu.pembimbing2_nidn, kartu.program_studi_id],
+        [
+          kartu.npm,
+          kartu.pembimbing1_nidn,
+          kartu.pembimbing2_nidn,
+          kartu.program_studi_id,
+        ],
       );
       const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
         mahasiswa: {
@@ -736,7 +798,9 @@ exports.initSkPenelitian = async (req, res, next) => {
       data: { id: skId },
     });
   } catch (err) {
-    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
   } finally {
     conn.release();
@@ -1074,7 +1138,11 @@ exports.reviewSkFile = async (req, res, next) => {
 
     await conn.query(
       `UPDATE pengajuan_sk_penelitian_files SET status = ?, catatan_sekretariat = ? WHERE id = ?`,
-      [status, catatanSekretariat ? String(catatanSekretariat).trim() : null, fileRow.id],
+      [
+        status,
+        catatanSekretariat ? String(catatanSekretariat).trim() : null,
+        fileRow.id,
+      ],
     );
 
     await conn.commit();
