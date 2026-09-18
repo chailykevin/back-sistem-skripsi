@@ -6,6 +6,13 @@ const { insertNotification } = require("../utils/notify");
 const {
   generateKomponenPenilaianUjianSkripsiKomprehensifFTI,
 } = require("../services/generateKomponenPenilaianUjianSkripsiKomprehensifFTI");
+const {
+  generateHasilPenilaianAkhirUjianSkripsiFTI,
+} = require("../services/generateHasilPenilaianAkhirUjianSkripsiFTI");
+const { generateNotulenPengujiFTI } = require("../services/generateNotulenPengujiFTI");
+const {
+  generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI,
+} = require("../services/generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI");
 
 const MIME_DOCX =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -990,37 +997,59 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     ];
     const ujianKeStr = `${ujianKeNum} (${UJIAN_KE_LABEL[ujianKeNum] ?? ujianKeNum})`;
 
-    // Generate Hasil Penilaian Akhir DOCX
-    const hasilTemplatePath = path.join(
-      __dirname,
-      "../templates/template_hasil_penilaian_akhir_ujian_skripsi.docx",
-    );
-    const hasilTemplateBuffer = await readFile(hasilTemplatePath);
-    const hasilBuffer = await patchDocument({
-      outputType: "nodebuffer",
-      data: hasilTemplateBuffer,
-      patches: {
-        nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-        npm: textPatch(sidang.npm),
-        prodi: textPatch(sidang.program_studi_nama),
-        judul_skripsi: textPatch(sidang.judul_skripsi),
-        ujian_ke: textPatch(ujianKeStr),
-        nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-        nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-        nama_penguji1: textPatch(sidang.penguji1_nama),
-        nama_penguji2: textPatch(sidang.penguji2_nama),
-        nilai_pembimbing1: textPatch(nilaiP1.toFixed(2)),
-        nilai_pembimbing2: textPatch(nilaiP2.toFixed(2)),
-        nilai_penguji1: textPatch(nilaiPg1.toFixed(2)),
-        nilai_penguji2: textPatch(nilaiPg2.toFixed(2)),
-        total_nilai: textPatch(totalNilai.toFixed(2)),
-        rata: textPatch(rata.toFixed(2)),
-        grade: textPatch(grade),
-        tanggal: textPatch(tanggalFormatted),
-        ttd_pembimbing1: signaturePatch(sigRow?.signature_image),
+    // DOCX generator (legacy)
+    // const hasilTemplatePath = path.join(
+    //   __dirname,
+    //   "../templates/template_hasil_penilaian_akhir_ujian_skripsi.docx",
+    // );
+    // const hasilTemplateBuffer = await readFile(hasilTemplatePath);
+    // const hasilBuffer = await patchDocument({
+    //   outputType: "nodebuffer",
+    //   data: hasilTemplateBuffer,
+    //   patches: {
+    //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
+    //     npm: textPatch(sidang.npm),
+    //     prodi: textPatch(sidang.program_studi_nama),
+    //     judul_skripsi: textPatch(sidang.judul_skripsi),
+    //     ujian_ke: textPatch(ujianKeStr),
+    //     nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
+    //     nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
+    //     nama_penguji1: textPatch(sidang.penguji1_nama),
+    //     nama_penguji2: textPatch(sidang.penguji2_nama),
+    //     nilai_pembimbing1: textPatch(nilaiP1.toFixed(2)),
+    //     nilai_pembimbing2: textPatch(nilaiP2.toFixed(2)),
+    //     nilai_penguji1: textPatch(nilaiPg1.toFixed(2)),
+    //     nilai_penguji2: textPatch(nilaiPg2.toFixed(2)),
+    //     total_nilai: textPatch(totalNilai.toFixed(2)),
+    //     rata: textPatch(rata.toFixed(2)),
+    //     grade: textPatch(grade),
+    //     tanggal: textPatch(tanggalFormatted),
+    //     ttd_pembimbing1: signaturePatch(sigRow?.signature_image),
+    //   },
+    // });
+    // const hasilBase64 = hasilBuffer.toString("base64");
+
+    const hasilBuffer = await generateHasilPenilaianAkhirUjianSkripsiFTI({
+      mahasiswa: {
+        nama: sidang.nama_mahasiswa,
+        npm: sidang.npm,
+        programStudi: sidang.program_studi_nama,
+        judulSkripsi: sidang.judul_skripsi,
+      },
+      ujianKe: ujianKeStr,
+      tanggal: tanggalFormatted,
+      timPenguji: {
+        pembimbingPertama: {
+          nama: sidang.pembimbing1_nama,
+          nilai: nilaiP1,
+          signatureBase64: sigRow?.signature_image ?? null,
+        },
+        pembimbingKedua: { nama: sidang.pembimbing2_nama, nilai: nilaiP2 },
+        pengujiUtama: { nama: sidang.penguji1_nama, nilai: nilaiPg1 },
+        anggotaPenguji: { nama: sidang.penguji2_nama, nilai: nilaiPg2 },
       },
     });
-    const hasilBase64 = hasilBuffer.toString("base64");
+    const hasilBase64 = Buffer.from(hasilBuffer).toString("base64");
 
     // Upsert sidang_hasil_penilaian
     await conn.query(
@@ -1040,7 +1069,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
         hasilSidang,
         catatanPenguji ?? null,
         hasilBase64,
-        `Hasil_Penilaian_Akhir_${sidang.npm}.docx`,
+        `Hasil_Penilaian_Akhir_${sidang.npm}.pdf`,
         sidang.id,
       ],
     );
@@ -1228,38 +1257,62 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
     );
     if (notulenRows.length === 0) return;
 
-    const templatePath = path.join(
-      __dirname,
-      "../templates/template_notulen_penguji.docx",
-    );
-    const templateBuffer = await readFile(templatePath);
     const tanggalFormatted = sidang.tanggal_sidang
       ? formatTanggal(new Date(sidang.tanggal_sidang))
       : "";
 
     for (const row of notulenRows) {
       const role = row.role;
-      const outputBuffer = await patchDocument({
-        outputType: "nodebuffer",
-        data: templateBuffer,
-        patches: {
-          npm: textPatch(sidang.npm),
-          nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-          prodi: textPatch(sidang.program_studi_nama),
-          judul_skripsi: textPatch(sidang.judul_skripsi),
-          nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-          nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-          tanggal_sidang: textPatch(tanggalFormatted),
-          hasil_sidang: textPatch(hasilSidang),
-          role: textPatch(NOTULEN_ROLE_LABEL[role]),
-          note: textPatch(row.note),
-          nama_penguji: textPatch(
-            role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-          ),
-          ttd_penguji: signaturePatch(null),
+
+      // DOCX generator (legacy)
+      // const templatePath = path.join(
+      //   __dirname,
+      //   "../templates/template_notulen_penguji.docx",
+      // );
+      // const templateBuffer = await readFile(templatePath);
+      // const outputBuffer = await patchDocument({
+      //   outputType: "nodebuffer",
+      //   data: templateBuffer,
+      //   patches: {
+      //     npm: textPatch(sidang.npm),
+      //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
+      //     prodi: textPatch(sidang.program_studi_nama),
+      //     judul_skripsi: textPatch(sidang.judul_skripsi),
+      //     nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
+      //     nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
+      //     tanggal_sidang: textPatch(tanggalFormatted),
+      //     hasil_sidang: textPatch(hasilSidang),
+      //     role: textPatch(NOTULEN_ROLE_LABEL[role]),
+      //     note: textPatch(row.note),
+      //     nama_penguji: textPatch(
+      //       role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
+      //     ),
+      //     ttd_penguji: signaturePatch(null),
+      //   },
+      // });
+      // const fileBase64 = outputBuffer.toString("base64");
+
+      const outputBuffer = await generateNotulenPengujiFTI({
+        mahasiswa: {
+          npm: sidang.npm,
+          nama: sidang.nama_mahasiswa,
+          programStudi: sidang.program_studi_nama,
+          judulSkripsi: sidang.judul_skripsi,
         },
+        pembimbing: {
+          pertama: sidang.pembimbing1_nama,
+          kedua: sidang.pembimbing2_nama,
+        },
+        tanggalSidang: tanggalFormatted,
+        hasilSidang: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+        penguji: {
+          role: NOTULEN_ROLE_LABEL[role],
+          nama: role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
+          signatureBase64: null,
+        },
+        note: row.note,
       });
-      const fileBase64 = outputBuffer.toString("base64");
+      const fileBase64 = Buffer.from(outputBuffer).toString("base64");
       await conn.query(
         `UPDATE sidang_notulen
          SET hasil_sidang = ?, file_content = ?, file_name = ?, updated_at = NOW()
@@ -1267,7 +1320,7 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
         [
           hasilSidang,
           fileBase64,
-          `Notulen_${role}_${sidang.npm}.docx`,
+          `Notulen_${role}_${sidang.npm}.pdf`,
           sidang.id,
           role,
         ],
@@ -1335,38 +1388,65 @@ async function generateAndStoreBeritaAcara(
     { role: "Penguji 2", nama: sidang.penguji2_nama, signatureImage: sigPg2 },
   ]);
 
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_berita_acara_hasil_ujian.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches: {
-      hari: textPatch(hariStr),
-      tanggal: textPatch(tanggalStr),
-      waktu: textPatch(waktuStr),
-      nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-      npm: textPatch(sidang.npm),
-      prodi: textPatch(sidang.program_studi_nama),
-      judul_skripsi: textPatch(sidang.judul_skripsi),
-      ujian_ke: textPatch(ujianKeStr),
-      nilai_ujian: textPatch(Number(nilaiUjian).toFixed(2)),
-      status_sidang: textPatch(hasilSidang),
-      catatan_penguji: textPatch(catatanPenguji ?? ""),
-      nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-      nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-      nama_penguji1: textPatch(sidang.penguji1_nama),
-      nama_penguji2: textPatch(sidang.penguji2_nama),
-      ttd_pembimbing1: signaturePatch(sig1),
-      ttd_pembimbing2: signaturePatch(sig2),
-      ttd_penguji1: signaturePatch(sigPg1),
-      ttd_penguji2: signaturePatch(sigPg2),
-    },
-  });
-  const fileBase64 = outputBuffer.toString("base64");
-  const fileName = `Berita_Acara_${sidang.npm}.docx`;
+  // DOCX generator (legacy)
+  // const templatePath = path.join(
+  //   __dirname,
+  //   "../templates/template_berita_acara_hasil_ujian.docx",
+  // );
+  // const templateBuffer = await readFile(templatePath);
+  // const outputBuffer = await patchDocument({
+  //   outputType: "nodebuffer",
+  //   data: templateBuffer,
+  //   patches: {
+  //     hari: textPatch(hariStr),
+  //     tanggal: textPatch(tanggalStr),
+  //     waktu: textPatch(waktuStr),
+  //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
+  //     npm: textPatch(sidang.npm),
+  //     prodi: textPatch(sidang.program_studi_nama),
+  //     judul_skripsi: textPatch(sidang.judul_skripsi),
+  //     ujian_ke: textPatch(ujianKeStr),
+  //     nilai_ujian: textPatch(Number(nilaiUjian).toFixed(2)),
+  //     status_sidang: textPatch(hasilSidang),
+  //     catatan_penguji: textPatch(catatanPenguji ?? ""),
+  //     nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
+  //     nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
+  //     nama_penguji1: textPatch(sidang.penguji1_nama),
+  //     nama_penguji2: textPatch(sidang.penguji2_nama),
+  //     ttd_pembimbing1: signaturePatch(sig1),
+  //     ttd_pembimbing2: signaturePatch(sig2),
+  //     ttd_penguji1: signaturePatch(sigPg1),
+  //     ttd_penguji2: signaturePatch(sigPg2),
+  //   },
+  // });
+  // const fileBase64 = outputBuffer.toString("base64");
+  // const fileName = `Berita_Acara_${sidang.npm}.docx`;
+
+  const outputBuffer =
+    await generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI({
+      hari: hariStr,
+      tanggalUjian: tanggalStr,
+      waktu: waktuStr,
+      mahasiswa: {
+        nama: sidang.nama_mahasiswa,
+        npm: sidang.npm,
+        programStudi: sidang.program_studi_nama,
+        judulSkripsi: sidang.judul_skripsi,
+      },
+      ujianKe: ujianKeStr,
+      nilaiUjian,
+      hasilUjian: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+      tanggalDokumen: tanggalStr,
+      catatanMajelisPenguji: catatanPenguji ?? "",
+      majelisPenguji: {
+        ketua: { nama: sidang.pembimbing1_nama, signatureBase64: sig1 },
+        sekretaris: { nama: sidang.pembimbing2_nama, signatureBase64: sig2 },
+        pengujiUtama: { nama: sidang.penguji1_nama, signatureBase64: sigPg1 },
+        anggotaPenguji: { nama: sidang.penguji2_nama, signatureBase64: sigPg2 },
+      },
+    });
+  const fileBase64 = Buffer.from(outputBuffer).toString("base64");
+  const fileName = `Berita_Acara_${sidang.npm}.pdf`;
 
   await conn.query(`DELETE FROM sidang_files WHERE sidang_id = ?`, [sidang.id]);
   await conn.query(

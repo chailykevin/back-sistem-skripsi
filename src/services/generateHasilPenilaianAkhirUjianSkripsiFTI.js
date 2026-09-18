@@ -15,7 +15,7 @@ const mimeTypes = {
 function formatNumber(value) {
   if (!Number.isFinite(value))
     throw new TypeError("Each assessor score must be a finite number.");
-  return value.toFixed(2).replace(".", ",");
+  return value.toFixed(2);
 }
 
 function gradeFromAverage(average) {

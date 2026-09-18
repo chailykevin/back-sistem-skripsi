@@ -16,7 +16,7 @@ function formatScore(value) {
   const score = Number(value);
   if (!Number.isFinite(score))
     throw new TypeError("nilaiUjian must be a finite number.");
-  return score.toFixed(2).replace(".", ",");
+  return score.toFixed(2);
 }
 
 function gradeFromScore(value) {
