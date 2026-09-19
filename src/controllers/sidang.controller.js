@@ -9,7 +9,9 @@ const {
 const {
   generateHasilPenilaianAkhirUjianSkripsiFTI,
 } = require("../services/generateHasilPenilaianAkhirUjianSkripsiFTI");
-const { generateNotulenPengujiFTI } = require("../services/generateNotulenPengujiFTI");
+const {
+  generateNotulenPengujiFTI,
+} = require("../services/generateNotulenPengujiFTI");
 const {
   generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI,
 } = require("../services/generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI");
@@ -1307,7 +1309,8 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
         hasilSidang: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
         penguji: {
           role: NOTULEN_ROLE_LABEL[role],
-          nama: role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
+          nama:
+            role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
           signatureBase64: null,
         },
         note: row.note,
@@ -1647,7 +1650,7 @@ function sendDocx(res, fileRow, downloadFileName) {
 }
 
 function buildSidangDownloadFileName(npm, namaMahasiswa, namaDokumen) {
-  return `${npm} - ${namaMahasiswa} - ${namaDokumen}.docx`;
+  return `${npm} - ${namaMahasiswa} - ${namaDokumen}.pdf`;
 }
 
 // GET /sidang/:skripsiId/files/berita-acara
