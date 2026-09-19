@@ -8,70 +8,66 @@ const PREDEFINED_MAHASISWA = [
     npm: "22412890",
     nama: "Muhammad Fatkhul Alfi",
     username: "22412890",
-    programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421562",
     nama: "Kevin Chaily",
     username: "22421562",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421495",
     nama: "Erika Putri",
     username: "22421495",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421592",
     nama: "Victor Valentino",
     username: "22421592",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22412858",
     nama: "Ajay Antholin",
     username: "22412858",
-    programStudiNama: "Sistem Informasi",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421581",
     nama: "Robert Varian",
     username: "22421581",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421527",
     nama: "Carolus Seto Gautama",
     username: "22421527",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421587",
     nama: "Sylvia Steffi",
     username: "22421587",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421521",
     nama: "Argo Aditya Saputra",
     username: "22421521",
-    programStudiNama: "Informatika",
     password: DUMMY_PASSWORD_PLAIN,
   },
   {
     npm: "22421568",
     nama: "Mertayasa Pradana Hartono",
     username: "22421568",
-    programStudiNama: "Informatika",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
+  {
+    npm: "22421561",
+    nama: "Jonathan Kristian",
+    username: "22421561",
     password: DUMMY_PASSWORD_PLAIN,
   },
 ];
@@ -163,6 +159,15 @@ const PROGRAM_STUDI_KODE = {
   "bisnis digital": "BD",
 };
 
+// Digits 3–4 of every NPM are the institution's permanent program-studi code.
+// The database `kode` is used for the lookup so a display-name change does not
+// alter which program a mahasiswa belongs to.
+const NPM_PROGRAM_STUDI_KODE = {
+  "41": "SI",
+  "42": "INF",
+  "43": "BD",
+};
+
 async function getActiveRolesMap(conn) {
   const [rows] = await conn.query(
     `SELECT id, code
@@ -180,7 +185,7 @@ async function getActiveRolesMap(conn) {
 
 async function getProgramStudiRows(conn) {
   const [rows] = await conn.query(
-    `SELECT id, nama
+    `SELECT id, nama, kode
      FROM program_studi
      ORDER BY id ASC`,
   );
@@ -301,25 +306,33 @@ async function upsertUserRole(
 }
 
 function getPredefinedMahasiswa(programRows) {
-  const prodiByName = new Map(
+  const prodiByKode = new Map(
     programRows.map((p) => [
-      String(p.nama).toLowerCase(),
+      String(p.kode ?? "").toUpperCase(),
       { id: Number(p.id), nama: p.nama },
     ]),
   );
 
-  return PREDEFINED_MAHASISWA.map((item, index) => ({
-    npm: item.npm,
-    nama: item.nama,
-    email: item.email ?? null,
-    sks: 140,
-    username: item.username,
-    programStudiNama: item.programStudiNama,
-    password: item.npm,
-    programStudiId:
-      prodiByName.get(String(item.programStudiNama).toLowerCase())?.id ?? null,
-    index: index + 1,
-  }));
+  return PREDEFINED_MAHASISWA.map((item, index) => {
+    const npmProgramCode = String(item.npm).slice(2, 4);
+    const programStudiKode = NPM_PROGRAM_STUDI_KODE[npmProgramCode] ?? null;
+    const programStudi = programStudiKode
+      ? (prodiByKode.get(programStudiKode) ?? null)
+      : null;
+
+    return {
+      npm: item.npm,
+      nama: item.nama,
+      email: item.email ?? null,
+      sks: 140,
+      username: item.username,
+      password: item.npm,
+      npmProgramCode,
+      programStudiKode,
+      programStudiId: programStudi?.id ?? null,
+      index: index + 1,
+    };
+  });
 }
 
 function getPredefinedDosen(programRows) {
@@ -392,14 +405,14 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
         !row.npm ||
         !row.nama ||
         !row.username ||
-        !row.programStudiNama ||
+        !row.programStudiKode ||
         !Number.isFinite(row.programStudiId)
       ) {
         await conn.rollback();
         txStarted = false;
         return res.status(400).json({
           ok: false,
-          message: `Invalid mahasiswa payload at item #${row.index}`,
+          message: `Invalid mahasiswa payload or unsupported NPM program code at item #${row.index}`,
         });
       }
       if (!validProgramIds.has(row.programStudiId)) {
