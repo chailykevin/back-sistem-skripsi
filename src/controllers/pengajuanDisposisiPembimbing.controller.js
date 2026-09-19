@@ -5,8 +5,18 @@ const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 
 const BULAN_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
 ];
 
 function formatDateId(date) {
@@ -19,8 +29,13 @@ function checkbox(value) {
 }
 
 function buildFormulirFileName(npm, namaMahasiswa) {
-  const safeNpm = String(npm ?? "").trim().replace(/[^\w.-]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "").trim().replace(/[^\w\s.-]+/g, "").replace(/\s+/g, " ");
+  const safeNpm = String(npm ?? "")
+    .trim()
+    .replace(/[^\w.-]+/g, "_");
+  const safeNama = String(namaMahasiswa ?? "")
+    .trim()
+    .replace(/[^\w\s.-]+/g, "")
+    .replace(/\s+/g, " ");
   return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.docx`;
 }
 
@@ -35,22 +50,29 @@ function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue == null) return null;
   const raw = String(signatureValue).trim();
   if (!raw) return null;
-  const dataUrlMatch = raw.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i);
+  const dataUrlMatch = raw.match(
+    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
+  );
   if (dataUrlMatch) {
     try {
       const mimeType = dataUrlMatch[1].toLowerCase();
       const type = mimeType === "jpeg" ? "jpg" : mimeType;
       return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
   }
   const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 = /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
+  const looksLikeBase64 =
+    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
   if (looksLikeBase64) {
     try {
       const buffer = Buffer.from(normalized, "base64");
       const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
       return { buffer, type };
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
   }
   return null;
 }
@@ -61,9 +83,17 @@ function signatureImagePatch(signatureValue) {
   try {
     return {
       type: PatchType.PARAGRAPH,
-      children: [new ImageRun({ type: decoded.type, data: decoded.buffer, transformation: { width: 160, height: 60 } })],
+      children: [
+        new ImageRun({
+          type: decoded.type,
+          data: decoded.buffer,
+          transformation: { width: 160, height: 60 },
+        }),
+      ],
     };
-  } catch (_) { return textPatch(""); }
+  } catch (_) {
+    return textPatch("");
+  }
 }
 
 function hasSignature(signatureValue) {
@@ -89,18 +119,37 @@ function assertSignatures(checks) {
 
 async function generateFormulirDoc(data) {
   const {
-    npm, namaMahasiswa, programStudiNama, noHp, sks, judulSkripsi,
-    pembimbing1Nama, pembimbing2Nama, perluSuratPengantar, namaPerusahaan,
-    studentSignature, submittedAt,
+    npm,
+    namaMahasiswa,
+    programStudiNama,
+    noHp,
+    sks,
+    judulSkripsi,
+    pembimbing1Nama,
+    pembimbing2Nama,
+    perluSuratPengantar,
+    namaPerusahaan,
+    studentSignature,
+    submittedAt,
     // kaprodi review fields (optional)
-    programStudiNamaUpper, disposisiDate, keputusan,
-    dosenPembimbing1, dosenPembimbing2, catatan,
-    syaratTranskrip, syaratKrs, syaratMetodologi,
-    namaKaprodi, kaprodiSignature,
+    programStudiNamaUpper,
+    disposisiDate,
+    keputusan,
+    dosenPembimbing1,
+    dosenPembimbing2,
+    catatan,
+    syaratTranskrip,
+    syaratKrs,
+    syaratMetodologi,
+    namaKaprodi,
+    kaprodiSignature,
   } = data;
 
   const templateBuffer = await readFile(
-    path.join(__dirname, "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx"),
+    path.join(
+      __dirname,
+      "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
+    ),
   );
 
   const patches = {
@@ -114,15 +163,16 @@ async function generateFormulirDoc(data) {
     calon_dosen_pembimbing_1: textPatch(pembimbing1Nama ?? ""),
     calon_dosen_pembimbing_2: textPatch(pembimbing2Nama ?? ""),
     perlu_surat_pengantar: textPatch(
-      perluSuratPengantar
-        ? "☑ Ya    ☐ Tidak"
-        : "☐ Ya    ☑ Tidak"
+      perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak",
     ),
     nama_perusahaan: textPatch(namaPerusahaan || "-"),
     today_date: textPatch(formatDateId(submittedAt ?? new Date())),
     signature: signatureImagePatch(studentSignature),
     // kaprodi section
-    nama_program_studi: textPatch(programStudiNamaUpper ?? (programStudiNama ? String(programStudiNama).toUpperCase() : "")),
+    nama_program_studi: textPatch(
+      programStudiNamaUpper ??
+        (programStudiNama ? String(programStudiNama).toUpperCase() : ""),
+    ),
     disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
     keputusan: textPatch(keputusan ?? ""),
     dosen_pembimbing_1: textPatch(dosenPembimbing1 ?? ""),
@@ -135,7 +185,11 @@ async function generateFormulirDoc(data) {
     kaprodi_signature: signatureImagePatch(kaprodiSignature),
   };
 
-  const outputBuffer = await patchDocument({ outputType: "nodebuffer", data: templateBuffer, patches });
+  const outputBuffer = await patchDocument({
+    outputType: "nodebuffer",
+    data: templateBuffer,
+    patches,
+  });
   return outputBuffer.toString("base64");
 }
 
@@ -165,7 +219,10 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
   };
 
   const byType = {
-    PENGAJUAN_DISPOSISI_PEMBIMBING: ["file_pengajuan_disposisi_pembimbing", "file_pengajuan_disposisi_pembimbing_name"],
+    PENGAJUAN_DISPOSISI_PEMBIMBING: [
+      "file_pengajuan_disposisi_pembimbing",
+      "file_pengajuan_disposisi_pembimbing_name",
+    ],
     TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
     KRS: ["file_krs", "file_krs_name"],
     METODOLOGI: ["file_metodologi", "file_metodologi_name"],
@@ -181,7 +238,6 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
 
   return mapped;
 }
-
 
 async function upsertFileByType(
   conn,
@@ -276,7 +332,8 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     if (existing.length > 0) {
       return res.status(409).json({
         ok: false,
-        message: "Pengajuan disposisi pembimbing already exists for this outline",
+        message:
+          "Pengajuan disposisi pembimbing already exists for this outline",
         data: existing[0],
       });
     }
@@ -307,9 +364,13 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     }
 
     const pembimbing1Val =
-      pembimbing1DiajukanNidn != null ? String(pembimbing1DiajukanNidn).trim() : "";
+      pembimbing1DiajukanNidn != null
+        ? String(pembimbing1DiajukanNidn).trim()
+        : "";
     const pembimbing2Val =
-      pembimbing2DiajukanNidn != null ? String(pembimbing2DiajukanNidn).trim() : "";
+      pembimbing2DiajukanNidn != null
+        ? String(pembimbing2DiajukanNidn).trim()
+        : "";
 
     if (!pembimbing1Val || !pembimbing2Val) {
       return res.status(400).json({
@@ -405,30 +466,34 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     const docData = docDataRows[0] ?? {};
 
     assertSignatures([
-      { role: "Mahasiswa", nama: docData.nama_mahasiswa, signatureImage: docData.signature_image },
+      {
+        role: "Mahasiswa",
+        nama: docData.nama_mahasiswa,
+        signatureImage: docData.signature_image,
+      },
     ]);
 
-    const formulirBase64 = await generateFormulirDoc({
-      npm,
-      namaMahasiswa: docData.nama_mahasiswa,
-      programStudiNama: docData.program_studi_nama,
-      noHp: noHpVal,
-      sks: docData.sks,
-      judulSkripsi: docData.judul_skripsi,
-      pembimbing1Nama: docData.pembimbing1_nama ?? pembimbing1Val,
-      pembimbing2Nama: docData.pembimbing2_nama ?? pembimbing2Val,
-      perluSuratPengantar: Boolean(perluSuratPengantar),
-      namaPerusahaan: namaPerusahaanVal || null,
-      studentSignature: docData.signature_image,
-      submittedAt: new Date(),
-    });
-    await upsertFileByType(
-      conn,
-      pengajuanDisposisiPembimbingId,
-      "PENGAJUAN_DISPOSISI_PEMBIMBING",
-      formulirBase64,
-      buildFormulirFileName(npm, docData.nama_mahasiswa),
-    );
+    // const formulirBase64 = await generateFormulirDoc({
+    //   npm,
+    //   namaMahasiswa: docData.nama_mahasiswa,
+    //   programStudiNama: docData.program_studi_nama,
+    //   noHp: noHpVal,
+    //   sks: docData.sks,
+    //   judulSkripsi: docData.judul_skripsi,
+    //   pembimbing1Nama: docData.pembimbing1_nama ?? pembimbing1Val,
+    //   pembimbing2Nama: docData.pembimbing2_nama ?? pembimbing2Val,
+    //   perluSuratPengantar: Boolean(perluSuratPengantar),
+    //   namaPerusahaan: namaPerusahaanVal || null,
+    //   studentSignature: docData.signature_image,
+    //   submittedAt: new Date(),
+    // });
+    // await upsertFileByType(
+    //   conn,
+    //   pengajuanDisposisiPembimbingId,
+    //   "PENGAJUAN_DISPOSISI_PEMBIMBING",
+    //   formulirBase64,
+    //   buildFormulirFileName(npm, docData.nama_mahasiswa),
+    // );
 
     if (fileTranskrip !== undefined && fileTranskrip !== null) {
       await upsertFileByType(
@@ -552,7 +617,8 @@ exports.getLatestMine = async (req, res, next) => {
     if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only students can access their latest pengajuan disposisi pembimbing",
+        message:
+          "Only students can access their latest pengajuan disposisi pembimbing",
       });
     }
 
@@ -679,7 +745,9 @@ exports.getById = async (req, res, next) => {
         return res.status(404).json({ ok: false, message: "Not found" });
       }
 
-      const hydrated = await hydratePengajuanDisposisiPembimbingReadData(rows[0]);
+      const hydrated = await hydratePengajuanDisposisiPembimbingReadData(
+        rows[0],
+      );
       return res.json({ ok: true, data: hydrated });
     }
 
@@ -755,7 +823,9 @@ exports.getById = async (req, res, next) => {
         return res.status(404).json({ ok: false, message: "Not found" });
       }
 
-      const hydrated = await hydratePengajuanDisposisiPembimbingReadData(rows[0]);
+      const hydrated = await hydratePengajuanDisposisiPembimbingReadData(
+        rows[0],
+      );
       return res.json({ ok: true, data: hydrated });
     }
 
@@ -778,9 +848,10 @@ exports.resubmit = async (req, res, next) => {
 
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid pengajuan disposisi pembimbing id" });
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid pengajuan disposisi pembimbing id",
+      });
     }
 
     const {
@@ -802,7 +873,11 @@ exports.resubmit = async (req, res, next) => {
 
     const noHpVal =
       noHp !== undefined && noHp !== null ? String(noHp).trim() : null;
-    if (noHpVal !== null && noHpVal.length > 0 && !/^08[0-9]{7,13}$/.test(noHpVal)) {
+    if (
+      noHpVal !== null &&
+      noHpVal.length > 0 &&
+      !/^08[0-9]{7,13}$/.test(noHpVal)
+    ) {
       return res.status(400).json({
         ok: false,
         message: "No. HP tidak valid (harus diawali 08, 9-15 digit angka)",
@@ -951,7 +1026,8 @@ exports.resubmit = async (req, res, next) => {
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: "Pengajuan disposisi pembimbing status is not eligible for resubmit",
+        message:
+          "Pengajuan disposisi pembimbing status is not eligible for resubmit",
       });
     }
 
@@ -991,7 +1067,9 @@ exports.resubmit = async (req, res, next) => {
     sets.push("syarat_krs = ?");
     params.push(toBit(syaratKrs, currentRow.syarat_krs ?? 0));
     sets.push("syarat_metodologi_nilai_min_c = ?");
-    params.push(toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0));
+    params.push(
+      toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0),
+    );
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
     sets.push("disposisi_at = NULL");
@@ -1029,30 +1107,40 @@ exports.resubmit = async (req, res, next) => {
     const resubDocData = resubDocDataRows[0] ?? {};
 
     assertSignatures([
-      { role: "Mahasiswa", nama: resubDocData.nama_mahasiswa, signatureImage: resubDocData.signature_image },
+      {
+        role: "Mahasiswa",
+        nama: resubDocData.nama_mahasiswa,
+        signatureImage: resubDocData.signature_image,
+      },
     ]);
 
-    const resubFormulirBase64 = await generateFormulirDoc({
-      npm,
-      namaMahasiswa: resubDocData.nama_mahasiswa,
-      programStudiNama: resubDocData.program_studi_nama,
-      noHp: resubDocData.no_hp,
-      sks: resubDocData.sks,
-      judulSkripsi: resubDocData.judul_skripsi,
-      pembimbing1Nama: resubDocData.pembimbing1_nama ?? resubDocData.pembimbing1_diajukan_nidn ?? "",
-      pembimbing2Nama: resubDocData.pembimbing2_nama ?? resubDocData.pembimbing2_diajukan_nidn ?? "",
-      perluSuratPengantar: Boolean(resubDocData.perlu_surat_pengantar),
-      namaPerusahaan: resubDocData.nama_perusahaan ?? null,
-      studentSignature: resubDocData.signature_image,
-      submittedAt: new Date(),
-    });
-    await upsertFileByType(
-      conn,
-      id,
-      "PENGAJUAN_DISPOSISI_PEMBIMBING",
-      resubFormulirBase64,
-      buildFormulirFileName(npm, resubDocData.nama_mahasiswa),
-    );
+    // const resubFormulirBase64 = await generateFormulirDoc({
+    //   npm,
+    //   namaMahasiswa: resubDocData.nama_mahasiswa,
+    //   programStudiNama: resubDocData.program_studi_nama,
+    //   noHp: resubDocData.no_hp,
+    //   sks: resubDocData.sks,
+    //   judulSkripsi: resubDocData.judul_skripsi,
+    //   pembimbing1Nama:
+    //     resubDocData.pembimbing1_nama ??
+    //     resubDocData.pembimbing1_diajukan_nidn ??
+    //     "",
+    //   pembimbing2Nama:
+    //     resubDocData.pembimbing2_nama ??
+    //     resubDocData.pembimbing2_diajukan_nidn ??
+    //     "",
+    //   perluSuratPengantar: Boolean(resubDocData.perlu_surat_pengantar),
+    //   namaPerusahaan: resubDocData.nama_perusahaan ?? null,
+    //   studentSignature: resubDocData.signature_image,
+    //   submittedAt: new Date(),
+    // });
+    // await upsertFileByType(
+    //   conn,
+    //   id,
+    //   "PENGAJUAN_DISPOSISI_PEMBIMBING",
+    //   resubFormulirBase64,
+    //   buildFormulirFileName(npm, resubDocData.nama_mahasiswa),
+    // );
 
     if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
       await upsertFileByType(

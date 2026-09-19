@@ -22,7 +22,9 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
     `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
     [nidn],
   );
-  return rows.map((r) => Number(r.id)).filter((id) => Number.isFinite(id) && id > 0);
+  return rows
+    .map((r) => Number(r.id))
+    .filter((id) => Number.isFinite(id) && id > 0);
 }
 
 const SELECT_COLS = `s.id, s.npm, s.judul, s.status, s.program_studi_id,
@@ -41,10 +43,15 @@ const SELECT_JOINS = `FROM skripsi s
 exports.getMySkripsi = async (req, res, next) => {
   try {
     if (req.user.userType !== "STUDENT") {
-      return res.status(403).json({ ok: false, message: "Only students can access this endpoint" });
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only students can access this endpoint" });
     }
     const npm = await getStudentNpm(req.user.id);
-    if (!npm) return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+    if (!npm)
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
 
     const [rows] = await db.query(
       `SELECT ${SELECT_COLS} ${SELECT_JOINS} WHERE s.npm = ? ORDER BY s.created_at DESC`,
@@ -59,10 +66,16 @@ exports.getMySkripsi = async (req, res, next) => {
 exports.getLecturerSkripsi = async (req, res, next) => {
   try {
     if (req.user.userType !== "LECTURER") {
-      return res.status(403).json({ ok: false, message: "Only lecturers can access this endpoint" });
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Only lecturers can access this endpoint",
+        });
     }
     const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+    if (!nidn)
+      return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
 
     const [rows] = await db.query(
       `SELECT ${SELECT_COLS} ${SELECT_JOINS}
@@ -79,14 +92,19 @@ exports.getLecturerSkripsi = async (req, res, next) => {
 exports.getKaprodiSkripsi = async (req, res, next) => {
   try {
     if (!req.user.hasRole("KAPRODI")) {
-      return res.status(403).json({ ok: false, message: "Only kaprodi can access this endpoint" });
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only kaprodi can access this endpoint" });
     }
     const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+    if (!nidn)
+      return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
 
     const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
     if (programStudiIds.length === 0) {
-      return res.status(403).json({ ok: false, message: "You are not assigned as Kaprodi" });
+      return res
+        .status(403)
+        .json({ ok: false, message: "You are not assigned as Kaprodi" });
     }
 
     const [rows] = await db.query(
@@ -104,7 +122,12 @@ exports.getKaprodiSkripsi = async (req, res, next) => {
 exports.getSekretariatSkripsi = async (req, res, next) => {
   try {
     if (!req.user.hasRole("SEKRETARIAT")) {
-      return res.status(403).json({ ok: false, message: "Only sekretariat can access this endpoint" });
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Only sekretariat can access this endpoint",
+        });
     }
     const VALID_STATUSES = ["IN_PROGRESS", "COMPLETED"];
     const statusParam = req.query?.status;

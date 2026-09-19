@@ -1,6 +1,19 @@
 const nodemailer = require("nodemailer");
 
-const BULAN_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const BULAN_ID = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
 
 function formatTanggalIndonesia(date) {
   return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
@@ -32,7 +45,16 @@ function createTransport() {
  * @param {string}  opts.tempat
  * @param {string}  opts.judulSkripsi
  */
-async function sendSuratUndangan({ recipients, suratBuffer, npm, namaMahasiswa, sidangDate, sidangTime, tempat, judulSkripsi }) {
+async function sendSuratUndangan({
+  recipients,
+  suratBuffer,
+  npm,
+  namaMahasiswa,
+  sidangDate,
+  sidangTime,
+  tempat,
+  judulSkripsi,
+}) {
   if (!recipients || recipients.length === 0) return;
 
   const transporter = createTransport();
@@ -101,9 +123,10 @@ async function sendSuratUndangan({ recipients, suratBuffer, npm, namaMahasiswa, 
     html,
     attachments: [
       {
-        filename: `Surat_Undangan_Sidang_${npm}.docx`,
+        filename: `Surat_Undangan_Sidang_${npm}.pdf`,
         content: suratBuffer,
-        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        contentType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       },
     ],
   });

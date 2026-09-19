@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Berita Acara Hasil Ujian Skripsi Komprehensif</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <img
+          class="masthead-logo"
+          src="{{logoUWDP}}"
+          alt="Logo Universitas Widya Dharma Pontianak"
+        />
+        <div class="masthead-text">
+          <div class="university">UNIVERSITAS</div>
+          <div class="university">WIDYA DHARMA PONTIANAK</div>
+          <div class="faculty">FAKULTAS TEKNOLOGI INFORMASI</div>
+          <div class="decree-number">SK MENRISTEKDIKTI NO. 784/KPT/I/2019</div>
+          <div class="address">
+            Jalan H.O.S. Cokroaminoto No. 445 Telp. 731966 – 742063. Fax. 739191
+          </div>
+          <div class="city">Pontianak, Kalbar</div>
+        </div>
+      </header>
+
+      <h1>BERITA ACARA HASIL UJIAN SKRIPSI KOMPREHENSIF</h1>
+
+      <p class="intro">
+        Pada hari ini {{hari}} Tanggal {{tanggalUjian}} Pukul {{waktu}} WIB,
+        telah dilaksanakan ujian oleh Majelis Penguji Skripsi/Komprehensif
+        terhadap :
+      </p>
+
+      <section class="student-details" aria-label="Data mahasiswa">
+        <div>
+          <span>Nama Mahasiswa</span><span>:</span
+          ><strong>{{namaMahasiswa}}</strong>
+        </div>
+        <div>
+          <span>Nomor Mahasiswa</span><span>:</span><strong>{{npm}}</strong>
+        </div>
+        <div>
+          <span>Program Studi</span><span>:</span
+          ><strong>{{programStudi}}</strong>
+        </div>
+        <div class="thesis-title">
+          <span>Judul Skripsi</span><span>:</span
+          ><strong>{{judulSkripsi}}</strong>
+        </div>
+        <div>
+          <span>Ujian Ke</span><span>:</span><strong>{{ujianKe}}</strong>
+        </div>
+        <div class="exam-score">
+          <span>Nilai Ujian</span><span>:</span>
+          <span><strong>{{nilaiUjian}}</strong>&nbsp;&nbsp;{{grade}}</span>
+        </div>
+      </section>
+
+      <div class="result">Yang bersangkutan dinyatakan :</div>
+      <div class="result-options">{{hasilUjianOptions}}</div>
+      <p class="closing">
+        Demikian Berita Acara ini dibuat dengan sebenar-benarnya.
+      </p>
+
+      <section class="document-date">
+        <div>Dibuat di: Pontianak</div>
+        <div>Pada Tanggal: {{tanggalDokumen}}</div>
+      </section>
+
+      <section class="notes">
+        <div>Catatan Majelis Penguji :</div>
+        <div class="notes-content">{{catatanMajelisPenguji}}</div>
+      </section>
+
+      <section class="examiner-panel">
+        <div class="examiner-heading">Majelis Penguji :</div>
+        <div class="examiner">
+          <span>1. Ketua, merangkap Penguji</span><span>: {{namaKetua}}</span>
+          <div class="signature-space">{{signatureKetua}}</div>
+        </div>
+        <div class="examiner">
+          <span>2. Sekretaris, merangkap Penguji</span
+          ><span>: {{namaSekretaris}}</span>
+          <div class="signature-space">{{signatureSekretaris}}</div>
+        </div>
+        <div class="examiner">
+          <span>3. Penguji Utama</span><span>: {{namaPengujiUtama}}</span>
+          <div class="signature-space">{{signaturePengujiUtama}}</div>
+        </div>
+        <div class="examiner">
+          <span>4. Anggota Penguji</span><span>: {{namaAnggotaPenguji}}</span>
+          <div class="signature-space">{{signatureAnggotaPenguji}}</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

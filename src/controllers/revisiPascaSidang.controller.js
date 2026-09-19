@@ -3,6 +3,12 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
+const {
+  generateHalamanPengesahanMajelisPengujiFTI,
+} = require("../services/generateHalamanPengesahanMajelisPengujiFTI");
+const {
+  generateHalamanPengesahanDekanFTI,
+} = require("../services/generateHalamanPengesahanDekanFTI");
 
 const BULAN_ID = [
   "Januari",
@@ -221,31 +227,48 @@ async function generateHalamanPengesahanMajelisDoc(conn, sidangRow) {
     { role: "Penguji 2", nama: sidangRow.penguji2_nama, signatureImage: sigPg2 },
   ]);
 
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_halaman_pengesahan_majelis_penguji.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches: {
-      judul_skripsi: textPatch(sidangRow.judul_skripsi),
-      nama_mahasiswa: textPatch(sidangRow.nama_mahasiswa),
-      npm: textPatch(sidangRow.npm),
-      tanggal_sidang: textPatch(tanggalStr),
-      ttd_mahasiswa: signaturePatch(sigMhs),
-      nama_pembimbing1: textPatch(sidangRow.pembimbing1_nama),
-      ttd_pembimbing1: signaturePatch(sig1),
-      nama_pembimbing2: textPatch(sidangRow.pembimbing2_nama),
-      ttd_pembimbing2: signaturePatch(sig2),
-      nama_penguji1: textPatch(sidangRow.penguji1_nama),
-      ttd_penguji1: signaturePatch(sigPg1),
-      nama_penguji2: textPatch(sidangRow.penguji2_nama),
-      ttd_penguji2: signaturePatch(sigPg2),
+  // DOCX generator (legacy)
+  // const templatePath = path.join(
+  //   __dirname,
+  //   "../templates/template_halaman_pengesahan_majelis_penguji.docx",
+  // );
+  // const templateBuffer = await readFile(templatePath);
+  // const outputBuffer = await patchDocument({
+  //   outputType: "nodebuffer",
+  //   data: templateBuffer,
+  //   patches: {
+  //     judul_skripsi: textPatch(sidangRow.judul_skripsi),
+  //     nama_mahasiswa: textPatch(sidangRow.nama_mahasiswa),
+  //     npm: textPatch(sidangRow.npm),
+  //     tanggal_sidang: textPatch(tanggalStr),
+  //     ttd_mahasiswa: signaturePatch(sigMhs),
+  //     nama_pembimbing1: textPatch(sidangRow.pembimbing1_nama),
+  //     ttd_pembimbing1: signaturePatch(sig1),
+  //     nama_pembimbing2: textPatch(sidangRow.pembimbing2_nama),
+  //     ttd_pembimbing2: signaturePatch(sig2),
+  //     nama_penguji1: textPatch(sidangRow.penguji1_nama),
+  //     ttd_penguji1: signaturePatch(sigPg1),
+  //     nama_penguji2: textPatch(sidangRow.penguji2_nama),
+  //     ttd_penguji2: signaturePatch(sigPg2),
+  //   },
+  // });
+  // return outputBuffer;
+
+  return generateHalamanPengesahanMajelisPengujiFTI({
+    mahasiswa: {
+      nama: sidangRow.nama_mahasiswa,
+      npm: sidangRow.npm,
+      judulSkripsi: sidangRow.judul_skripsi,
+      signatureBase64: sigMhs,
+    },
+    tanggalSidang: tanggalStr,
+    majelisPenguji: {
+      ketua: { nama: sidangRow.pembimbing1_nama, signatureBase64: sig1 },
+      sekretaris: { nama: sidangRow.pembimbing2_nama, signatureBase64: sig2 },
+      pengujiUtama: { nama: sidangRow.penguji1_nama, signatureBase64: sigPg1 },
+      anggotaPenguji: { nama: sidangRow.penguji2_nama, signatureBase64: sigPg2 },
     },
   });
-  return outputBuffer;
 }
 
 async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
@@ -280,30 +303,47 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     { role: "Dekan", nama: dekanNama, signatureImage: sigDekan },
   ]);
 
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_halaman_pengesahan_dekan.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches: {
-      judul_skripsi: textPatch(sidangRow.judul_skripsi),
-      nama_mahasiswa: textPatch(sidangRow.nama_mahasiswa),
-      npm: textPatch(sidangRow.npm),
-      ttd_mahasiswa: signaturePatch(sigMhs),
-      nama_pembimbing1: textPatch(sidangRow.pembimbing1_nama),
-      ttd_pembimbing1: signaturePatch(sig1),
-      nama_pembimbing2: textPatch(sidangRow.pembimbing2_nama),
-      ttd_pembimbing2: signaturePatch(sig2),
-      nama_dekan: textPatch(dekanNama),
-      ttd_dekan: signaturePatch(sigDekan),
-      prodi: textPatch((sidangRow.program_studi_nama ?? "").toUpperCase()),
-      tahun_penulisan: textPatch(String(tahun)),
+  // DOCX generator (legacy)
+  // const templatePath = path.join(
+  //   __dirname,
+  //   "../templates/template_halaman_pengesahan_dekan.docx",
+  // );
+  // const templateBuffer = await readFile(templatePath);
+  // const outputBuffer = await patchDocument({
+  //   outputType: "nodebuffer",
+  //   data: templateBuffer,
+  //   patches: {
+  //     judul_skripsi: textPatch(sidangRow.judul_skripsi),
+  //     nama_mahasiswa: textPatch(sidangRow.nama_mahasiswa),
+  //     npm: textPatch(sidangRow.npm),
+  //     ttd_mahasiswa: signaturePatch(sigMhs),
+  //     nama_pembimbing1: textPatch(sidangRow.pembimbing1_nama),
+  //     ttd_pembimbing1: signaturePatch(sig1),
+  //     nama_pembimbing2: textPatch(sidangRow.pembimbing2_nama),
+  //     ttd_pembimbing2: signaturePatch(sig2),
+  //     nama_dekan: textPatch(dekanNama),
+  //     ttd_dekan: signaturePatch(sigDekan),
+  //     prodi: textPatch((sidangRow.program_studi_nama ?? "").toUpperCase()),
+  //     tahun_penulisan: textPatch(String(tahun)),
+  //   },
+  // });
+  // return outputBuffer;
+
+  return generateHalamanPengesahanDekanFTI({
+    mahasiswa: {
+      nama: sidangRow.nama_mahasiswa,
+      npm: sidangRow.npm,
+      judulSkripsi: sidangRow.judul_skripsi,
+      signatureBase64: sigMhs,
     },
+    pembimbing: {
+      pertama: { nama: sidangRow.pembimbing1_nama, signatureBase64: sig1 },
+      kedua: { nama: sidangRow.pembimbing2_nama, signatureBase64: sig2 },
+    },
+    dekan: { nama: dekanNama, signatureBase64: sigDekan },
+    programStudi: (sidangRow.program_studi_nama ?? "").toUpperCase(),
+    tahunPenulisan: String(tahun),
   });
-  return outputBuffer;
 }
 
 // POST /revisi-pasca-sidang/:skripsiId/init
@@ -879,8 +919,8 @@ exports.reviewRevisi = async (req, res, next) => {
              ON DUPLICATE KEY UPDATE file_name = VALUES(file_name), file_content = VALUES(file_content)`,
             [
               revisi.id,
-              `Halaman_Pengesahan_Majelis_Penguji_${revisi.mahasiswa_npm}.docx`,
-              majelisBuffer.toString("base64"),
+              `Halaman_Pengesahan_Majelis_Penguji_${revisi.mahasiswa_npm}.pdf`,
+              Buffer.from(majelisBuffer).toString("base64"),
             ],
           );
 
@@ -894,8 +934,8 @@ exports.reviewRevisi = async (req, res, next) => {
              ON DUPLICATE KEY UPDATE file_name = VALUES(file_name), file_content = VALUES(file_content)`,
             [
               revisi.id,
-              `Halaman_Pengesahan_Dekan_${revisi.mahasiswa_npm}.docx`,
-              dekanBuffer.toString("base64"),
+              `Halaman_Pengesahan_Dekan_${revisi.mahasiswa_npm}.pdf`,
+              Buffer.from(dekanBuffer).toString("base64"),
             ],
           );
         }

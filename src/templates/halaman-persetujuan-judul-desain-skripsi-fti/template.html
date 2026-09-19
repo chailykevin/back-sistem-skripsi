@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Halaman Persetujuan Judul Desain Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>{{judulSkripsi}}</h1>
+      <div class="design-title">DESAIN SKRIPSI</div>
+
+      <section class="student-approval">
+        <div class="signature-space">{{signatureMahasiswa}}</div>
+        <div class="signature-name">{{namaMahasiswa}}</div>
+        <div>NPM: <strong>{{npm}}</strong></div>
+      </section>
+
+      <section class="supervisor-approval">
+        <div class="approval-label">Disetujui Oleh:</div>
+        <div class="supervisor-grid">
+          <div>
+            <div>Pembimbing Pertama,</div>
+            <div class="signature-space">{{signaturePembimbingPertama}}</div>
+            <div class="signature-name">{{namaPembimbingPertama}}</div>
+          </div>
+          <div>
+            <div>Pembimbing Kedua,</div>
+            <div class="signature-space">{{signaturePembimbingKedua}}</div>
+            <div class="signature-name">{{namaPembimbingKedua}}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="head-approval">
+        <div>Mengetahui:</div>
+        <div>Ketua Program Studi {{programStudi}}</div>
+        <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+        <div class="signature-name">{{namaKetuaProgramStudi}}</div>
+      </section>
+
+      <footer>
+        <div>PROGRAM STUDI {{programStudiFooter}}</div>
+        <div>FAKULTAS TEKNOLOGI INFORMASI</div>
+        <div>UNIVERSITAS WIDYA DHARMA PONTIANAK</div>
+        <div>{{tahun}}</div>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,118 @@
+/* Source DOCX: A4 (210 × 297 mm), 30 mm Word margins, no masthead. */
+@page {
+  size: A4;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 12pt;
+}
+.page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 30mm;
+  text-align: center;
+}
+.thesis {
+  margin-top: 0.5in;
+  line-height: 1.3;
+}
+.thesis-title {
+  margin-bottom: 0.33in;
+  font-size: 14pt;
+  font-weight: bold;
+}
+.juridical-title {
+  font-size: 12pt;
+}
+.student {
+  margin-top: 0.25in;
+  line-height: 1.25;
+}
+.student-signature {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 45mm;
+  height: 24mm;
+  margin: 0 auto;
+}
+.student-signature img {
+  max-width: 42mm;
+  max-height: 22mm;
+  object-fit: contain;
+}
+.student-name,
+.student-npm {
+  font-size: 14pt;
+  font-weight: bold;
+}
+.student-name {
+  text-decoration: underline;
+}
+.approvals {
+  margin-top: 0.33in;
+  line-height: 1.25;
+}
+.approval-label {
+  margin-bottom: 0.2in;
+}
+.supervisor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  text-align: left;
+}
+.supervisor-grid > div {
+  min-height: 0.9in;
+}
+.supervisor-grid > div:last-child {
+  text-align: right;
+}
+.supervisor-signature,
+.dean-signature {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 0.42in;
+  margin-top: 10pt;
+}
+.supervisor-signature {
+  justify-content: flex-start;
+}
+.supervisor-grid > div:last-child .supervisor-signature {
+  justify-content: flex-end;
+}
+.supervisor-name,
+.dean-name {
+  font-weight: bold;
+  text-decoration: underline;
+}
+.dean {
+  margin-top: 0.42in;
+  line-height: 1.25;
+}
+.dean-signature {
+  width: 40mm;
+  margin: 10pt auto 0;
+  height: 0.8in;
+}
+.signature-image {
+  max-width: 35mm;
+  max-height: 20mm;
+  object-fit: contain;
+}
+.institution {
+  margin-top: 0.5in;
+  font-size: 12pt;
+  font-weight: bold;
+  line-height: 1.3;
+}

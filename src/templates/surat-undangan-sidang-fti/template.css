@@ -1,0 +1,13 @@
+@page { size: 8.5in 13in; margin: 0; }
+* { box-sizing: border-box; } html, body { margin: 0; padding: 0; }
+body { color: #000; font-family: "Times New Roman", serif; font-size: 12pt; }
+.page { position: relative; width: 8.5in; min-height: 13in; padding: 45mm 20mm 12mm 18mm; }
+.masthead { position: absolute; top: 8mm; left: 18mm; right: 20mm; border-bottom: 3px double #000; padding-bottom: 2mm; text-align: center; }
+.masthead-logo { position: absolute; top: 0; left: 0; width: 31mm; height: 31mm; object-fit: contain; }
+.masthead-text { margin-left: 31mm; color: #800080; font-weight: bold; line-height: 1.03; }.masthead .university { font-size: 20pt; }.masthead .faculty { margin-top: 1mm; font-size: 16pt; }.masthead .decree-number { margin-top: 1mm; font-size: 10pt; }.masthead .address { margin-top: 1mm; font-size: 9pt; }.masthead .city { margin-top: 1mm; font-size: 10pt; }
+.letter-meta { margin-top: 0.13in; line-height: 1.15; }.letter-meta > div { display: grid; grid-template-columns: 0.55in 0.16in 2.75in 1fr; min-height: 0.23in; }.letter-meta > div:not(:first-child) { grid-template-columns: 0.55in 0.16in 1fr; }.letter-meta > div:first-child > span:last-child { text-align: right; }
+.recipients { margin: 0.14in 0; font-weight: bold; line-height: 1.15; }.recipients > div:nth-child(6) { margin-top: 0.08in; }.recipient-city { margin-left: 0.18in; }
+p { margin: 0.1in 0; line-height: 1.18; text-align: justify; }
+.details > div { display: grid; grid-template-columns: 1.55in 0.18in 1fr; min-height: 0.25in; line-height: 1.15; }.details .title-row { min-height: 0.42in; }.exam-details { margin-top: -0.03in; }
+.signing { width: 2.6in; margin: 0.12in 0 0 auto; line-height: 1.15; }.signature-space { display: flex; align-items: center; justify-content: center; width: 2in; height: 0.6in; }.signature-image { max-width: 1.8in; max-height: 0.55in; object-fit: contain; }.signing strong { display: block; text-decoration: underline; }
+footer { margin-top: 0.12in; font-size: 10pt; line-height: 1.15; }.copy-heading { font-weight: bold; text-decoration: underline; }.dress-code { margin-top: 0.1in; }

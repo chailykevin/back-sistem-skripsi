@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Form Pengajuan Judul Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>FORM PENGAJUAN JUDUL SKRIPSI</h1>
+
+      <section class="application-details" aria-label="Data pengajuan">
+        <div><span>NPM</span><span>:</span><span>{{npm}}</span></div>
+        <div><span>Nama</span><span>:</span><span>{{nama}}</span></div>
+        <div>
+          <span>Program Studi</span><span>:</span><span>{{programStudi}}</span>
+        </div>
+        <div><span>No HP</span><span>:</span><span>{{nomorHp}}</span></div>
+        <div>
+          <span>SKS yang telah diperoleh</span><span>:</span
+          ><span>{{sksDiperoleh}} SKS</span>
+        </div>
+        <div>
+          <span>Judul yang diajukan</span><span>:</span
+          ><span>{{judulDiajukan}}</span>
+        </div>
+        <div>
+          <span>Dosen Pembimbing Pertama</span><span>:</span
+          ><span>{{dosenPembimbingPertama}}</span>
+        </div>
+        <div>
+          <span>Dosen Pembimbing Kedua</span><span>:</span
+          ><span>{{dosenPembimbingKedua}}</span>
+        </div>
+        <div class="referral-row">
+          <span>Perlu surat pengantar</span><span>:</span
+          ><span>{{perluSuratPengantar}}</span>
+        </div>
+        <div class="company-row">
+          <span>Nama Perusahaan</span><span>:</span><span>{{namaPerusahaan}}</span>
+        </div>
+        <div class="requirements-row">
+          <span>Syarat administratif yang telah dilengkapi/dipenuhi</span
+          ><span>:</span>
+          <ul>
+            {{syaratAdministratif}}
+          </ul>
+        </div>
+      </section>
+
+      <section class="submission" aria-label="Tanda tangan pemohon">
+        <div>Pontianak, {{tanggalPengajuan}}</div>
+        <div class="submission-signature">
+          <div>Pemohon,</div>
+          <div class="signature-space">{{signaturePemohon}}</div>
+          <div class="signature-name">{{namaPemohon}}</div>
+        </div>
+      </section>
+
+      <section class="disposition" aria-label="Disposisi ketua program studi">
+        <h2>DISPOSISI KETUA PROGRAM STUDI {{programStudiDisposisi}}</h2>
+        <div class="disposition-details">
+          <div>
+            <span>Tanggal Disposisi</span><span>:</span
+            ><span>{{tanggalDisposisi}}</span>
+          </div>
+          <div>
+            <span>Keputusan</span><span>:</span><span>{{keputusan}}</span>
+          </div>
+          <div>
+            <span>Dosen Pembimbing Pertama</span><span>:</span
+            ><span>{{dosenPembimbingPertamaDisposisi}}</span>
+          </div>
+          <div>
+            <span>Dosen Pembimbing Kedua</span><span>:</span
+            ><span>{{dosenPembimbingKeduaDisposisi}}</span>
+          </div>
+          <div><span>Catatan</span><span>:</span><span>{{catatan}}</span></div>
+        </div>
+        <div class="head-approval">
+          <div>Disetujui oleh:</div>
+          <div>Ketua Program Studi</div>
+          <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+          <div class="signature-name">{{namaKetuaProgramStudi}}</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,150 @@
+@page {
+  size: 8.5in 14in;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 10pt;
+}
+.page {
+  position: relative;
+  width: 8.5in;
+  min-height: 14in;
+  padding: 50mm 20mm 25.4mm 18mm;
+}
+.masthead {
+  position: absolute;
+  top: 8mm;
+  left: 18mm;
+  right: 20mm;
+  border-bottom: 3px double #000;
+  padding-bottom: 2mm;
+  text-align: center;
+}
+.masthead-logo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 31mm;
+  height: 31mm;
+  object-fit: contain;
+}
+.masthead-text {
+  font-weight: bold;
+  line-height: 1.03;
+  color: #800080;
+  margin-left: 31mm;
+}
+.masthead .university {
+  font-size: 20pt;
+}
+.masthead .faculty {
+  margin-top: 1mm;
+  font-size: 16pt;
+}
+.masthead .decree-number {
+  margin-top: 1mm;
+  font-size: 10pt;
+}
+.masthead .address {
+  margin-top: 1mm;
+  font-size: 9pt;
+}
+.masthead .city {
+  margin-top: 1mm;
+  font-size: 10pt;
+}
+header {
+  text-align: center;
+}
+header h1 {
+  text-decoration: underline;
+}
+h1 {
+  margin: 0;
+  font-size: 20pt;
+  font-weight: normal;
+}
+.letter-number {
+  font-size: 12pt;
+}
+.about {
+  margin-top: 7mm;
+  font-size: 10pt;
+  font-weight: bold;
+}
+.subject {
+  margin-top: 4mm;
+  font-size: 12pt;
+  font-weight: bold;
+}
+.authority {
+  margin-top: 8mm;
+  font-size: 12pt;
+}
+.legal-basis {
+  margin-top: 3mm;
+  font-size: 10pt;
+  line-height: 1.1;
+}
+.legal-row {
+  display: grid;
+  grid-template-columns: 24mm 5mm 1fr;
+  margin-bottom: 1mm;
+  text-align: justify;
+}
+.legal-row.continuation {
+  margin-top: 0;
+}
+.decision {
+  margin-top: 4mm;
+  font-size: 11pt;
+  line-height: 1.1;
+}
+h2 {
+  margin: 0 0 4mm;
+  text-align: center;
+  font-size: 12pt;
+}
+.decision-row {
+  display: grid;
+  grid-template-columns: 24mm 5mm 1fr;
+  margin-bottom: 2mm;
+  text-align: justify;
+}
+.dean-approval {
+  width: 64mm;
+  margin: 5mm 0 0 auto;
+  font-size: 12pt;
+  line-height: 1.2;
+}
+.signature-space {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 35mm;
+  height: 15mm;
+  margin: 0 auto;
+}
+.signature-image {
+  max-width: 100%;
+  max-height: 100%;
+}
+.dean-name {
+  font-weight: bold;
+  text-align: center;
+}
+footer {
+  margin-top: 2mm;
+  font-size: 12pt;
+  line-height: 1.2;
+}

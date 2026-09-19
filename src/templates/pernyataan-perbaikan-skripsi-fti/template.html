@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Surat Pernyataan Perbaikan Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>SURAT PERNYATAAN PERBAIKAN SKRIPSI</h1>
+
+      <p>Yang bertanda tangan di bawah ini :</p>
+      <table class="identity-table">
+        <tbody>
+          <tr>
+            <td>Nama</td>
+            <td>:</td>
+            <td>{{namaMahasiswa}}</td>
+          </tr>
+          <tr>
+            <td>NPM</td>
+            <td>:</td>
+            <td>{{npm}}</td>
+          </tr>
+          <tr>
+            <td>Alamat</td>
+            <td>:</td>
+            <td>{{alamat}}</td>
+          </tr>
+          <tr>
+            <td>No HP</td>
+            <td>:</td>
+            <td>{{noHp}}</td>
+          </tr>
+          <tr>
+            <td>Judul Skripsi</td>
+            <td>:</td>
+            <td>{{judulSkripsi}}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="statement-heading">Menyatakan bahwa :</p>
+      <ol>
+        <li>
+          Saya siap menyelesaikan perbaikan-perbaikan skripsi yang diarahkan tim
+          penguji selambat-lambatnya 2 (dua) minggu setelah ujian skripsi
+          berakhir.
+        </li>
+        <li>
+          Apabila dalam tenggang waktu tersebut, saya tidak menyelesaikan
+          perbaikan dimaksud, saya akan mengajukan permohonan perpanjangan waktu
+          maksimal 1 (satu) minggu dan atas keterlambatan itu saya bersedia
+          dikenakan denda Rp 25.000,00/hari.
+        </li>
+        <li>
+          Apabila setelah batas waktu perpanjangan berakhir dan saya belum
+          menyelesaikan perbaikan skripsi, maka saya bersedia menerima
+          konsekuensi yang ditentukan oleh Fakultas Teknologi Informasi
+          Universitas Widya Dharma Pontianak.
+        </li>
+      </ol>
+      <p class="closing">
+        Demikian surat pernyataan ini saya buat dengan sebenar-benarnya, tanpa
+        tekanan atau paksaan dari pihak manapun.
+      </p>
+
+      <section class="signatures">
+        <div>
+          <div>Mengetahui,</div>
+          <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+          <strong class="signatory-name">{{namaKetuaProgramStudi}}</strong>
+          <div>Ketua Program Studi {{programStudi}}</div>
+        </div>
+        <div>
+          <div>Yang menyatakan,</div>
+          <div class="signature-space">{{signatureMahasiswa}}</div>
+          <strong class="signatory-name">{{namaMahasiswa}}</strong>
+          <div>{{npm}}</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

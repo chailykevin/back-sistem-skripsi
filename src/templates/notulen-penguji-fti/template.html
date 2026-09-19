@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="id">
+  <head><meta charset="UTF-8" /><title>Notulen Sidang Skripsi</title></head>
+  <body>
+    <main class="page">
+      <header class="simple-header">
+        <img src="{{logoFTI}}" alt="Logo Fakultas Teknologi Informasi" />
+        <div><div>Universitas Widya Dharma Pontianak</div><div>Fakultas Teknologi Informasi</div></div>
+      </header>
+      <h1>NOTULEN SIDANG SKRIPSI</h1>
+      <section class="details">
+        <div><span>NPM</span><span>:</span><span>{{npm}}</span></div>
+        <div><span>Nama</span><span>:</span><span>{{namaMahasiswa}}</span></div>
+        <div><span>Program Studi</span><span>:</span><span>{{programStudi}}</span></div>
+        <div class="title-row"><span>Judul Skripsi</span><span>:</span><span>{{judulSkripsi}}</span></div>
+      </section>
+      <section class="details second-details">
+        <div><span>Dosen Pembimbing Pertama</span><span>:</span><span>{{namaPembimbingPertama}}</span></div>
+        <div><span>Dosen Pembimbing Kedua</span><span>:</span><span>{{namaPembimbingKedua}}</span></div>
+        <div><span>Tanggal Sidang</span><span>:</span><span>{{tanggalSidang}}</span></div>
+        <div><span>Hasil Sidang</span><span>:</span><span>{{hasilSidang}}</span></div>
+      </section>
+      <section class="notes"><div>Notulen {{role}} :</div><div class="notes-content">{{note}}</div></section>
+      <section class="signing"><div>{{role}},</div><div class="signature-space">{{signature}}</div><strong>{{namaPenguji}}</strong></section>
+    </main>
+  </body>
+</html>

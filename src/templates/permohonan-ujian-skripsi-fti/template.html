@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Permohonan Ujian Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <section class="recipient">
+        <div>Pontianak,<span class="dynamic-value">{{tanggal}}</span></div>
+        <div class="recipient-gap">Kepada</div>
+        <div>Yth. Ketua Program Studi</div>
+        <div>Fakultas Teknologi Informasi</div>
+        <div>Universitas Widya Dharma Pontianak</div>
+        <div>Di Pontianak</div>
+      </section>
+
+      <h1>Perihal : Permohonan Ujian Skripsi/Komprehensif</h1>
+      <p>Saya yang bertandatangan di bawah ini :</p>
+      <section class="biodata">
+        <div><span>Nama</span><span>:</span><span class="dynamic-value">{{namaMahasiswa}}</span></div>
+        <div><span>N P M</span><span>:</span><span class="dynamic-value">{{npm}}</span></div>
+        <div><span>Tempat/Tgl. Lahir</span><span>:</span><span class="dynamic-value">{{tempatTanggalLahir}}</span></div>
+        <div><span>Program Studi</span><span>:</span><span class="dynamic-value">{{programStudi}}</span></div>
+        <div><span>Tahun Masuk</span><span>:</span><span class="dynamic-value">{{tahunMasuk}}</span></div>
+        <div><span>Alamat</span><span>:</span><span class="dynamic-value">{{alamat}}</span></div>
+        <div><span>No. HP</span><span>:</span><span class="dynamic-value">{{noHp}}</span></div>
+        <div><span>No. WA</span><span>:</span><span class="dynamic-value">{{noWa}}</span></div>
+        <div><span>Status</span><span>:</span><span class="dynamic-value">{{status}}</span></div>
+      </section>
+
+      <p class="thesis-intro">
+        Berhubung saya telah menyelesaikan skripsi dengan judul :
+      </p>
+      <p class="thesis-title"><span class="dynamic-value">{{judulSkripsi}}</span></p>
+      <p>
+        Maka dengan ini saya mengajukan permohonan untuk menempuh ujian
+        <span class="underlined">skripsi/komprehensif</span> untuk kali ke
+        <span class="dynamic-value">{{ujianKe}}</span>.
+      </p>
+      <p>Sebagai bahan pertimbangan saya lampirkan :</p>
+      <ol class="requirements">
+        <li>
+          Persyaratan Akademik
+          <ol>
+            <li><div class="requirement-value"><span>Indeks Prestasi Kumulatif</span><span>:</span><span class="underlined dynamic-value">{{ipk}}</span></div></li>
+            <li><div class="requirement-value"><span>S K S Kumulatif</span><span>:</span><span class="underlined dynamic-value">{{sks}}</span></div></li>
+            <li>Seluruh mata kuliah yang telah lulus.</li>
+          </ol>
+        </li>
+        <li>Kelengkapan Rekapitulasi Administrasi Akademik Terlampir.</li>
+      </ol>
+      <p>
+        Demikian Surat Permohonan ini saya sampaikan, atas perhatiannya saya
+        ucapkan terima kasih.
+      </p>
+
+      <section class="signatures">
+        <div>
+          <div>Mengetahui,</div>
+          <div>Ketua Program Studi</div>
+          <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+          <strong class="dynamic-value">{{namaKetuaProgramStudi}}</strong>
+        </div>
+        <div>
+          <div>Hormat saya,</div>
+          <div>Pemohon,</div>
+          <div class="signature-space">{{signatureMahasiswa}}</div>
+          <strong class="dynamic-value">{{namaMahasiswa}}</strong>
+          <div>NPM:<span class="dynamic-value">{{npm}}</span></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

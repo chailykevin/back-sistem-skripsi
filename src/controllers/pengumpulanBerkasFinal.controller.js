@@ -5,10 +5,23 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
+const {
+  generateSuratKeteranganPenyerahanSkripsiFTI,
+} = require("../services/generateSuratKeteranganPenyerahanSkripsiFTI");
 
 const BULAN_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
 ];
 
 const RECIPIENT_ROLES = [
@@ -68,7 +81,9 @@ function signaturePatch(signatureValue) {
   if (!buf) return textPatch("");
   return {
     type: PatchType.PARAGRAPH,
-    children: [new ImageRun({ data: buf, transformation: { width: 100, height: 50 } })],
+    children: [
+      new ImageRun({ data: buf, transformation: { width: 100, height: 50 } }),
+    ],
   };
 }
 
@@ -189,7 +204,15 @@ async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
   return row ?? null;
 }
 
-async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sekprodiSig, namaSekprodi, requireSekprodiSig = false) {
+async function generateSuratDoc(
+  conn,
+  pengumpulan,
+  sidangRow,
+  confirmations,
+  sekprodiSig,
+  namaSekprodi,
+  requireSekprodiSig = false,
+) {
   const [mhsRow] = await conn.query(
     `SELECT m.nama, m.npm, psk.no_hp
      FROM mahasiswa m
@@ -250,7 +273,11 @@ async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sek
   ]);
 
   assertSignatures([
-    { role: "Mahasiswa", nama: mhs.nama ?? sidangRow?.nama_mahasiswa, signatureImage: sigMhs },
+    {
+      role: "Mahasiswa",
+      nama: mhs.nama ?? sidangRow?.nama_mahasiswa,
+      signatureImage: sigMhs,
+    },
     { role: "Perpustakaan", signatureImage: perpusSig },
     { role: "LPPM", signatureImage: lppmSig },
     { role: "Pembimbing 1", nama: namaPb1, signatureImage: sigPb1 },
@@ -258,59 +285,83 @@ async function generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sek
     { role: "Penguji 1", nama: namaPg1, signatureImage: sigPg1 },
     { role: "Penguji 2", nama: namaPg2, signatureImage: sigPg2 },
     ...(requireSekprodiSig
-      ? [{ role: "Sekretaris Prodi", nama: namaSekprodi, signatureImage: sekprodiSig }]
+      ? [
+          {
+            role: "Sekretaris Prodi",
+            nama: namaSekprodi,
+            signatureImage: sekprodiSig,
+          },
+        ]
       : []),
   ]);
 
   const tanggalDibuat = formatTanggal(new Date());
 
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_surat_keterangan_penyerahan_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
+  // DOCX generator (legacy)
+  // const templatePath = path.join(
+  //   __dirname,
+  //   "../templates/template_surat_keterangan_penyerahan_skripsi.docx",
+  // );
+  // const templateBuffer = await readFile(templatePath);
+  // const outputBuffer = await patchDocument({
+  //   outputType: "nodebuffer",
+  //   data: templateBuffer,
+  //   patches: {
+  //     nama_mahasiswa: textPatch(mhs.nama ?? sidangRow?.nama_mahasiswa ?? ""),
+  //     npm: textPatch(pengumpulan.npm),
+  //     no_hp: textPatch(mhs.no_hp ?? ""),
+  //     prodi: textPatch(psRow?.prodi_nama ?? sidangRow?.program_studi_nama ?? ""),
+  //     judul_skripsi: textPatch(skripsiRow?.judul ?? sidangRow?.judul_skripsi ?? ""),
+  //     tanggal_terima_perpus: textPatch(confMap["PERPUSTAKAAN"]?.confirmed_at ? formatTanggal(confMap["PERPUSTAKAAN"].confirmed_at) : ""),
+  //     tanggal_terima_lppm: textPatch(confMap["LPPM"]?.confirmed_at ? formatTanggal(confMap["LPPM"].confirmed_at) : ""),
+  //     tanggal_terima_pembimbing1: textPatch(confMap["PEMBIMBING_1"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_1"].confirmed_at) : ""),
+  //     tanggal_terima_pembimbing2: textPatch(confMap["PEMBIMBING_2"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_2"].confirmed_at) : ""),
+  //     tanggal_terima_penguji1: textPatch(confMap["PENGUJI_1"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_1"].confirmed_at) : ""),
+  //     tanggal_terima_penguji2: textPatch(confMap["PENGUJI_2"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_2"].confirmed_at) : ""),
+  //     ttd_perpustakaan: signaturePatch(perpusSig),
+  //     ttd_lppm: signaturePatch(lppmSig),
+  //     ttd_pembimbing1: signaturePatch(sigPb1),
+  //     ttd_pembimbing2: signaturePatch(sigPb2),
+  //     ttd_penguji1: signaturePatch(sigPg1),
+  //     ttd_penguji2: signaturePatch(sigPg2),
+  //     ttd_mahasiswa: signaturePatch(sigMhs),
+  //     ttd_sekprodi: sekprodiSig ? signaturePatch(sekprodiSig) : textPatch(""),
+  //     nama_sekprodi: textPatch(namaSekprodi ?? ""),
+  //     tanggal_dibuat: textPatch(tanggalDibuat),
+  //   },
+  // });
+  // return outputBuffer;
 
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches: {
-      nama_mahasiswa: textPatch(mhs.nama ?? sidangRow?.nama_mahasiswa ?? ""),
-      npm: textPatch(pengumpulan.npm),
-      no_hp: textPatch(mhs.no_hp ?? ""),
-      prodi: textPatch(psRow?.prodi_nama ?? sidangRow?.program_studi_nama ?? ""),
-      judul_skripsi: textPatch(skripsiRow?.judul ?? sidangRow?.judul_skripsi ?? ""),
-      tanggal_terima_perpus: textPatch(
-        confMap["PERPUSTAKAAN"]?.confirmed_at ? formatTanggal(confMap["PERPUSTAKAAN"].confirmed_at) : "",
-      ),
-      tanggal_terima_lppm: textPatch(
-        confMap["LPPM"]?.confirmed_at ? formatTanggal(confMap["LPPM"].confirmed_at) : "",
-      ),
-      tanggal_terima_pembimbing1: textPatch(
-        confMap["PEMBIMBING_1"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_1"].confirmed_at) : "",
-      ),
-      tanggal_terima_pembimbing2: textPatch(
-        confMap["PEMBIMBING_2"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_2"].confirmed_at) : "",
-      ),
-      tanggal_terima_penguji1: textPatch(
-        confMap["PENGUJI_1"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_1"].confirmed_at) : "",
-      ),
-      tanggal_terima_penguji2: textPatch(
-        confMap["PENGUJI_2"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_2"].confirmed_at) : "",
-      ),
-      ttd_perpustakaan: signaturePatch(perpusSig),
-      ttd_lppm: signaturePatch(lppmSig),
-      ttd_pembimbing1: signaturePatch(sigPb1),
-      ttd_pembimbing2: signaturePatch(sigPb2),
-      ttd_penguji1: signaturePatch(sigPg1),
-      ttd_penguji2: signaturePatch(sigPg2),
-      ttd_mahasiswa: signaturePatch(sigMhs),
-      ttd_sekprodi: sekprodiSig ? signaturePatch(sekprodiSig) : textPatch(""),
-      nama_sekprodi: textPatch(namaSekprodi ?? ""),
-      tanggal_dibuat: textPatch(tanggalDibuat),
-    },
+  const confirmationData = (role, signatureBase64) => ({
+    tanggal: confMap[role]?.confirmed_at
+      ? formatTanggal(confMap[role].confirmed_at)
+      : "",
+    signatureBase64,
   });
 
-  return outputBuffer;
+  return generateSuratKeteranganPenyerahanSkripsiFTI({
+    mahasiswa: {
+      nama: mhs.nama ?? sidangRow?.nama_mahasiswa ?? "",
+      npm: pengumpulan.npm,
+      nomorHp: mhs.no_hp ?? "",
+      programStudi: psRow?.prodi_nama ?? sidangRow?.program_studi_nama ?? "",
+      judulSkripsi: skripsiRow?.judul ?? sidangRow?.judul_skripsi ?? "",
+      signatureBase64: sigMhs,
+    },
+    penerimaan: {
+      perpustakaan: confirmationData("PERPUSTAKAAN", perpusSig),
+      lppm: confirmationData("LPPM", lppmSig),
+      pembimbingPertama: confirmationData("PEMBIMBING_1", sigPb1),
+      pembimbingKedua: confirmationData("PEMBIMBING_2", sigPb2),
+      pengujiUtama: confirmationData("PENGUJI_1", sigPg1),
+      anggotaPenguji: confirmationData("PENGUJI_2", sigPg2),
+    },
+    sekretarisProgramStudi: {
+      nama: namaSekprodi ?? "",
+      signatureBase64: sekprodiSig ?? null,
+    },
+    tanggalDibuat,
+  });
 }
 
 // POST /pengumpulan-berkas-final/:skripsiId/init
@@ -333,11 +384,15 @@ exports.initPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!skripsiRow) {
-      await conn.rollback(); txStarted = false;
-      return res.status(404).json({ ok: false, message: "Skripsi tidak ditemukan" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(404)
+        .json({ ok: false, message: "Skripsi tidak ditemukan" });
     }
     if (skripsiRow.npm !== npm) {
-      await conn.rollback(); txStarted = false;
+      await conn.rollback();
+      txStarted = false;
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -350,8 +405,11 @@ exports.initPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!revisiRow || !revisiRow.is_completed) {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Revisi pasca sidang belum selesai" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({ ok: false, message: "Revisi pasca sidang belum selesai" });
     }
 
     // Prerequisite: latest sidang must be LULUS
@@ -360,8 +418,11 @@ exports.initPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!latestSidang || latestSidang.hasil_sidang !== "LULUS") {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Sidang terakhir belum dinyatakan lulus" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({ ok: false, message: "Sidang terakhir belum dinyatakan lulus" });
     }
 
     await conn.query(
@@ -374,14 +435,26 @@ exports.initPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!row) {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Gagal menginisiasi pengumpulan berkas, silakan coba lagi" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({
+          ok: false,
+          message: "Gagal menginisiasi pengumpulan berkas, silakan coba lagi",
+        });
     }
 
-    await conn.commit(); txStarted = false;
-    return res.json({ ok: true, data: { id: row.id, status: row.status, is_completed: row.is_completed } });
+    await conn.commit();
+    txStarted = false;
+    return res.json({
+      ok: true,
+      data: { id: row.id, status: row.status, is_completed: row.is_completed },
+    });
   } catch (err) {
-    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
   } finally {
     conn.release();
@@ -402,10 +475,17 @@ exports.submitPengumpulan = async (req, res, next) => {
 
     const { fileSkripsi, artikelPenelitian } = req.body;
     if (
-      !fileSkripsi?.fileContent || !fileSkripsi?.fileName ||
-      !artikelPenelitian?.fileContent || !artikelPenelitian?.fileName
+      !fileSkripsi?.fileContent ||
+      !fileSkripsi?.fileName ||
+      !artikelPenelitian?.fileContent ||
+      !artikelPenelitian?.fileName
     ) {
-      return res.status(400).json({ ok: false, message: "fileSkripsi dan artikelPenelitian wajib diisi" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "fileSkripsi dan artikelPenelitian wajib diisi",
+        });
     }
 
     await conn.beginTransaction();
@@ -425,12 +505,18 @@ exports.submitPengumpulan = async (req, res, next) => {
       [skripsiId, npm],
     );
     if (!pengumpulan) {
-      await conn.rollback(); txStarted = false;
-      return res.status(404).json({ ok: false, message: "Pengumpulan berkas belum diinisiasi" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(404)
+        .json({ ok: false, message: "Pengumpulan berkas belum diinisiasi" });
     }
     if (pengumpulan.status === "COMPLETED") {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Pengumpulan sudah selesai" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({ ok: false, message: "Pengumpulan sudah selesai" });
     }
 
     // Upsert FILE_SKRIPSI
@@ -441,7 +527,12 @@ exports.submitPengumpulan = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, mime_type, file_content)
        VALUES (?, 'FILE_SKRIPSI', ?, ?, ?)`,
-      [pengumpulan.id, fileSkripsi.fileName, fileSkripsi.mimeType ?? null, fileSkripsi.fileContent],
+      [
+        pengumpulan.id,
+        fileSkripsi.fileName,
+        fileSkripsi.mimeType ?? null,
+        fileSkripsi.fileContent,
+      ],
     );
 
     // Upsert ARTIKEL_PENELITIAN
@@ -452,11 +543,19 @@ exports.submitPengumpulan = async (req, res, next) => {
     await conn.query(
       `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, mime_type, file_content)
        VALUES (?, 'ARTIKEL_PENELITIAN', ?, ?, ?)`,
-      [pengumpulan.id, artikelPenelitian.fileName, artikelPenelitian.mimeType ?? null, artikelPenelitian.fileContent],
+      [
+        pengumpulan.id,
+        artikelPenelitian.fileName,
+        artikelPenelitian.mimeType ?? null,
+        artikelPenelitian.fileContent,
+      ],
     );
 
     // Resolve user_ids for PERPUSTAKAAN_STAFF and LPPM
-    const perpustakaanUserId = await getUserIdByRole(conn, "PERPUSTAKAAN_STAFF");
+    const perpustakaanUserId = await getUserIdByRole(
+      conn,
+      "PERPUSTAKAAN_STAFF",
+    );
     const lppmUserId = await getUserIdByRole(conn, "LPPM");
 
     // Recreate confirmation rows on every submit
@@ -473,11 +572,11 @@ exports.submitPengumpulan = async (req, res, next) => {
     ]);
     const confirmRows = [
       { role: "PERPUSTAKAAN", userId: perpustakaanUserId },
-      { role: "LPPM",         userId: lppmUserId },
+      { role: "LPPM", userId: lppmUserId },
       { role: "PEMBIMBING_1", userId: pb1UserId },
       { role: "PEMBIMBING_2", userId: pb2UserId },
-      { role: "PENGUJI_1",    userId: pg1UserId },
-      { role: "PENGUJI_2",    userId: pg2UserId },
+      { role: "PENGUJI_1", userId: pg1UserId },
+      { role: "PENGUJI_2", userId: pg2UserId },
     ];
 
     for (const row of confirmRows) {
@@ -507,10 +606,16 @@ exports.submitPengumpulan = async (req, res, next) => {
       }
     }
 
-    await conn.commit(); txStarted = false;
-    return res.json({ ok: true, data: { id: pengumpulan.id, status: "SUBMITTED" } });
+    await conn.commit();
+    txStarted = false;
+    return res.json({
+      ok: true,
+      data: { id: pengumpulan.id, status: "SUBMITTED" },
+    });
   } catch (err) {
-    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
   } finally {
     conn.release();
@@ -547,12 +652,18 @@ exports.confirmPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!pengumpulan) {
-      await conn.rollback(); txStarted = false;
-      return res.status(404).json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(404)
+        .json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
     }
     if (pengumpulan.status !== "SUBMITTED") {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Berkas belum disubmit oleh mahasiswa" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({ ok: false, message: "Berkas belum disubmit oleh mahasiswa" });
     }
 
     // Determine which confirmation row this user matches
@@ -567,15 +678,22 @@ exports.confirmPengumpulan = async (req, res, next) => {
       const nidn = await getLecturerNidn(userId);
       if (nidn) {
         if (nidn === pengumpulan.pembimbing1_nidn) matchedRole = "PEMBIMBING_1";
-        else if (nidn === pengumpulan.pembimbing2_nidn) matchedRole = "PEMBIMBING_2";
+        else if (nidn === pengumpulan.pembimbing2_nidn)
+          matchedRole = "PEMBIMBING_2";
         else if (nidn === pengumpulan.penguji1_nidn) matchedRole = "PENGUJI_1";
         else if (nidn === pengumpulan.penguji2_nidn) matchedRole = "PENGUJI_2";
       }
     }
 
     if (!matchedRole) {
-      await conn.rollback(); txStarted = false;
-      return res.status(403).json({ ok: false, message: "Anda tidak termasuk penerima berkas ini" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Anda tidak termasuk penerima berkas ini",
+        });
     }
 
     const [[confRow]] = await conn.query(
@@ -585,12 +703,18 @@ exports.confirmPengumpulan = async (req, res, next) => {
       [pengumpulan.id, matchedRole],
     );
     if (!confRow) {
-      await conn.rollback(); txStarted = false;
-      return res.status(404).json({ ok: false, message: "Data konfirmasi tidak ditemukan" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(404)
+        .json({ ok: false, message: "Data konfirmasi tidak ditemukan" });
     }
     if (confRow.confirmed_at) {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Anda sudah mengkonfirmasi sebelumnya" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({ ok: false, message: "Anda sudah mengkonfirmasi sebelumnya" });
     }
 
     await conn.query(
@@ -629,7 +753,14 @@ exports.confirmPengumpulan = async (req, res, next) => {
       const sidangRow = sidangRows[0][0] ?? null;
 
       const pengumpulanFull = { ...pengumpulan };
-      const docBuffer = await generateSuratDoc(conn, pengumpulanFull, sidangRow, confirmations, null, "");
+      const docBuffer = await generateSuratDoc(
+        conn,
+        pengumpulanFull,
+        sidangRow,
+        confirmations,
+        null,
+        "",
+      );
 
       await conn.query(
         `DELETE FROM pengumpulan_berkas_final_files
@@ -638,8 +769,8 @@ exports.confirmPengumpulan = async (req, res, next) => {
       );
       await conn.query(
         `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, file_content)
-         VALUES (?, 'SURAT_PERNYATAAN_PENYERAHAN', 'surat_pernyataan_penyerahan_skripsi.docx', ?)`,
-        [pengumpulan.id, docBuffer.toString("base64")],
+         VALUES (?, 'SURAT_PERNYATAAN_PENYERAHAN', 'surat_pernyataan_penyerahan_skripsi.pdf', ?)`,
+        [pengumpulan.id, Buffer.from(docBuffer).toString("base64")],
       );
 
       await conn.query(
@@ -692,10 +823,16 @@ exports.confirmPengumpulan = async (req, res, next) => {
       }
     }
 
-    await conn.commit(); txStarted = false;
-    return res.json({ ok: true, data: { confirmed: Number(confirmed), total: Number(total) } });
+    await conn.commit();
+    txStarted = false;
+    return res.json({
+      ok: true,
+      data: { confirmed: Number(confirmed), total: Number(total) },
+    });
   } catch (err) {
-    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
   } finally {
     conn.release();
@@ -735,12 +872,21 @@ exports.signPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!pengumpulan) {
-      await conn.rollback(); txStarted = false;
-      return res.status(404).json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(404)
+        .json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
     }
     if (pengumpulan.status !== "WAITING_SIGNATURE") {
-      await conn.rollback(); txStarted = false;
-      return res.status(409).json({ ok: false, message: "Belum semua pihak mengkonfirmasi penerimaan" });
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({
+          ok: false,
+          message: "Belum semua pihak mengkonfirmasi penerimaan",
+        });
     }
 
     // Verify sekprodi belongs to this prodi
@@ -753,7 +899,8 @@ exports.signPengumpulan = async (req, res, next) => {
       [userId],
     );
     if (!sekprodiUserRow) {
-      await conn.rollback(); txStarted = false;
+      await conn.rollback();
+      txStarted = false;
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -762,9 +909,18 @@ exports.signPengumpulan = async (req, res, next) => {
         `SELECT sekprodi_nidn FROM program_studi WHERE id = ? LIMIT 1`,
         [pengumpulan.program_studi_id],
       );
-      if (psRow?.sekprodi_nidn && psRow.sekprodi_nidn !== sekprodiUserRow.nidn) {
-        await conn.rollback(); txStarted = false;
-        return res.status(403).json({ ok: false, message: "Anda bukan Sekretaris Prodi dari program studi ini" });
+      if (
+        psRow?.sekprodi_nidn &&
+        psRow.sekprodi_nidn !== sekprodiUserRow.nidn
+      ) {
+        await conn.rollback();
+        txStarted = false;
+        return res
+          .status(403)
+          .json({
+            ok: false,
+            message: "Anda bukan Sekretaris Prodi dari program studi ini",
+          });
       }
     }
 
@@ -799,13 +955,21 @@ exports.signPengumpulan = async (req, res, next) => {
     );
     const sidangRow = sidangRows[0][0] ?? null;
 
-    const docBuffer = await generateSuratDoc(conn, pengumpulan, sidangRow, confirmations, sekprodiSig, namaSekprodi, true);
+    const docBuffer = await generateSuratDoc(
+      conn,
+      pengumpulan,
+      sidangRow,
+      confirmations,
+      sekprodiSig,
+      namaSekprodi,
+      true,
+    );
 
     await conn.query(
       `UPDATE pengumpulan_berkas_final_files
-       SET file_content = ?, file_name = 'surat_pernyataan_penyerahan_skripsi.docx'
+       SET file_content = ?, file_name = 'surat_pernyataan_penyerahan_skripsi.pdf'
        WHERE pengumpulan_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYERAHAN'`,
-      [docBuffer.toString("base64"), pengumpulan.id],
+      [Buffer.from(docBuffer).toString("base64"), pengumpulan.id],
     );
 
     await conn.query(
@@ -825,10 +989,16 @@ exports.signPengumpulan = async (req, res, next) => {
       );
     }
 
-    await conn.commit(); txStarted = false;
-    return res.json({ ok: true, data: { status: "COMPLETED", is_completed: 1 } });
+    await conn.commit();
+    txStarted = false;
+    return res.json({
+      ok: true,
+      data: { status: "COMPLETED", is_completed: 1 },
+    });
   } catch (err) {
-    try { if (txStarted) await conn.rollback(); } catch (_) {}
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
     next(err);
   } finally {
     conn.release();
@@ -874,24 +1044,34 @@ exports.getPengumpulan = async (req, res, next) => {
       [skripsiId],
     );
     if (!pengumpulan) {
-      return res.status(404).json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
     }
 
     // Auth check
     const npm = await getStudentNpm(userId);
     const nidn = await getLecturerNidn(userId);
     const isStudent = npm && npm === pengumpulan.npm;
-    const isDosen = nidn && (
-      nidn === pengumpulan.pembimbing1_nidn ||
-      nidn === pengumpulan.pembimbing2_nidn ||
-      nidn === pengumpulan.penguji1_nidn ||
-      nidn === pengumpulan.penguji2_nidn
-    );
-    const isPerpustakaanOrLppm = userRoles.includes("PERPUSTAKAAN_STAFF") || userRoles.includes("LPPM");
+    const isDosen =
+      nidn &&
+      (nidn === pengumpulan.pembimbing1_nidn ||
+        nidn === pengumpulan.pembimbing2_nidn ||
+        nidn === pengumpulan.penguji1_nidn ||
+        nidn === pengumpulan.penguji2_nidn);
+    const isPerpustakaanOrLppm =
+      userRoles.includes("PERPUSTAKAAN_STAFF") || userRoles.includes("LPPM");
     const isSekretariatProdi = userRoles.includes("SEKPRODI");
-    const isPrivileged = userRoles.includes("SEKRETARIAT") || userRoles.includes("KAPRODI");
+    const isPrivileged =
+      userRoles.includes("SEKRETARIAT") || userRoles.includes("KAPRODI");
 
-    if (!isStudent && !isDosen && !isPerpustakaanOrLppm && !isSekretariatProdi && !isPrivileged) {
+    if (
+      !isStudent &&
+      !isDosen &&
+      !isPerpustakaanOrLppm &&
+      !isSekretariatProdi &&
+      !isPrivileged
+    ) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -938,12 +1118,13 @@ exports.getPengumpulan = async (req, res, next) => {
         confirmations: confirmations.map((c) => ({
           id: c.id,
           recipientRole: c.recipient_role,
-          nama: {
-            PEMBIMBING_1: pengumpulan.pembimbing1_nama,
-            PEMBIMBING_2: pengumpulan.pembimbing2_nama,
-            PENGUJI_1: pengumpulan.penguji1_nama,
-            PENGUJI_2: pengumpulan.penguji2_nama,
-          }[c.recipient_role] ?? null,
+          nama:
+            {
+              PEMBIMBING_1: pengumpulan.pembimbing1_nama,
+              PEMBIMBING_2: pengumpulan.pembimbing2_nama,
+              PENGUJI_1: pengumpulan.penguji1_nama,
+              PENGUJI_2: pengumpulan.penguji2_nama,
+            }[c.recipient_role] ?? null,
           userId: c.user_id,
           confirmedAt: c.confirmed_at,
         })),
@@ -955,7 +1136,11 @@ exports.getPengumpulan = async (req, res, next) => {
           createdAt: f.created_at,
         })),
         suratPenyerahan: suratFile
-          ? { id: suratFile.id, fileName: suratFile.file_name, createdAt: suratFile.created_at }
+          ? {
+              id: suratFile.id,
+              fileName: suratFile.file_name,
+              createdAt: suratFile.created_at,
+            }
           : null,
       },
     });
@@ -988,23 +1173,29 @@ exports.getFile = async (req, res, next) => {
        LIMIT 1`,
       [skripsiId],
     );
-    if (!pengumpulan) return res.status(404).json({ ok: false, message: "Tidak ditemukan" });
+    if (!pengumpulan)
+      return res.status(404).json({ ok: false, message: "Tidak ditemukan" });
 
     const npm = await getStudentNpm(userId);
     const nidn = await getLecturerNidn(userId);
     const isStudent = npm && npm === pengumpulan.npm;
-    const isDosen = nidn && (
-      nidn === pengumpulan.pembimbing1_nidn ||
-      nidn === pengumpulan.pembimbing2_nidn ||
-      nidn === pengumpulan.penguji1_nidn ||
-      nidn === pengumpulan.penguji2_nidn
-    );
-    const isAuthorized = isStudent || isDosen ||
-      userRoles.includes("PERPUSTAKAAN_STAFF") || userRoles.includes("LPPM") ||
+    const isDosen =
+      nidn &&
+      (nidn === pengumpulan.pembimbing1_nidn ||
+        nidn === pengumpulan.pembimbing2_nidn ||
+        nidn === pengumpulan.penguji1_nidn ||
+        nidn === pengumpulan.penguji2_nidn);
+    const isAuthorized =
+      isStudent ||
+      isDosen ||
+      userRoles.includes("PERPUSTAKAAN_STAFF") ||
+      userRoles.includes("LPPM") ||
       userRoles.includes("SEKPRODI") ||
-      userRoles.includes("SEKRETARIAT") || userRoles.includes("KAPRODI");
+      userRoles.includes("SEKRETARIAT") ||
+      userRoles.includes("KAPRODI");
 
-    if (!isAuthorized) return res.status(403).json({ ok: false, message: "Forbidden" });
+    if (!isAuthorized)
+      return res.status(403).json({ ok: false, message: "Forbidden" });
 
     const [[fileRow]] = await db.query(
       `SELECT file_content, file_name, mime_type
@@ -1013,7 +1204,10 @@ exports.getFile = async (req, res, next) => {
        LIMIT 1`,
       [pengumpulan.id, fileType],
     );
-    if (!fileRow) return res.status(404).json({ ok: false, message: "File tidak ditemukan" });
+    if (!fileRow)
+      return res
+        .status(404)
+        .json({ ok: false, message: "File tidak ditemukan" });
 
     return res.json({
       ok: true,
@@ -1066,7 +1260,9 @@ exports.listForLecturer = async (req, res, next) => {
       [nidn, nidn, nidn, nidn, callerUserId ?? null, nidn, nidn, nidn, nidn],
     );
 
-    const filtered = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
+    const filtered = statusFilter
+      ? rows.filter((r) => r.status === statusFilter)
+      : rows;
 
     return res.json({
       ok: true,
@@ -1130,7 +1326,9 @@ exports.listForSekretariatProdi = async (req, res, next) => {
     );
 
     const statusFilter = req.query.status;
-    const filtered = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
+    const filtered = statusFilter
+      ? rows.filter((r) => r.status === statusFilter)
+      : rows;
 
     return res.json({
       ok: true,
@@ -1162,7 +1360,12 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
-const VALID_PENGUMPULAN_STATUSES = ["DRAFT", "SUBMITTED", "WAITING_SIGNATURE", "COMPLETED"];
+const VALID_PENGUMPULAN_STATUSES = [
+  "DRAFT",
+  "SUBMITTED",
+  "WAITING_SIGNATURE",
+  "COMPLETED",
+];
 
 exports.getKaprodiPengumpulan = async (req, res, next) => {
   try {
@@ -1179,7 +1382,9 @@ exports.getKaprodiPengumpulan = async (req, res, next) => {
     }
 
     const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
+    const programStudiIds = nidn
+      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+      : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });
     }
@@ -1230,7 +1435,9 @@ async function listForInstitutionRole(roleCode, recipientRole, req, res, next) {
       [recipientRole],
     );
 
-    const filtered = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
+    const filtered = statusFilter
+      ? rows.filter((r) => r.status === statusFilter)
+      : rows;
 
     return res.json({
       ok: true,

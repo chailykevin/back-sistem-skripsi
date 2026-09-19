@@ -1,0 +1,23 @@
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { color: #000; font-family: "Times New Roman", serif; font-size: 12pt; line-height: 1.28; }
+.page { width: 210mm; min-height: 297mm; padding: 25.4mm; }
+h1 { margin: 0 0 8mm; font-size: 12pt; font-weight: 700; text-align: center; text-decoration: underline; }
+p { margin: 0 0 3.5mm; text-align: justify; }
+.recipient-table, .identity-table { border-collapse: collapse; }
+.recipient-table { margin: 0 0 6mm; }
+.recipient-table td, .identity-table td { padding: 0; vertical-align: top; }
+.recipient-table td:nth-child(1) { width: 12mm; }
+.recipient-table td:nth-child(2) { width: 6mm; }
+.identity-table { margin: 0 0 3.5mm; }
+.identity-table td:nth-child(1) { width: 28mm; }
+.identity-table td:nth-child(2) { width: 6mm; }
+ol { margin: 0 0 4mm; padding-left: 7mm; }
+li { margin-bottom: 2.5mm; padding-left: 1.5mm; text-align: justify; }
+.exception-note { margin: 0; padding-top: 1mm; text-indent: 0; }
+.bold-underline { font-weight: 700; text-decoration: underline; }
+.signature-block { width: 62mm; margin: 7mm 0 0 auto; text-align: left; }
+.signature-space { display: flex; align-items: center; justify-content: flex-start; height: 24mm; }
+.signature-image { max-width: 35mm; max-height: 22mm; }
+.signature-block strong { display: block; text-decoration: underline; }

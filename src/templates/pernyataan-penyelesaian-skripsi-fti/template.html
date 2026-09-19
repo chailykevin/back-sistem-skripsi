@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Surat Pernyataan Penyelesaian Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>SURAT PERNYATAAN PENYELESAIAN SKRIPSI</h1>
+
+      <p>Yang bertanda tangan di bawah ini :</p>
+      <table class="identity-table">
+        <tbody>
+          <tr>
+            <td>Nama</td>
+            <td>:</td>
+            <td>{{namaMahasiswa}}</td>
+          </tr>
+          <tr>
+            <td>NPM</td>
+            <td>:</td>
+            <td>{{npm}}</td>
+          </tr>
+          <tr>
+            <td>Alamat</td>
+            <td>:</td>
+            <td>{{alamat}}</td>
+          </tr>
+          <tr>
+            <td>No HP</td>
+            <td>:</td>
+            <td>{{noHp}}</td>
+          </tr>
+          <tr>
+            <td>Judul Skripsi</td>
+            <td>:</td>
+            <td>{{judulSkripsi}}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="statement-heading">Menyatakan bahwa :</p>
+      <ol>
+        <li>
+        Saya telah
+        <span class="italic-underline">membaca dan memahami</span> PROSEDUR
+        PENYUSUNAN DESAIN SKRIPSI DAN SKRIPSI yang terdapat dalam buku Pedoman
+        Penulisan Skripsi.
+        </li>
+        <li>
+        Saya siap untuk menyelesaikan skripsi dalam waktu 18 (Delapan Belas)
+        Bulan terhitung sejak SK Skripsi diterbitkan.
+        </li>
+        <li>
+        Apabila ternyata penulisan Skripsi saya
+        <span class="italic-underline"
+          >melebihi waktu yang sudah ditetapkan dengan alasan apapun</span
+        >, saya bersedia menerima konsekuensi topik dan judul skripsi yang telah
+        disetujui sebelumnya tidak dapat saya ajukan kembali.
+        </li>
+        <li>
+        Saya juga menyadari bahwa aturan-aturan yang dibuat diatas
+        <span class="bold-underline"
+          >bertujuan memacu saya untuk menyelesaikan Skripsi tepat pada
+          waktunya.</span
+        >
+        </li>
+      </ol>
+      <p class="closing">
+        Demikian surat pernyataan ini saya buat dengan sebenar-benarnya, tanpa
+        tekanan atau paksaan dari pihak manapun.
+      </p>
+
+      <section class="signatures">
+        <div>
+          <div>Mengetahui,</div>
+          <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+          <strong class="signatory-name">{{namaKetuaProgramStudi}}</strong>
+          <div>Ketua Program Studi {{programStudi}}</div>
+        </div>
+        <div>
+          <div>Yang menyatakan,</div>
+          <div class="signature-space">{{signatureMahasiswa}}</div>
+          <strong class="signatory-name">{{namaMahasiswa}}</strong>
+          <div>{{npm}}</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
