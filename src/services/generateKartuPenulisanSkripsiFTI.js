@@ -21,7 +21,7 @@ async function renderConsultationRows(rows) {
     await Promise.all(
       rowsToRender.map(
         async ({ tanggal, keterangan, parafBase64 }) => `
-    <tr><td>${escapeHtml(tanggal)}</td><td>${escapeHtml(keterangan)}</td><td>${await renderSignature(parafBase64, "Paraf")}</td></tr>`,
+    <tr><td>${escapeHtml(tanggal)}</td><td>${escapeHtml(keterangan)}</td><td>${await renderSignature(parafBase64, "Paraf", "signature-image", false)}</td></tr>`,
       ),
     )
   ).join("");

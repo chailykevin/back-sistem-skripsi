@@ -29,6 +29,7 @@ async function renderConsultationRows(rows) {
           signatureBase64,
           "Paraf reviewer konsultasi",
           "consultation-signature",
+          false,
         );
         return `
         <tr>

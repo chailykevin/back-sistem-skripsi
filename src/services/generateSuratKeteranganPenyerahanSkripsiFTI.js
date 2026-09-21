@@ -11,23 +11,38 @@ async function renderTemplate(template, data) {
       signature(
         penerimaan.perpustakaan.signatureBase64,
         "Tanda tangan perpustakaan",
+        "signature-image",
+        false,
       ),
-      signature(penerimaan.lppm.signatureBase64, "Tanda tangan LPPM"),
+      signature(
+        penerimaan.lppm.signatureBase64,
+        "Tanda tangan LPPM",
+        "signature-image",
+        false,
+      ),
       signature(
         penerimaan.pembimbingPertama.signatureBase64,
         "Tanda tangan pembimbing pertama",
+        "signature-image",
+        false,
       ),
       signature(
         penerimaan.pembimbingKedua.signatureBase64,
         "Tanda tangan pembimbing kedua",
+        "signature-image",
+        false,
       ),
       signature(
         penerimaan.pengujiUtama.signatureBase64,
         "Tanda tangan penguji utama",
+        "signature-image",
+        false,
       ),
       signature(
         penerimaan.anggotaPenguji.signatureBase64,
         "Tanda tangan anggota penguji",
+        "signature-image",
+        false,
       ),
       signature(
         sekretarisProgramStudi.signatureBase64,

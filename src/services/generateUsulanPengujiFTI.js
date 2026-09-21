@@ -93,7 +93,12 @@ async function renderTemplate(template, data) {
         "Tanda tangan ketua program studi",
       ),
       renderSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
-      renderSignature(data.disposisi.signatureBase64, "Tanda tangan disposisi kaprodi"),
+      renderSignature(
+        data.disposisi.signatureBase64,
+        "Tanda tangan disposisi kaprodi",
+        "signature-image",
+        false,
+      ),
     ]);
 
   const values = {

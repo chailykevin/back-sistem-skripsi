@@ -50,15 +50,29 @@ async function renderTemplate(template, data) {
     signatureAnggotaPenguji,
   ] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(ketua.signatureBase64, "Tanda tangan ketua majelis penguji"),
+    renderSignature(
+      ketua.signatureBase64,
+      "Tanda tangan ketua majelis penguji",
+      "signature-image",
+      false,
+    ),
     renderSignature(
       sekretaris.signatureBase64,
       "Tanda tangan sekretaris majelis penguji",
+      "signature-image",
+      false,
     ),
-    renderSignature(pengujiUtama.signatureBase64, "Tanda tangan penguji utama"),
+    renderSignature(
+      pengujiUtama.signatureBase64,
+      "Tanda tangan penguji utama",
+      "signature-image",
+      false,
+    ),
     renderSignature(
       anggotaPenguji.signatureBase64,
       "Tanda tangan anggota penguji",
+      "signature-image",
+      false,
     ),
   ]);
   const values = {
