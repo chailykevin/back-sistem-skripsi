@@ -39,11 +39,12 @@ async function renderSignature(
   const source = signatureBase64.startsWith("data:")
     ? signatureBase64
     : `data:image/png;base64,${signatureBase64}`;
-  // A handwritten signature conventionally crosses the signer's printed name.
-  // The transform is visual only; it is deliberately disabled for table parafs
-  // and signatures whose corresponding name is not directly below the image.
+  // Enlarge a signature proportionally in its original position so that it
+  // reaches the printed name below without moving its vertical placement.
+  // This is deliberately disabled for table parafs and signatures whose
+  // corresponding name is not directly below the image.
   const overlapStyle = overlapsName
-    ? ' style="align-self: flex-end; position: relative; z-index: 1; transform: translateY(3mm); mix-blend-mode: multiply;"'
+    ? ' style="position: relative; z-index: 1; transform: scale(2.3); transform-origin: center; mix-blend-mode: multiply;"'
     : "";
   return `<img class="${escapeHtml(className)}" src="${escapeHtml(source)}" alt="${escapeHtml(alt)}"${overlapStyle} />`;
 }

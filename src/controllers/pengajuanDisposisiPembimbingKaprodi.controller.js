@@ -147,7 +147,7 @@ async function generateFormulirDoc(data) {
       },
       tanggal: formatDateId(data.submittedAt),
       namaPemohon: data.namaMahasiswa,
-      signaturePath: data.studentSignature,
+      signatureBase64: data.studentSignature,
     },
     disposisi: {
       programStudi: data.programStudiNama,
