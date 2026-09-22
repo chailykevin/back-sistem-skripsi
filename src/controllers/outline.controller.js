@@ -1,6 +1,7 @@
 const db = require("../db");
 const outlineService = require("../services/outline.service");
 const mahasiswaService = require("../services/mahasiswa.service");
+const { parsePagination, buildPagination } = require("../utils/pagination");
 
 function validateJudul(judul) {
   if (judul.length < 5) return "Judul minimal 5 karakter";
@@ -260,21 +261,27 @@ exports.listForKaprodi = async (req, res, next) => {
       ? String(req.query.periodeAkademik)
       : null;
 
-    const outlines = await outlineService.listOutlinesForKaprodi({
+    const pagination = parsePagination(req.query);
+    const { rows: outlines, totalItems } = await outlineService.listOutlinesForKaprodi({
       programStudiId: prodi.id,
       status,
       q,
       tahunAkademik,
       periodeAkademik,
+      pagination,
     });
 
-    return res.json({
+    const response = {
       ok: true,
       data: {
         programStudi: prodi,
         outlines,
       },
-    });
+    };
+    if (pagination.enabled) {
+      response.pagination = buildPagination({ ...pagination, totalItems });
+    }
+    return res.json(response);
   } catch (err) {
     next(err);
   }

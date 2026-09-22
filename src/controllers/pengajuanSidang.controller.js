@@ -1,5 +1,6 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const { sendSuratUndangan } = require("../utils/email");
 const {
   getOpenPeriod: getSidangOpenPeriod,
@@ -3179,7 +3180,9 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
       return res.json({ ok: true, data: [] });
     }
 
+    const pagination = parsePagination(req.query);
     const statusParam = req.query?.status;
+    const q = String(req.query?.q ?? "").trim();
     const filterByStatus =
       statusParam && VALID_KAPRODI_STATUSES.includes(statusParam);
 
@@ -3210,6 +3213,23 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
       conditions.push("ssp.periode_akademik = ?");
       params.push(periodeAkademik);
     }
+    if (q) {
+      const searchValue = `%${q}%`;
+      conditions.push("(m.nama LIKE ? OR s.npm LIKE ? OR s.judul LIKE ?)");
+      params.push(searchValue, searchValue, searchValue);
+    }
+
+    const countJoins = `FROM pengajuan_sidang_kaprodi psk
+       JOIN pengajuan_sidang ON pengajuan_sidang.id = psk.pengajuan_sidang_id
+       JOIN skripsi s ON s.id = pengajuan_sidang.skripsi_id
+       JOIN mahasiswa m ON m.npm = s.npm
+       JOIN program_studi ps ON ps.id = s.program_studi_id
+       LEFT JOIN sidang_submission_period ssp ON ssp.id = pengajuan_sidang.sidang_submission_period_id`;
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total ${countJoins}
+       WHERE ${conditions.join(" AND ")}`,
+      params,
+    );
 
     const [rows] = await db.query(
       `SELECT
@@ -3236,11 +3256,12 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
        JOIN program_studi ps ON ps.id = s.program_studi_id
        LEFT JOIN sidang_submission_period ssp ON ssp.id = pengajuan_sidang.sidang_submission_period_id
        WHERE ${conditions.join(" AND ")}
-       ORDER BY psk.submitted_at DESC`,
-      params,
+       ORDER BY psk.submitted_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
+      pagination.enabled ? [...params, pagination.limit, pagination.offset] : params,
     );
 
-    return res.json({ ok: true, data: rows });
+    pagination.totalItems = Number(countRow.total);
+    return listResponse(res, { rows, pagination });
   } catch (err) {
     next(err);
   }

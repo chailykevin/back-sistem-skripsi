@@ -3,6 +3,7 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const {
   generateKomponenPenilaianUjianSkripsiKomprehensifFTI,
 } = require("../services/generateKomponenPenilaianUjianSkripsiKomprehensifFTI");
@@ -1560,6 +1561,8 @@ exports.getKaprodiSidang = async (req, res, next) => {
     }
 
     const { status, tahunAkademik, periodeAkademik } = req.query;
+    const q = String(req.query.q ?? "").trim();
+    const pagination = parsePagination(req.query);
     if (status !== undefined && !VALID_SIDANG_STATUSES.includes(status)) {
       return res.status(400).json({
         ok: false,
@@ -1586,6 +1589,25 @@ exports.getKaprodiSidang = async (req, res, next) => {
       periodConditions.push("ssp.periode_akademik = ?");
       periodParams.push(String(periodeAkademik));
     }
+    const searchCondition = q
+      ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ?)"
+      : "";
+    const searchParams = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM sidang s
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
+       LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
+       WHERE prog.id IN (${placeholders})
+         AND (? IS NULL OR s.status = ?)
+         ${searchCondition}
+         ${periodConditions.map((c) => `AND ${c}`).join(" ")}`,
+      [...programStudiIds, status ?? null, status ?? null, ...searchParams, ...periodParams],
+    );
 
     const [rows] = await db.query(
       `SELECT
@@ -1617,12 +1639,16 @@ exports.getKaprodiSidang = async (req, res, next) => {
        LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
        WHERE prog.id IN (${placeholders})
          AND (? IS NULL OR s.status = ?)
+         ${searchCondition}
          ${periodConditions.map((c) => `AND ${c}`).join(" ")}
-       ORDER BY s.created_at DESC`,
-      [...programStudiIds, status ?? null, status ?? null, ...periodParams],
+       ORDER BY s.created_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
+      pagination.enabled
+        ? [...programStudiIds, status ?? null, status ??null, ...searchParams, ...periodParams, pagination.limit, pagination.offset]
+        : [...programStudiIds, status ?? null, status ?? null, ...searchParams, ...periodParams],
     );
 
-    return res.json({ ok: true, data: rows });
+    pagination.totalItems = Number(countRow.total);
+    return listResponse(res, { rows, pagination });
   } catch (err) {
     next(err);
   }

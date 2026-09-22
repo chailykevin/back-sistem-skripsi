@@ -1,5 +1,6 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -1812,7 +1813,8 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
     );
 
     if (kartuRows.length === 0) {
-      return res.json({ ok: true, data: [] });
+      pagination.totalItems = 0;
+      return listResponse(res, { rows: [], pagination });
     }
 
     const kartuIds = kartuRows.map((r) => r.kartu_id);
@@ -1931,6 +1933,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     const { stage, status, q, tahunAkademik, periodeAkademik } =
       req.query || {};
+    const pagination = parsePagination(req.query);
     const where = ["o.program_studi_id IN (?)"];
     const params = [programStudiIds];
 
@@ -2053,7 +2056,11 @@ exports.listForKaprodi = async (req, res, next) => {
         return true;
       });
 
-    return res.json({ ok: true, data: rows });
+    pagination.totalItems = rows.length;
+    const pageRows = pagination.enabled
+      ? rows.slice(pagination.offset, pagination.offset + pagination.limit)
+      : rows;
+    return listResponse(res, { rows: pageRows, pagination });
   } catch (err) {
     next(err);
   }

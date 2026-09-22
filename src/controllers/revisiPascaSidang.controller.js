@@ -3,6 +3,7 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const {
   generateHalamanPengesahanMajelisPengujiFTI,
 } = require("../services/generateHalamanPengesahanMajelisPengujiFTI");
@@ -1252,6 +1253,13 @@ exports.getKaprodiRevisi = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
+    const pagination = parsePagination(req.query);
+    const q = String(req.query.q ?? "").trim();
+    const status = String(req.query.status ?? "").trim();
+    const validStatuses = ["MENUNGGU_TTD", "PERLU_REVISI", "SELESAI"];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ ok: false, message: "status tidak valid" });
+    }
     const nidn = await getLecturerNidn(req.user.id);
     const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
     if (programStudiIds.length === 0) {
@@ -1259,6 +1267,32 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     }
 
     const placeholders = programStudiIds.map(() => "?").join(",");
+    const searchCondition = q
+      ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ?)"
+      : "";
+    const searchParams = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    const activeStageStatus = `(SELECT rs.current_status
+      FROM revisi_pasca_sidang_stages rs
+      WHERE rs.revisi_id = rps.id AND rs.current_status != 'APPROVED'
+      ORDER BY FIELD(rs.signer_role, 'PENGUJI_2', 'PENGUJI_1', 'PEMBIMBING_2', 'PEMBIMBING_1')
+      LIMIT 1)`;
+    const statusCondition = status === "SELESAI"
+      ? "AND rps.is_completed = 1"
+      : status === "PERLU_REVISI"
+        ? `AND rps.is_completed = 0 AND ${activeStageStatus} = 'NEED_REVISION'`
+        : status === "MENUNGGU_TTD"
+          ? `AND rps.is_completed = 0 AND ${activeStageStatus} IS NOT NULL AND ${activeStageStatus} != 'NEED_REVISION'`
+          : "";
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM revisi_pasca_sidang rps
+       JOIN sidang s ON s.id = rps.sidang_id
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       WHERE prog.id IN (${placeholders}) ${searchCondition} ${statusCondition}`,
+      [...programStudiIds, ...searchParams],
+    );
     const [rows] = await db.query(
       `SELECT
          rps.id, rps.is_completed,
@@ -1278,9 +1312,11 @@ exports.getKaprodiRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-       WHERE prog.id IN (${placeholders})
-       ORDER BY rps.created_at DESC`,
-      [...programStudiIds],
+       WHERE prog.id IN (${placeholders}) ${searchCondition} ${statusCondition}
+       ORDER BY rps.created_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
+      pagination.enabled
+        ? [...programStudiIds, ...searchParams, pagination.limit, pagination.offset]
+        : [...programStudiIds, ...searchParams],
     );
 
     if (rows.length) {
@@ -1334,7 +1370,8 @@ exports.getKaprodiRevisi = async (req, res, next) => {
       }
     }
 
-    return res.json({ ok: true, data: rows });
+    pagination.totalItems = Number(countRow.total);
+    return listResponse(res, { rows, pagination });
   } catch (err) {
     next(err);
   }
