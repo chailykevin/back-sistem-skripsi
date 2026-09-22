@@ -9,12 +9,6 @@ function validateJudul(judul) {
   return null;
 }
 
-function validateLatarBelakang(latarBelakang) {
-  if (latarBelakang.length > 1500)
-    return "Latar belakang maksimal 1500 karakter";
-  return null;
-}
-
 async function getKaprodiProgramStudi(userId) {
   const [urows] = await db.query(
     `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
@@ -39,25 +33,18 @@ exports.create = async (req, res, next) => {
       });
     }
 
-    const { judul, latarBelakang, fileOutline, fileOutlineName } = req.body;
+    const { judul, fileOutline, fileOutlineName } = req.body;
 
-    if (!judul || !latarBelakang || !fileOutline) {
+    if (!judul || !fileOutline) {
       return res.status(400).json({
         ok: false,
-        message: "Judul, latar belakang, dan file outline wajib diisi",
+        message: "Judul dan file outline wajib diisi",
       });
     }
 
     const judulError = validateJudul(String(judul).trim());
     if (judulError) {
       return res.status(400).json({ ok: false, message: judulError });
-    }
-
-    const latarBelakangError = validateLatarBelakang(
-      String(latarBelakang).trim(),
-    );
-    if (latarBelakangError) {
-      return res.status(400).json({ ok: false, message: latarBelakangError });
     }
 
     // ambil npm mahasiswa dari user login
@@ -103,7 +90,6 @@ exports.create = async (req, res, next) => {
 
     await outlineService.createOutline(
       judul,
-      latarBelakang,
       npm,
       programStudiId,
       submissionPeriodId,
@@ -370,25 +356,22 @@ exports.resubmit = async (req, res, next) => {
     return res.status(400).json({ ok: false, message: "Invalid outline id" });
   }
 
-  const { judul, latarBelakang, fileOutline, fileOutlineName } = req.body;
+  const { judul, fileOutline, fileOutlineName } = req.body;
 
   const judulVal = judul !== undefined ? String(judul).trim() : null;
-  const latarVal =
-    latarBelakang !== undefined ? String(latarBelakang).trim() : null;
   const fileVal = fileOutline !== undefined ? String(fileOutline) : null;
   const fileNameVal =
     fileOutlineName !== undefined ? String(fileOutlineName).trim() : null;
 
   if (
     (judulVal === null || judulVal.length === 0) &&
-    (latarVal === null || latarVal.length === 0) &&
     (fileVal === null || fileVal.length === 0) &&
     (fileNameVal === null || fileNameVal.length === 0)
   ) {
     return res.status(400).json({
       ok: false,
       message:
-        "At least one of judul, latarBelakang, or fileOutline must be provided",
+        "At least one of judul or fileOutline must be provided",
     });
   }
 
@@ -396,13 +379,6 @@ exports.resubmit = async (req, res, next) => {
     const judulError = validateJudul(judulVal);
     if (judulError) {
       return res.status(400).json({ ok: false, message: judulError });
-    }
-  }
-
-  if (latarVal !== null && latarVal.length > 0) {
-    const latarBelakangError = validateLatarBelakang(latarVal);
-    if (latarBelakangError) {
-      return res.status(400).json({ ok: false, message: latarBelakangError });
     }
   }
 
@@ -439,7 +415,6 @@ exports.resubmit = async (req, res, next) => {
       npm,
       programStudiId,
       judulVal,
-      latarVal,
       fileVal,
       fileNameVal,
     );
