@@ -245,6 +245,7 @@ async function listOutlinesForKaprodi({
   q,
   tahunAkademik,
   periodeAkademik,
+  pagination,
 }) {
   const where = ["m.program_studi_id = ?"];
   const params = [programStudiId];
@@ -254,8 +255,9 @@ async function listOutlinesForKaprodi({
     params.push(status);
   }
   if (q) {
-    where.push("o.judul LIKE ?");
-    params.push(`%${q}%`);
+    const searchValue = `%${q}%`;
+    where.push("(o.judul LIKE ? OR m.nama LIKE ? OR m.npm LIKE ?)");
+    params.push(searchValue, searchValue, searchValue);
   }
   if (tahunAkademik) {
     where.push("osp.tahun_akademik = ?");
@@ -267,6 +269,25 @@ async function listOutlinesForKaprodi({
   }
 
   const whereSql = `WHERE ${where.join(" AND ")}`;
+
+  const [[countRow]] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM outline o
+     INNER JOIN mahasiswa m ON m.npm = o.npm
+     INNER JOIN (
+       SELECT npm, MAX(id) AS max_id
+       FROM outline
+       GROUP BY npm
+     ) latest ON latest.npm = o.npm AND latest.max_id = o.id
+     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
+     ${whereSql}`,
+    params,
+  );
+
+  const pageSql = pagination?.enabled ? " LIMIT ? OFFSET ?" : "";
+  const dataParams = pagination?.enabled
+    ? [...params, pagination.limit, pagination.offset]
+    : params;
 
   const [rows] = await db.query(
     `SELECT
@@ -291,11 +312,11 @@ async function listOutlinesForKaprodi({
      ) latest ON latest.npm = o.npm AND latest.max_id = o.id
      LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
      ${whereSql}
-     ORDER BY o.created_at DESC`,
-    params,
+     ORDER BY o.created_at DESC${pageSql}`,
+    dataParams,
   );
 
-  return rows;
+  return { rows, totalItems: Number(countRow.total) };
 }
 
 async function isOutlineInProdi(id, programStudiId) {

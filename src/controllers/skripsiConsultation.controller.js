@@ -1,5 +1,6 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -1514,7 +1515,8 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
     );
 
     if (kartuRows.length === 0) {
-      return res.json({ ok: true, data: [] });
+      pagination.totalItems = Number(countRow.total);
+      return listResponse(res, { rows: [], pagination });
     }
 
     const kartuIds = kartuRows.map((r) => r.kartu_id);
@@ -1591,7 +1593,8 @@ exports.listForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "You are not assigned as Kaprodi" });
     }
 
-    const { q, tahunAkademik, periodeAkademik } = req.query || {};
+    const { stage, status, q, tahunAkademik, periodeAkademik } = req.query || {};
+    const pagination = parsePagination(req.query);
     const where = ["sk.program_studi_id IN (?)"];
     const params = [programStudiIds];
 
@@ -1610,6 +1613,17 @@ exports.listForKaprodi = async (req, res, next) => {
       where.push("osp.periode_akademik = ?");
       params.push(String(periodeAkademik));
     }
+
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM kartu_konsultasi_skripsi k
+       JOIN skripsi sk ON sk.id = k.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN outline o ON o.id = sk.outline_id
+       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
+       WHERE ${where.join(" AND ")}`,
+      params,
+    );
 
     const [kartuRows] = await db.query(
       `SELECT
@@ -1668,7 +1682,16 @@ exports.listForKaprodi = async (req, res, next) => {
       };
     });
 
-    return res.json({ ok: true, data: rows });
+    const filteredRows = rows.filter((row) => {
+      if (stage && ["PEMBIMBING_2", "PEMBIMBING_1"].includes(stage) && row.active_stage !== stage) return false;
+      if (status && ["WAITING_SUBMISSION", "SUBMITTED", "IN_REVIEW", "NEED_REVISION", "CONTINUE", "ACCEPTED"].includes(status) && row.active_status !== status) return false;
+      return true;
+    });
+    pagination.totalItems = filteredRows.length;
+    const pageRows = pagination.enabled
+      ? filteredRows.slice(pagination.offset, pagination.offset + pagination.limit)
+      : filteredRows;
+    return listResponse(res, { rows: pageRows, pagination });
   } catch (err) {
     next(err);
   }

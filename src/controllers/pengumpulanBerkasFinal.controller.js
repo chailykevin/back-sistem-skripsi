@@ -5,6 +5,7 @@ const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const {
   generateSuratKeteranganPenyerahanSkripsiFTI,
 } = require("../services/generateSuratKeteranganPenyerahanSkripsiFTI");
@@ -1374,6 +1375,8 @@ exports.getKaprodiPengumpulan = async (req, res, next) => {
     }
 
     const { status } = req.query;
+    const q = String(req.query.q ?? "").trim();
+    const pagination = parsePagination(req.query);
     if (status !== undefined && !VALID_PENGUMPULAN_STATUSES.includes(status)) {
       return res.status(400).json({
         ok: false,
@@ -1390,6 +1393,19 @@ exports.getKaprodiPengumpulan = async (req, res, next) => {
     }
 
     const placeholders = programStudiIds.map(() => "?").join(",");
+    const searchCondition = q
+      ? "AND (m.nama LIKE ? OR sk.npm LIKE ? OR sk.judul LIKE ?)"
+      : "";
+    const searchParams = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM pengumpulan_berkas_final pbf
+       JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       LEFT JOIN mahasiswa m ON m.npm = sk.npm
+       WHERE sk.program_studi_id IN (${placeholders})
+         AND (? IS NULL OR pbf.status = ?) ${searchCondition}`,
+      [...programStudiIds, status ?? null, status ?? null, ...searchParams],
+    );
     const [rows] = await db.query(
       `SELECT
          pbf.id, pbf.skripsi_id, sk.npm, m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi,
@@ -1401,11 +1417,15 @@ exports.getKaprodiPengumpulan = async (req, res, next) => {
        LEFT JOIN mahasiswa m ON m.npm = sk.npm
        WHERE sk.program_studi_id IN (${placeholders})
          AND (? IS NULL OR pbf.status = ?)
-       ORDER BY pbf.created_at DESC`,
-      [...programStudiIds, status ?? null, status ?? null],
+         ${searchCondition}
+       ORDER BY pbf.created_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
+      pagination.enabled
+        ? [...programStudiIds, status ?? null, status ?? null, ...searchParams, pagination.limit, pagination.offset]
+        : [...programStudiIds, status ?? null, status ?? null, ...searchParams],
     );
 
-    return res.json({ ok: true, data: rows });
+    pagination.totalItems = Number(countRow.total);
+    return listResponse(res, { rows, pagination });
   } catch (err) {
     next(err);
   }

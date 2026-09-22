@@ -1,5 +1,6 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const { parsePagination, listResponse } = require("../utils/pagination");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -147,7 +148,7 @@ async function generateFormulirDoc(data) {
       },
       tanggal: formatDateId(data.submittedAt),
       namaPemohon: data.namaMahasiswa,
-      signaturePath: data.studentSignature,
+      signatureBase64: data.studentSignature,
     },
     disposisi: {
       programStudi: data.programStudiNama,
@@ -289,9 +290,12 @@ exports.listForKaprodi = async (req, res, next) => {
     const tahunAkademik = req.query.tahunAkademik
       ? String(req.query.tahunAkademik)
       : null;
+    const pagination = parsePagination(req.query);
     const periodeAkademik = req.query.periodeAkademik
       ? String(req.query.periodeAkademik)
       : null;
+    const q = String(req.query.q ?? "").trim();
+    const status = String(req.query.status ?? "").trim();
 
     const where = ["ps.kaprodi_nidn = ?"];
     const params = [nidn];
@@ -305,6 +309,25 @@ exports.listForKaprodi = async (req, res, next) => {
       where.push("osp.periode_akademik = ?");
       params.push(periodeAkademik);
     }
+    if (q) {
+      const searchValue = `%${q}%`;
+      where.push("(m.nama LIKE ? OR m.npm LIKE ? OR o.judul LIKE ?)");
+      params.push(searchValue, searchValue, searchValue);
+    }
+    if (status) {
+      where.push("pj.status = ?");
+      params.push(status);
+    }
+
+    const listFrom = `FROM pengajuan_disposisi_pembimbing pj
+      INNER JOIN outline o ON o.id = pj.outline_id
+      INNER JOIN mahasiswa m ON m.npm = pj.npm
+      INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+      LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id`;
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total ${listFrom} WHERE ${where.join(" AND ")}`,
+      params,
+    );
 
     const [rows] = await db.query(
       `
@@ -327,9 +350,11 @@ exports.listForKaprodi = async (req, res, next) => {
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
       WHERE ${where.join(" AND ")}
-      ORDER BY pj.submitted_at DESC
+      ORDER BY pj.submitted_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}
       `,
-      params,
+      pagination.enabled
+        ? [...params, pagination.limit, pagination.offset]
+        : params,
     );
 
     if (rows.length > 0) {
@@ -357,7 +382,8 @@ exports.listForKaprodi = async (req, res, next) => {
       }
     }
 
-    return res.json({ ok: true, data: rows });
+    pagination.totalItems = Number(countRow.total);
+    return listResponse(res, { rows, pagination });
   } catch (err) {
     next(err);
   }
