@@ -25,7 +25,6 @@ async function notifyKaprodiOfOutline(conn, programStudiId, type, message) {
 
 async function createOutline(
   judul,
-  latarBelakang,
   npm,
   programStudiId,
   submissionPeriodId,
@@ -41,9 +40,9 @@ async function createOutline(
 
     const [insertResult] = await conn.query(
       `INSERT INTO outline
-             (judul, latar_belakang, npm, status, program_studi_id, submission_period_id)
-             VALUES (?, ?, ?, 'SUBMITTED', ?, ?)`,
-      [judul, latarBelakang, npm, programStudiId, submissionPeriodId],
+             (judul, npm, status, program_studi_id, submission_period_id)
+             VALUES (?, ?, 'SUBMITTED', ?, ?)`,
+      [judul, npm, programStudiId, submissionPeriodId],
     );
 
     const outlineId = insertResult?.insertId ?? null;
@@ -107,7 +106,6 @@ async function getOutlineDetailById(id, studentNpm) {
     `SELECT
        o.id,
        o.judul,
-       o.latar_belakang,
        o.npm,
        o.status,
        rev.decision_note,
@@ -170,7 +168,6 @@ async function getLatestOutlineByNpm(npm) {
     `SELECT
        o.id,
        o.judul,
-       o.latar_belakang,
        o.npm,
        o.status,
        rev.decision_note,
@@ -431,7 +428,6 @@ async function resubmitOutline(
   npm,
   programStudiId,
   judulVal,
-  latarVal,
   fileVal,
   fileNameVal,
 ) {
@@ -447,10 +443,6 @@ async function resubmitOutline(
     if (judulVal !== null && judulVal.length > 0) {
       sets.push("judul = ?");
       params.push(judulVal);
-    }
-    if (latarVal !== null && latarVal.length > 0) {
-      sets.push("latar_belakang = ?");
-      params.push(latarVal);
     }
     sets.push("program_studi_id = ?");
     params.push(programStudiId);

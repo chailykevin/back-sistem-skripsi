@@ -70,6 +70,12 @@ const PREDEFINED_MAHASISWA = [
     username: "22421561",
     password: DUMMY_PASSWORD_PLAIN,
   },
+  {
+    npm: "22421580",
+    nama: "Riska Shintia",
+    username: "22421580",
+    password: DUMMY_PASSWORD_PLAIN,
+  },
 ];
 const PREDEFINED_DOSEN = [
   {
@@ -163,9 +169,9 @@ const PROGRAM_STUDI_KODE = {
 // The database `kode` is used for the lookup so a display-name change does not
 // alter which program a mahasiswa belongs to.
 const NPM_PROGRAM_STUDI_KODE = {
-  "41": "SI",
-  "42": "INF",
-  "43": "BD",
+  41: "SI",
+  42: "INF",
+  43: "BD",
 };
 
 async function getActiveRolesMap(conn) {
