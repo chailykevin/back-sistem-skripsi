@@ -311,7 +311,7 @@ async function upsertUserRole(
   );
 }
 
-function getPredefinedMahasiswa(programRows) {
+async function getPredefinedMahasiswa(programRows, conn) {
   const prodiByKode = new Map(
     programRows.map((p) => [
       String(p.kode ?? "").toUpperCase(),
@@ -319,7 +319,9 @@ function getPredefinedMahasiswa(programRows) {
     ]),
   );
 
-  return PREDEFINED_MAHASISWA.map((item, index) => {
+  const mahasiswaFromSimiko = await getMahasiswaFromSimiko(conn);
+
+  return mahasiswaFromSimiko.map((item, index) => {
     const npmProgramCode = String(item.npm).slice(2, 4);
     const programStudiKode = NPM_PROGRAM_STUDI_KODE[npmProgramCode] ?? null;
     const programStudi = programStudiKode
@@ -329,10 +331,10 @@ function getPredefinedMahasiswa(programRows) {
     return {
       npm: item.npm,
       nama: item.nama,
-      email: item.email ?? null,
-      sks: 140,
+      email: null,
+      sks: item.sks,
       username: item.username,
-      password: item.npm,
+      password: null,
       npmProgramCode,
       programStudiKode,
       programStudiId: programStudi?.id ?? null,
@@ -376,6 +378,52 @@ function getPredefinedDosen(programRows) {
   }));
 }
 
+async function getMahasiswaFromSimiko(conn) {
+  const [periods] = await conn.query(
+    "SELECT akdKode FROM widya_miko.r_akademik ORDER BY akdKode DESC LIMIT 2",
+  );
+  if (periods.length < 2) {
+    throw new Error("SIMIKO must have a current and previous academic period");
+  }
+
+  const [currentPeriod, previousPeriod] = periods;
+  const [courses] = await conn.query(
+    "SELECT mtkId FROM widya_miko.m_matakuliah WHERE mtkKode IN (?, ?, ?)",
+    ["TIBB803", "SIBB802", "BDPB802"],
+  );
+  if (courses.length === 0) return [];
+
+  const courseIds = courses.map((course) => course.mtkId);
+  const coursePlaceholders = courseIds.map(() => "?").join(", ");
+  const [schedules] = await conn.query(
+    `SELECT jadId FROM widya_miko.t_jadwal
+     WHERE mtkId IN (${coursePlaceholders}) AND akdKode = ?`,
+    [...courseIds, currentPeriod.akdKode],
+  );
+  if (schedules.length === 0) return [];
+
+  const scheduleIds = schedules.map((schedule) => schedule.jadId);
+  const schedulePlaceholders = scheduleIds.map(() => "?").join(", ");
+  const [students] = await conn.query(
+    `SELECT DISTINCT m.mhsId, m.mhsNpm, usrMhs.mhsUName, bio.bdtNama, akmSKSLulus
+     FROM widya_miko.m_mahasiswa m
+     JOIN widya_miko.t_krs krs ON m.mhsId = krs.mhsId
+     JOIN widya_miko.m_biodata bio ON bio.bdtId = m.bdtId
+     JOIN widya_miko.m_usermhs usrMhs ON usrMhs.mhsId = m.mhsId
+     JOIN widya_miko.t_aktmhs aktMhs ON aktMhs.mhsId = m.mhsId
+     WHERE krs.jadId IN (${schedulePlaceholders}) AND aktMhs.akdKode = ?`,
+    [...scheduleIds, previousPeriod.akdKode],
+  );
+
+  return students.map((item) => ({
+    npm: item.mhsNpm,
+    nama: item.bdtNama,
+    username: item.mhsUName,
+    password: null,
+    sks: item.akmSKSLulus,
+  }));
+}
+
 exports.seedMahasiswaDummy = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -403,7 +451,7 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
         .json({ ok: false, message: "Role STUDENT is missing" });
     }
 
-    const input = getPredefinedMahasiswa(programRows);
+    const input = await getPredefinedMahasiswa(programRows, conn);
     const validProgramIds = new Set(programRows.map((p) => Number(p.id)));
 
     for (const row of input) {
@@ -435,7 +483,9 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
 
     const result = [];
     for (const mhs of input) {
-      const passwordHash = await bcrypt.hash(mhs.password, 10);
+      const passwordHash = mhs.password
+        ? await bcrypt.hash(mhs.password, 10)
+        : null;
       await upsertMahasiswa(conn, mhs);
       await upsertUserAccount(conn, {
         username: mhs.username,
@@ -894,6 +944,19 @@ exports.testEmail = async (req, res, next) => {
     });
 
     return res.json({ ok: true, message: `Test email sent to ${to}` });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.testing = async (req, res, next) => {
+  try {
+    const mahasiswa = await getMahasiswaFromSimiko(db);
+    return res.json({
+      ok: true,
+      message: "Testing endpoint is working",
+      data: mahasiswa,
+    });
   } catch (err) {
     next(err);
   }

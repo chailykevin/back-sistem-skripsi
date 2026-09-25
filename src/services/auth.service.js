@@ -18,6 +18,36 @@ function deriveLegacyUserType(roles = []) {
   return roles[0] ?? null;
 }
 
+async function compareBcrypt(plainPassword, hashedPassword) {
+  const cleanPlain = String(plainPassword ?? "").trim();
+  const cleanHash = Buffer.isBuffer(hashedPassword)
+    ? hashedPassword.toString("utf8")
+    : String(hashedPassword ?? "");
+
+  if (!cleanHash) return false;
+
+  // PHP commonly emits $2y$ bcrypt hashes; Node bcrypt accepts the equivalent
+  // $2b$ variant with the same cost, salt, and checksum.
+  const compatibleHash = cleanHash.startsWith("$2y$")
+    ? `$2b$${cleanHash.slice(4)}`
+    : cleanHash;
+
+  return bcrypt.compare(cleanPlain, compatibleHash);
+}
+
+async function verifyMahasiswaPassword(username, password) {
+  const [sourceUsers] = await db.query(
+    `SELECT mhsPwd
+     FROM widya_miko.m_usermhs
+     WHERE mhsUName = ?
+     LIMIT 1`,
+    [username],
+  );
+
+  const passwordHash = sourceUsers[0]?.mhsPwd;
+  return compareBcrypt(password, passwordHash);
+}
+
 async function login(username, password) {
   const [users] = await db.query(
     `SELECT * FROM users WHERE username = ? AND is_active = 1 LIMIT 1`,
@@ -33,7 +63,11 @@ async function login(username, password) {
 
   const user = users[0];
 
-  const isMatch = await bcrypt.compare(password, user.password_hash);
+  // Mahasiswa authenticate exclusively against SIMIKO. Do not fall back to
+  // users.password_hash if the source account is absent or its password fails.
+  const isMatch = user.npm
+    ? await verifyMahasiswaPassword(username, password)
+    : await compareBcrypt(password, user.password_hash);
   if (!isMatch) {
     throw new CustomError(401, {
       ok: false,
