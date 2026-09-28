@@ -77,6 +77,7 @@ const PREDEFINED_MAHASISWA = [
     password: DUMMY_PASSWORD_PLAIN,
   },
 ];
+/* Legacy hard-coded dosen seed data. SIMIKO is now the source of truth.
 const PREDEFINED_DOSEN = [
   {
     nidn: "00001",
@@ -147,7 +148,7 @@ const PREDEFINED_DOSEN = [
     password: DUMMY_PASSWORD_PLAIN,
     email: "zeonives123@gmail.com",
   },
-];
+]; */
 
 // Fakultas seeded alongside dosen
 const PREDEFINED_FAKULTAS = [
@@ -172,6 +173,17 @@ const NPM_PROGRAM_STUDI_KODE = {
   41: "SI",
   42: "INF",
   43: "BD",
+};
+
+const DOSEN_PENEMPATAN_PROGRAM_STUDI = {
+  72: "Bahasa Mandarin",
+  61: "Akuntansi",
+  43: "Bisnis Digital",
+  71: "Bahasa dan Kebudayaan Inggris",
+  50: "Manajemen",
+  201: "Manajemen (S2)",
+  42: "Informatika",
+  41: "Sistem Informasi",
 };
 
 async function getActiveRolesMap(conn) {
@@ -221,12 +233,18 @@ async function upsertMahasiswa(conn, mahasiswa) {
 
 async function upsertDosen(conn, dosen) {
   await conn.query(
-    `INSERT INTO dosen (nidn, nama, email)
-     VALUES (?, ?, ?)
+    `INSERT INTO dosen (nidn, nama, email, program_studi_id)
+     VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
-       email = VALUES(email)`,
-    [dosen.nidn, dosen.nama, dosen.email ?? null],
+        email = VALUES(email),
+        program_studi_id = VALUES(program_studi_id)`,
+    [
+      dosen.nidn,
+      dosen.nama,
+      dosen.email ?? null,
+      dosen.programStudiId ?? null,
+    ],
   );
 }
 
@@ -376,6 +394,62 @@ function getPredefinedDosen(programRows) {
     password: item.username,
     index: index + 1,
   }));
+}
+
+function normalizeProgramStudiName(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function isGlobalDosenPenempatan(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return (
+    value === true || value === 1 || normalized === "" || normalized === "true"
+  );
+}
+
+async function getDosenFromSimiko(conn, programRows) {
+  const [sourceDosen] = await conn.query(
+    `SELECT dsnId, dsnNama, dsnTglLahir, dsnPenempatan, dsnEmail, dsnPwd
+     FROM widya_miko.m_dosen
+     WHERE dsnNama NOT LIKE '%/%'
+       AND dsnJabFung IN ('Lektor Kepala', 'Lektor', 'Asisten Ahli')
+       AND del = '0'`,
+  );
+
+  const prodiByName = new Map(
+    programRows.map((programStudi) => [
+      normalizeProgramStudiName(programStudi.nama),
+      Number(programStudi.id),
+    ]),
+  );
+
+  return sourceDosen.map((item, index) => {
+    const penempatan = item.dsnPenempatan;
+    const placementCode = String(penempatan ?? "").trim();
+    const programStudiName = isGlobalDosenPenempatan(penempatan)
+      ? null
+      : (DOSEN_PENEMPATAN_PROGRAM_STUDI[placementCode] ?? null);
+    const programStudiId = programStudiName
+      ? (prodiByName.get(normalizeProgramStudiName(programStudiName)) ?? null)
+      : null;
+
+    return {
+      nidn: String(item.dsnId ?? "").trim(),
+      nama: String(item.dsnNama ?? "").trim(),
+      email: String(item.dsnEmail ?? "").trim(),
+      username: String(item.dsnEmail ?? "").trim(),
+      dsnPenempatan: penempatan,
+      programStudiName,
+      programStudiId,
+      hasKnownPlacement:
+        isGlobalDosenPenempatan(penempatan) || Boolean(programStudiName),
+      index: index + 1,
+    };
+  });
 }
 
 async function getMahasiswaFromSimiko(conn) {
@@ -545,7 +619,7 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
   }
 };
 
-exports.seedDosenDummy = async (req, res, next) => {
+async function seedPredefinedDosenLegacy(req, res, next) {
   const conn = await db.getConnection();
   let txStarted = false;
 
@@ -910,6 +984,114 @@ exports.seedDosenDummy = async (req, res, next) => {
         })),
         dosen: result,
       },
+    });
+  } catch (err) {
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
+    next(err);
+  } finally {
+    conn.release();
+  }
+}
+
+exports.seedDosenDummy = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
+
+  try {
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const programRows = await getProgramStudiRows(conn);
+    const rolesMap = await getActiveRolesMap(conn);
+    const lecturerRoleId = rolesMap.get("LECTURER");
+    const pembimbingRoleId = rolesMap.get("PEMBIMBING");
+    if (!lecturerRoleId || !pembimbingRoleId) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Required roles are missing (LECTURER, PEMBIMBING)",
+      });
+    }
+
+    const input = await getDosenFromSimiko(conn, programRows);
+    for (const dosen of input) {
+      if (!dosen.nidn || !dosen.nama || !dosen.username) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: `Invalid SIMIKO dosen payload at item #${dosen.index}`,
+        });
+      }
+      if (
+        !dosen.hasKnownPlacement ||
+        (dosen.programStudiName && !dosen.programStudiId)
+      ) {
+        console.log(dosen);
+
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: `Unsupported or unmapped dsnPenempatan at dosen item #${dosen.index}`,
+        });
+      }
+    }
+
+    console.log(input);
+
+    const assignedByUserId = Number(req.user?.id) || null;
+    const result = [];
+    for (const dosen of input) {
+      await upsertDosen(conn, dosen);
+      await upsertUserAccount(conn, {
+        username: dosen.username,
+        passwordHash: null,
+        npm: null,
+        nidn: dosen.nidn,
+      });
+
+      const userId = await getUserIdByUsername(conn, dosen.username);
+      if (!userId) {
+        throw new Error(
+          `Failed to resolve user account for username ${dosen.username}`,
+        );
+      }
+
+      await upsertUserRole(conn, {
+        userId,
+        roleId: lecturerRoleId,
+        programStudiId: dosen.programStudiId,
+        assignedByUserId,
+      });
+      await upsertUserRole(conn, {
+        userId,
+        roleId: pembimbingRoleId,
+        programStudiId: dosen.programStudiId,
+        assignedByUserId,
+      });
+
+      result.push({
+        userId,
+        username: dosen.username,
+        nidn: dosen.nidn,
+        nama: dosen.nama,
+        programStudiId: dosen.programStudiId,
+        programStudiNama: dosen.programStudiName,
+        roles: ["LECTURER", "PEMBIMBING"],
+      });
+    }
+
+    await conn.commit();
+    txStarted = false;
+
+    return res.status(201).json({
+      ok: true,
+      message: "SIMIKO dosen synchronized",
+      data: { summary: { total: result.length }, dosen: result },
     });
   } catch (err) {
     try {

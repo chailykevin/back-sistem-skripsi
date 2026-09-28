@@ -48,6 +48,24 @@ async function verifyMahasiswaPassword(username, password) {
   return compareBcrypt(password, passwordHash);
 }
 
+async function verifyDosenPassword(username, password) {
+  const [sourceUsers] = await db.query(
+    `SELECT dsnPwd, DATE_FORMAT(dsnTglLahir, '%d%m%Y') AS fallbackPassword
+     FROM widya_miko.m_dosen
+     WHERE dsnEmail = ? AND del = '0'
+     LIMIT 1`,
+    [username],
+  );
+  const sourceUser = sourceUsers[0];
+  if (!sourceUser) return null;
+
+  if (sourceUser.dsnPwd) {
+    return compareBcrypt(password, sourceUser.dsnPwd);
+  }
+
+  return String(password ?? "").trim() === sourceUser.fallbackPassword;
+}
+
 async function login(username, password) {
   const [users] = await db.query(
     `SELECT * FROM users WHERE username = ? AND is_active = 1 LIMIT 1`,
@@ -65,9 +83,17 @@ async function login(username, password) {
 
   // Mahasiswa authenticate exclusively against SIMIKO. Do not fall back to
   // users.password_hash if the source account is absent or its password fails.
-  const isMatch = user.npm
-    ? await verifyMahasiswaPassword(username, password)
-    : await compareBcrypt(password, user.password_hash);
+  let isMatch;
+  if (user.npm) {
+    isMatch = await verifyMahasiswaPassword(username, password);
+  } else if (user.nidn) {
+    const sourceMatch = await verifyDosenPassword(username, password);
+    // Legacy special-role accounts are not SIMIKO email accounts, so preserve
+    // their local authentication while imported dosen remain source-only.
+    isMatch = sourceMatch ?? (await compareBcrypt(password, user.password_hash));
+  } else {
+    isMatch = await compareBcrypt(password, user.password_hash);
+  }
   if (!isMatch) {
     throw new CustomError(401, {
       ok: false,
