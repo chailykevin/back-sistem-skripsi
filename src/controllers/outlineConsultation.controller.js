@@ -55,7 +55,7 @@ async function getKaprodiProgramStudiIdsByNidn(nidn) {
   const [rows] = await db.query(
     `SELECT id
      FROM program_studi
-     WHERE kaprodi_nidn = ?`,
+     WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
     [nidn],
   );
   return rows
@@ -596,7 +596,7 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       `SELECT u.signature_image FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
-       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+       JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
        WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
       [kartu.program_studi_id],
     );

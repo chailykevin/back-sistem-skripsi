@@ -3,7 +3,7 @@ const kaprodiService = require("../services/kaprodi.service");
 
 async function getLecturerNidn(userId) {
   const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
     [userId],
   );
   return rows[0]?.nidn ?? null;

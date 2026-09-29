@@ -539,7 +539,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       `SELECT u.id FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
-       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+       JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
        WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
        LIMIT 1`,
       [programStudiId],
@@ -754,7 +754,7 @@ exports.getById = async (req, res, next) => {
     // LECTURER (Kaprodi): hanya boleh pengajuan dari prodinya
     if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [urows] = await db.query(
-        `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
         [req.user.id],
       );
       const nidn = urows[0]?.nidn;
@@ -813,7 +813,7 @@ exports.getById = async (req, res, next) => {
         LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
 
         WHERE pj.id = ?
-          AND ps.kaprodi_nidn = ?
+          AND COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?
         LIMIT 1
         `,
         [id, nidn],
@@ -1187,7 +1187,7 @@ exports.resubmit = async (req, res, next) => {
         `SELECT u.id FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-         JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
          WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
          LIMIT 1`,
         [resubProgramStudiId],

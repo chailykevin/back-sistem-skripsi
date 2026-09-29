@@ -2,7 +2,7 @@ const db = require("../db");
 
 async function getKaprodiProgramStudiIdsByNidn(nidn) {
   const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
     [nidn],
   );
   return rows

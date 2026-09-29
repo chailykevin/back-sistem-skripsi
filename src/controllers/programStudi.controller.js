@@ -16,9 +16,10 @@ exports.getKaprodiNameByProgramStudi = async (req, res, next) => {
       `
       SELECT
         ps.nama AS program_studi_nama,
-        d.nama AS kaprodi_nama
+        COALESCE(d.nama, s.nama) AS kaprodi_nama
       FROM program_studi ps
       LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+      LEFT JOIN staf s ON s.usr_id = ps.kaprodi_staff_usr_id
       WHERE ps.id = ?
       LIMIT 1
       `,

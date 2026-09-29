@@ -26,7 +26,7 @@ async function getStudentNpm(userId) {
 
 async function getLecturerNidn(userId) {
   const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
     [userId],
   );
   return rows[0]?.nidn ?? null;
@@ -34,7 +34,7 @@ async function getLecturerNidn(userId) {
 
 async function getKaprodiProgramStudiIdsByNidn(nidn) {
   const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
     [nidn],
   );
   return rows
@@ -384,7 +384,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
      JOIN dosen d ON d.nidn = u.nidn
-     JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+     JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
      WHERE r.code = 'KAPRODI' AND ps.id = ?
      LIMIT 1`,
     [kartu.program_studi_id],
@@ -732,7 +732,7 @@ exports.initSkPenelitian = async (req, res, next) => {
         `SELECT u.signature_image FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-         JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
          WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
         [kartu.program_studi_id],
       );
@@ -1761,7 +1761,7 @@ exports.listSkForDekan = async (req, res, next) => {
     }
 
     const [[userRow]] = await db.query(
-      `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
+      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
       [req.user.id],
     );
     if (!userRow?.nidn) {
@@ -1804,7 +1804,7 @@ exports.listSkForDekan = async (req, res, next) => {
        LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
        WHERE o.program_studi_id IN (
          SELECT id FROM program_studi WHERE fakultas_id = (
-           SELECT id FROM fakultas WHERE dekan_nidn = ?
+           SELECT id FROM fakultas WHERE COALESCE(dekan_nidn, dekan_staff_usr_id) = ?
          )
        )
        ${filterByStatus ? "AND sk.status = ?" : ""}

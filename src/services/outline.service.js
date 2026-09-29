@@ -7,7 +7,7 @@ async function notifyKaprodiOfOutline(conn, programStudiId, type, message) {
     `SELECT u.id FROM users u
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
-     JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+     JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
      WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
      LIMIT 1`,
     [programStudiId],

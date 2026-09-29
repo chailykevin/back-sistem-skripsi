@@ -106,7 +106,7 @@ function assertSignatures(checks) {
 async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+    `SELECT id FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
     [nidn],
   );
   return row?.id ?? null;
@@ -114,7 +114,7 @@ async function resolveUserId(conn, nidn) {
 
 async function getLecturerNidn(userId) {
   const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
     [userId],
   );
   return rows[0]?.nidn ?? null;
@@ -973,7 +973,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     // Hasil Penilaian Akhir DOCX is always signed by Pembimbing 1, regardless of
     // which pembimbing (P1 or P2) actually submits this form.
     const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      `SELECT signature_image FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
       [sidang.pembimbing1_nidn],
     );
 
@@ -1364,7 +1364,7 @@ async function generateAndStoreBeritaAcara(
   async function getSig(nidn) {
     if (!nidn) return null;
     const [[row]] = await conn.query(
-      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      `SELECT signature_image FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
       [nidn],
     );
     return row?.signature_image ?? null;
@@ -1546,7 +1546,7 @@ exports.getLecturerSidang = async (req, res, next) => {
 
 async function getKaprodiProgramStudiIdsByNidn(nidn) {
   const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
     [nidn],
   );
   return rows

@@ -39,7 +39,7 @@ async function getStudentNpm(userId) {
 
 async function getLecturerNidn(userId) {
   const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
     [userId],
   );
   return rows[0]?.nidn ?? null;
@@ -47,7 +47,7 @@ async function getLecturerNidn(userId) {
 
 async function getKaprodiProgramStudiIdsByNidn(nidn) {
   const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
+    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
     [nidn],
   );
   return rows
@@ -2429,7 +2429,7 @@ exports.submitKaprodi = async (req, res, next) => {
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
+       LEFT JOIN users u_kaprodi ON COALESCE(u_kaprodi.nidn, u_kaprodi.staff_usr_id) = ps.kaprodi_nidn
          AND u_kaprodi.is_active = 1
          AND EXISTS (
            SELECT 1 FROM user_roles ur2
@@ -2814,7 +2814,7 @@ exports.submitKaprodi = async (req, res, next) => {
         `SELECT u.id FROM users u
          INNER JOIN user_roles ur ON ur.user_id = u.id
          INNER JOIN roles r ON r.id = ur.role_id
-         INNER JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         INNER JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
          WHERE r.code = 'KAPRODI' AND ps.id = ? AND u.is_active = 1`,
         [programStudiId],
       );
@@ -3473,7 +3473,7 @@ exports.submitDisposisi = async (req, res, next) => {
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN users u_kaprodi ON u_kaprodi.nidn = ps.kaprodi_nidn
+       LEFT JOIN users u_kaprodi ON COALESCE(u_kaprodi.nidn, u_kaprodi.staff_usr_id) = ps.kaprodi_nidn
          AND u_kaprodi.is_active = 1
          AND EXISTS (
            SELECT 1 FROM user_roles ur2
@@ -3815,7 +3815,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
     const kaprodiNidn = dataRow?.kaprodi_nidn ?? null;
     const [[kaprodiUserRow]] = kaprodiNidn
       ? await conn.query(
-          `SELECT u.signature_image FROM users u WHERE u.nidn = ? AND u.is_active = 1 ORDER BY u.id DESC LIMIT 1`,
+          `SELECT u.signature_image FROM users u WHERE COALESCE(u.nidn, u.staff_usr_id) = ? AND u.is_active = 1 ORDER BY u.id DESC LIMIT 1`,
           [kaprodiNidn],
         )
       : [[null]];
@@ -3983,7 +3983,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
       const resolveUserId = async (nidn) => {
         if (!nidn) return null;
         const [[u]] = await conn.query(
-          `SELECT id FROM users WHERE nidn = ? AND is_active = 1 LIMIT 1`,
+          `SELECT id FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 LIMIT 1`,
           [nidn],
         );
         return u?.id ?? null;

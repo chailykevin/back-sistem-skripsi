@@ -11,14 +11,14 @@ function validateJudul(judul) {
 
 async function getKaprodiProgramStudi(userId) {
   const [urows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
     [userId],
   );
   const nidn = urows[0]?.nidn ?? null;
   if (!nidn) return null;
 
   const [prodiRows] = await db.query(
-    `SELECT id, nama FROM program_studi WHERE kaprodi_nidn = ? LIMIT 1`,
+    `SELECT id, nama FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ? LIMIT 1`,
     [nidn],
   );
   return prodiRows[0] ?? null;

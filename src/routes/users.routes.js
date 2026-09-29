@@ -7,6 +7,7 @@ const userPasswordController = require("../controllers/userPassword.controller")
 
 router.get("/mahasiswa", auth, usersController.listMahasiswa);
 router.get("/dosen", auth, usersController.listDosen);
+router.get("/staf", auth, usersController.listStaf);
 
 router.get("/me/signature", auth, userSignatureController.getMySignature);
 router.post("/me/signature", auth, userSignatureController.upsertMySignature);

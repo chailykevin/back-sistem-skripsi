@@ -279,7 +279,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     // Ambil nidn dosen dari user
     const [urows] = await db.query(
-      `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
+      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
       [req.user.id],
     );
     const nidn = urows[0]?.nidn;
@@ -297,7 +297,7 @@ exports.listForKaprodi = async (req, res, next) => {
     const q = String(req.query.q ?? "").trim();
     const status = String(req.query.status ?? "").trim();
 
-    const where = ["ps.kaprodi_nidn = ?"];
+    const where = ["COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?"];
     const params = [nidn];
 
     if (tahunAkademik) {
@@ -454,7 +454,7 @@ exports.review = async (req, res, next) => {
 
     // Ambil nidn Kaprodi
     const [urows] = await db.query(
-      `SELECT nidn FROM users WHERE id = ? LIMIT 1`,
+      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
       [req.user.id],
     );
     const kaprodiNidn = urows[0]?.nidn;
@@ -471,7 +471,7 @@ exports.review = async (req, res, next) => {
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
       WHERE pj.id = ?
-        AND ps.kaprodi_nidn = ?
+        AND COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?
         AND pj.status = 'SUBMITTED'
       LIMIT 1
       `,
@@ -723,7 +723,7 @@ exports.review = async (req, res, next) => {
        FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
-       WHERE u.nidn = ? AND r.code = 'KAPRODI'
+       WHERE COALESCE(u.nidn, u.staff_usr_id) = ? AND r.code = 'KAPRODI'
        LIMIT 1`,
       [reviewDocRows[0]?.kaprodi_nidn],
     );

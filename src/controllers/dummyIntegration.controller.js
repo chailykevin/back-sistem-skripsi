@@ -186,6 +186,39 @@ const DOSEN_PENEMPATAN_PROGRAM_STUDI = {
   41: "Sistem Informasi",
 };
 
+const PREDEFINED_ROLE_FROM_SIMIKO = [
+  { roleCode: "KAPRODI", groupKeyword: "KAPRODI", requiresProgramStudi: true },
+  {
+    roleCode: "SEKPRODI",
+    groupKeyword: "SEKPRODI",
+    requiresProgramStudi: true,
+  },
+  { roleCode: "DEKAN", groupKeyword: "DEKAN", requiresFakultas: true },
+  { roleCode: "PERPUSTAKAAN_STAFF", groupKeyword: "OPERATOR PERPUS" },
+  { roleCode: "LPPM", groupKeyword: "LPPM" },
+  { roleCode: "SEKRETARIAT", groupKeyword: "OPERATOR", requiresFaculty: true },
+];
+
+const STAFF_PROGRAM_STUDI_ALIASES = [
+  { aliases: ["MAN"], programStudiName: "Bahasa Mandarin" },
+  { aliases: ["AK"], programStudiName: "Akuntansi" },
+  {
+    aliases: ["BKI"],
+    programStudiName: "Bahasa dan Kebudayaan Inggris",
+  },
+  { aliases: ["BD"], programStudiName: "Bisnis Digital" },
+  { aliases: ["MM"], programStudiName: "Manajemen (S2)" },
+  { aliases: ["MN", "MJ"], programStudiName: "Manajemen" },
+  { aliases: ["TI", "INF"], programStudiName: "Informatika" },
+  { aliases: ["SI"], programStudiName: "Sistem Informasi" },
+];
+
+const STAFF_FAKULTAS_ALIASES = {
+  FB: "Fakultas Bahasa",
+  FEB: "Fakultas Ekonomi dan Bisnis",
+  FTI: "Fakultas Teknologi Informasi",
+};
+
 async function getActiveRolesMap(conn) {
   const [rows] = await conn.query(
     `SELECT id, code
@@ -239,12 +272,18 @@ async function upsertDosen(conn, dosen) {
        nama = VALUES(nama),
         email = VALUES(email),
         program_studi_id = VALUES(program_studi_id)`,
-    [
-      dosen.nidn,
-      dosen.nama,
-      dosen.email ?? null,
-      dosen.programStudiId ?? null,
-    ],
+    [dosen.nidn, dosen.nama, dosen.email ?? null, dosen.programStudiId ?? null],
+  );
+}
+
+async function upsertStaf(conn, staf) {
+  await conn.query(
+    `INSERT INTO staf (usr_id, nama, username)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       nama = VALUES(nama),
+       username = VALUES(username)`,
+    [staf.nidn, staf.nama, staf.username],
   );
 }
 
@@ -253,18 +292,20 @@ async function upsertUserAccount(conn, payload) {
   // it should only ever be set on first insert. Re-seeding an existing
   // account must never reset a password the user may have since changed.
   await conn.query(
-    `INSERT INTO users (username, password_hash, npm, nidn, is_active)
-     VALUES (?, ?, ?, ?, 1)
+    `INSERT INTO users (username, password_hash, npm, nidn, staff_usr_id, is_active)
+     VALUES (?, ?, ?, ?, ?, 1)
      ON DUPLICATE KEY UPDATE
        username = VALUES(username),
        npm = VALUES(npm),
        nidn = VALUES(nidn),
+       staff_usr_id = VALUES(staff_usr_id),
        is_active = 1`,
     [
       payload.username,
       payload.passwordHash,
       payload.npm ?? null,
       payload.nidn ?? null,
+      payload.staffUsrId ?? null,
     ],
   );
 }
@@ -409,6 +450,111 @@ function isGlobalDosenPenempatan(value) {
   return (
     value === true || value === 1 || normalized === "" || normalized === "true"
   );
+}
+
+function containsGroupToken(groupName, token) {
+  return new RegExp(`(^|[^A-Z0-9])${token}($|[^A-Z0-9])`).test(groupName);
+}
+
+function resolveStaffProgramStudi(groupName, prodiByName) {
+  const match = STAFF_PROGRAM_STUDI_ALIASES.find(({ aliases }) =>
+    aliases.some((alias) => containsGroupToken(groupName, alias)),
+  );
+  if (!match) return null;
+
+  return {
+    nama: match.programStudiName,
+    id:
+      prodiByName.get(normalizeProgramStudiName(match.programStudiName)) ??
+      null,
+  };
+}
+
+function resolveStaffFakultas(groupName, fakultasByName) {
+  const code = Object.keys(STAFF_FAKULTAS_ALIASES).find((alias) =>
+    containsGroupToken(groupName, alias),
+  );
+  if (!code) return null;
+
+  const nama = STAFF_FAKULTAS_ALIASES[code];
+  return {
+    nama,
+    id: fakultasByName.get(normalizeProgramStudiName(nama)) ?? null,
+  };
+}
+
+function classifyStaffRole(groupName, prodiByName, fakultasByName) {
+  const normalizedGroupName = String(groupName ?? "").toUpperCase();
+  const roleDefinition = PREDEFINED_ROLE_FROM_SIMIKO.find(
+    ({ roleCode, groupKeyword }) => {
+      if (!normalizedGroupName.includes(groupKeyword)) return false;
+      if (roleCode !== "SEKRETARIAT") return true;
+      return ["FB", "FEB", "FTI"].some((alias) =>
+        containsGroupToken(normalizedGroupName, alias),
+      );
+    },
+  );
+  if (!roleDefinition) return null;
+
+  const programStudi = roleDefinition.requiresProgramStudi
+    ? resolveStaffProgramStudi(normalizedGroupName, prodiByName)
+    : null;
+  const fakultas =
+    roleDefinition.requiresFakultas || roleDefinition.requiresFaculty
+      ? resolveStaffFakultas(normalizedGroupName, fakultasByName)
+      : null;
+
+  return {
+    roleCode: roleDefinition.roleCode,
+    programStudi,
+    fakultas,
+  };
+}
+
+async function getStaffFromSimiko(conn, programRows) {
+  const [fakultasRows] = await conn.query(`SELECT id, nama FROM fakultas`);
+  const [sourceUsers] = await conn.query(
+    `SELECT userAdm.usrId, userAdm.gpuId, userAdm.usrNama, userAdm.usrUName,
+            groupAdm.gpuNama
+     FROM widya_miko.c_useradm userAdm
+     INNER JOIN widya_miko.c_grupadm groupAdm ON groupAdm.gpuId = userAdm.gpuId
+     WHERE userAdm.del = 0 AND groupAdm.del = 0`,
+  );
+
+  console.log(sourceUsers);
+
+  const prodiByName = new Map(
+    programRows.map((programStudi) => [
+      normalizeProgramStudiName(programStudi.nama),
+      Number(programStudi.id),
+    ]),
+  );
+  const fakultasByName = new Map(
+    fakultasRows.map((fakultas) => [
+      normalizeProgramStudiName(fakultas.nama),
+      Number(fakultas.id),
+    ]),
+  );
+
+  return sourceUsers
+    .map((sourceUser, index) => {
+      const classification = classifyStaffRole(
+        sourceUser.gpuNama,
+        prodiByName,
+        fakultasByName,
+      );
+      if (!classification) return null;
+
+      return {
+        nidn: String(sourceUser.usrId ?? "").trim(),
+        nama: String(sourceUser.usrNama ?? "").trim(),
+        username: String(sourceUser.usrUName ?? "").trim(),
+        gpuNama: sourceUser.gpuNama,
+        ...classification,
+        index: index + 1,
+      };
+    })
+    .filter(Boolean);
 }
 
 async function getDosenFromSimiko(conn, programRows) {
@@ -1030,7 +1176,7 @@ exports.seedDosenDummy = async (req, res, next) => {
         !dosen.hasKnownPlacement ||
         (dosen.programStudiName && !dosen.programStudiId)
       ) {
-        console.log(dosen);
+        // console.log(dosen);
 
         await conn.rollback();
         txStarted = false;
@@ -1041,7 +1187,7 @@ exports.seedDosenDummy = async (req, res, next) => {
       }
     }
 
-    console.log(input);
+    // console.log(input);
 
     const assignedByUserId = Number(req.user?.id) || null;
     const result = [];
@@ -1092,6 +1238,120 @@ exports.seedDosenDummy = async (req, res, next) => {
       ok: true,
       message: "SIMIKO dosen synchronized",
       data: { summary: { total: result.length }, dosen: result },
+    });
+  } catch (err) {
+    try {
+      if (txStarted) await conn.rollback();
+    } catch (_) {}
+    next(err);
+  } finally {
+    conn.release();
+  }
+};
+
+exports.seedStafDummy = async (req, res, next) => {
+  const conn = await db.getConnection();
+  let txStarted = false;
+
+  try {
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const programRows = await getProgramStudiRows(conn);
+    const rolesMap = await getActiveRolesMap(conn);
+    const input = await getStaffFromSimiko(conn, programRows);
+    const assignedByUserId = Number(req.user?.id) || null;
+
+    // console.log(input);
+
+    for (const staff of input) {
+      const roleId = rolesMap.get(staff.roleCode);
+      if (!staff.nidn || !staff.nama || !staff.username || !roleId) {
+        throw new Error(`Invalid SIMIKO staff payload at item #${staff.index}`);
+      }
+      if (
+        (staff.roleCode === "KAPRODI" || staff.roleCode === "SEKPRODI") &&
+        (!staff.programStudi?.id || !staff.programStudi?.nama)
+      ) {
+        throw new Error(
+          `Missing or unmapped program study for ${staff.roleCode} at item #${staff.index}`,
+        );
+      }
+      if (
+        staff.roleCode === "DEKAN" &&
+        (!staff.fakultas?.id || !staff.fakultas?.nama)
+      ) {
+        throw new Error(
+          `Missing or unmapped fakultas for DEKAN at item #${staff.index}`,
+        );
+      }
+    }
+
+    const result = [];
+    for (const staff of input) {
+      const roleId = rolesMap.get(staff.roleCode);
+      await upsertStaf(conn, staff);
+      await upsertUserAccount(conn, {
+        username: staff.username,
+        passwordHash: null,
+        npm: null,
+        nidn: null,
+        staffUsrId: staff.nidn,
+      });
+
+      const userId = await getUserIdByUsername(conn, staff.username);
+      if (!userId) {
+        throw new Error(
+          `Failed to resolve staff account for username ${staff.username}`,
+        );
+      }
+
+      await upsertUserRole(conn, {
+        userId,
+        roleId,
+        programStudiId: staff.programStudi?.id ?? null,
+        assignedByUserId,
+      });
+
+      if (staff.roleCode === "KAPRODI") {
+        await conn.query(
+          `UPDATE program_studi SET kaprodi_staff_usr_id = ? WHERE id = ?`,
+          [staff.nidn, staff.programStudi.id],
+        );
+      }
+      if (staff.roleCode === "SEKPRODI") {
+        await conn.query(
+          `UPDATE program_studi SET sekprodi_staff_usr_id = ? WHERE id = ?`,
+          [staff.nidn, staff.programStudi.id],
+        );
+      }
+      if (staff.roleCode === "DEKAN") {
+        await conn.query(
+          `UPDATE fakultas SET dekan_staff_usr_id = ? WHERE id = ?`,
+          [staff.nidn, staff.fakultas.id],
+        );
+      }
+
+      result.push({
+        userId,
+        username: staff.username,
+        nidn: staff.nidn,
+        nama: staff.nama,
+        role: staff.roleCode,
+        programStudiId: staff.programStudi?.id ?? null,
+        programStudiNama: staff.programStudi?.nama ?? null,
+        fakultasId: staff.fakultas?.id ?? null,
+        fakultasNama: staff.fakultas?.nama ?? null,
+      });
+    }
+
+    await conn.commit();
+    txStarted = false;
+
+    return res.status(201).json({
+      ok: true,
+      message: "SIMIKO staff synchronized",
+      data: { summary: { total: result.length }, staff: result },
     });
   } catch (err) {
     try {
