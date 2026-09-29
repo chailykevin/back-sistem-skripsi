@@ -23,8 +23,10 @@ async function getStudentNpm(userId) {
 }
 
 async function getLecturerNidn(userId) {
+  console.log(userId);
+
   const [rows] = await db.query(
-    `SELECT nidn
+    `SELECT staff_usr_id AS nidn
      FROM users
      WHERE id = ? AND is_active = 1
      LIMIT 1`,
@@ -691,10 +693,9 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       tahun: String(new Date().getFullYear()),
     };
 
-    const halamanBuffer =
-      await generateHalamanPersetujuanJudulDesainSkripsiFTI(
-        dataHalamanPersetujuanJudulDesainSkripsiFTI,
-      );
+    const halamanBuffer = await generateHalamanPersetujuanJudulDesainSkripsiFTI(
+      dataHalamanPersetujuanJudulDesainSkripsiFTI,
+    );
 
     halamanFile = {
       mime: "application/pdf",
