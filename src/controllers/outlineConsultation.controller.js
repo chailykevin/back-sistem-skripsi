@@ -22,17 +22,25 @@ async function getStudentNpm(userId) {
   return rows[0]?.npm ?? null;
 }
 
-async function getLecturerNidn(userId) {
-  console.log(userId);
-
+async function getUserIdentity(userId) {
   const [rows] = await db.query(
-    `SELECT staff_usr_id AS nidn
-     FROM users
-     WHERE id = ? AND is_active = 1
-     LIMIT 1`,
+    `SELECT nidn, staff_usr_id
+       FROM users
+       WHERE id = ? AND is_active = 1
+       LIMIT 1`,
     [userId],
   );
-  return rows[0]?.nidn ?? null;
+  const user = rows[0];
+  return {
+    nidn: user?.nidn ?? null,
+    staffUsrId: user?.staff_usr_id ?? null,
+    ownerId: user?.nidn ?? user?.staff_usr_id ?? null,
+  };
+}
+
+async function getLecturerNidn(userId) {
+  const { nidn } = await getUserIdentity(userId);
+  return nidn;
 }
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
@@ -53,12 +61,12 @@ function buildKartuPreviewFileName(npm, namaMahasiswa) {
   );
 }
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
+async function getKaprodiProgramStudiIdsByOwnerId(ownerId) {
   const [rows] = await db.query(
     `SELECT id
      FROM program_studi
      WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
+    [ownerId],
   );
   return rows
     .map((row) => Number(row.id))
@@ -1351,13 +1359,14 @@ exports.getReviewFile = async (req, res, next) => {
       const npm = await getStudentNpm(req.user.id);
       isAuthorized = Boolean(npm) && npm === file.npm;
     } else if (req.user.userType === "LECTURER") {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (nidn) {
+      const { nidn, ownerId } = await getUserIdentity(req.user.id);
+      if (ownerId) {
         isAuthorized =
-          nidn === file.pembimbing1_nidn || nidn === file.pembimbing2_nidn;
+          Boolean(nidn) &&
+          (nidn === file.pembimbing1_nidn || nidn === file.pembimbing2_nidn);
         if (!isAuthorized && hasRole(req, "KAPRODI")) {
           const kaprodiProgramStudiIds =
-            await getKaprodiProgramStudiIdsByNidn(nidn);
+            await getKaprodiProgramStudiIdsByOwnerId(ownerId);
           isAuthorized = kaprodiProgramStudiIds.includes(
             Number(file.program_studi_id),
           );
@@ -1403,15 +1412,16 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
       const npm = await getStudentNpm(req.user.id);
       isAuthorized = Boolean(npm) && npm === kartu.npm;
     } else {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (nidn) {
+      const { nidn, ownerId } = await getUserIdentity(req.user.id);
+      if (ownerId) {
         const isAssignedPembimbing =
-          nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn;
+          Boolean(nidn) &&
+          (nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn);
         if (isAssignedPembimbing) {
           isAuthorized = true;
         } else if (hasRole(req, "KAPRODI")) {
           const kaprodiProgramStudiIds =
-            await getKaprodiProgramStudiIdsByNidn(nidn);
+            await getKaprodiProgramStudiIdsByOwnerId(ownerId);
           isAuthorized = kaprodiProgramStudiIds.includes(
             Number(kartu.program_studi_id),
           );
@@ -1920,12 +1930,12 @@ exports.listForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can access this endpoint" });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const { ownerId } = await getUserIdentity(req.user.id);
+    if (!ownerId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIdsByOwnerId(ownerId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)
@@ -2080,12 +2090,12 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const { ownerId } = await getUserIdentity(req.user.id);
+    if (!ownerId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIdsByOwnerId(ownerId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)
