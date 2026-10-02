@@ -1,5 +1,12 @@
 const db = require("../db");
 const service = require("../services/dosenBimbingProdi.service");
+const { parsePagination, buildPagination } = require("../utils/pagination");
+
+function parseOptionalPositiveInteger(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : NaN;
+}
 
 function getRequestedProgramStudiId(req) {
   const raw =
@@ -57,8 +64,36 @@ exports.listAll = async (req, res, next) => {
         message: "Only Admin can manage supervisor eligibility",
       });
     }
-    const data = await service.getManagementData();
-    return res.json({ ok: true, data });
+    const pagination = parsePagination(req.query);
+    const q = String(req.query?.q ?? "").trim() || null;
+    const homeProgramStudiId = parseOptionalPositiveInteger(
+      req.query?.homeProgramStudiId,
+    );
+    const programStudiId = parseOptionalPositiveInteger(
+      req.query?.programStudiId,
+    );
+
+    if (Number.isNaN(homeProgramStudiId) || Number.isNaN(programStudiId)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Program studi filter is invalid",
+      });
+    }
+
+    const { dosen, programStudi, totalItems } =
+      await service.getManagementData({
+        q,
+        homeProgramStudiId,
+        programStudiId,
+        limit: pagination.limit,
+        offset: pagination.offset,
+      });
+
+    return res.json({
+      ok: true,
+      data: { dosen, programStudi },
+      pagination: buildPagination({ ...pagination, totalItems }),
+    });
   } catch (err) {
     next(err);
   }
