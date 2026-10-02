@@ -48,7 +48,12 @@ async function requireAdminProdi(req, res) {
 
 function handleWriteError(err, res, next) {
   if (err.code === "ER_DUP_ENTRY") {
-    return res.status(409).json({ ok: false, message: "Dosen is already eligible for this program studi" });
+    return res
+      .status(409)
+      .json({
+        ok: false,
+        message: "Dosen is already eligible for this program studi",
+      });
   }
   if (err.code === "ER_NO_REFERENCED_ROW_2") {
     return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
@@ -80,14 +85,15 @@ exports.listAll = async (req, res, next) => {
       });
     }
 
-    const { dosen, programStudi, totalItems } =
-      await service.getManagementData({
+    const { dosen, programStudi, totalItems } = await service.getManagementData(
+      {
         q,
         homeProgramStudiId,
         programStudiId,
         limit: pagination.limit,
         offset: pagination.offset,
-      });
+      },
+    );
 
     return res.json({
       ok: true,
@@ -115,7 +121,10 @@ exports.add = async (req, res, next) => {
     const programStudiId = await requireAdminProdi(req, res);
     if (!programStudiId) return;
     const dosenNidn = String(req.body?.dosenNidn ?? "").trim();
-    if (!dosenNidn) return res.status(400).json({ ok: false, message: "dosenNidn is required" });
+    if (!dosenNidn)
+      return res
+        .status(400)
+        .json({ ok: false, message: "dosenNidn is required" });
     const [result] = await db.query(
       `INSERT INTO dosen_bimbing_prodi (dosen_nidn, program_studi_id) VALUES (?, ?)`,
       [dosenNidn, programStudiId],
@@ -136,16 +145,23 @@ exports.update = async (req, res, next) => {
     const id = Number(req.params.id);
     const dosenNidn = String(req.body?.dosenNidn ?? "").trim();
     if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid supervisor eligibility id" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid supervisor eligibility id" });
     }
-    if (!dosenNidn) return res.status(400).json({ ok: false, message: "dosenNidn is required" });
+    if (!dosenNidn)
+      return res
+        .status(400)
+        .json({ ok: false, message: "dosenNidn is required" });
     const [result] = await db.query(
       `UPDATE dosen_bimbing_prodi SET dosen_nidn = ?
         WHERE id_dosen_bimbing_prodi = ? AND program_studi_id = ?`,
       [dosenNidn, id, programStudiId],
     );
     if (result.affectedRows === 0) {
-      return res.status(404).json({ ok: false, message: "Supervisor eligibility not found" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Supervisor eligibility not found" });
     }
     return res.json({
       ok: true,
@@ -162,7 +178,9 @@ exports.remove = async (req, res, next) => {
     if (!programStudiId) return;
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid supervisor eligibility id" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid supervisor eligibility id" });
     }
     const [result] = await db.query(
       `DELETE FROM dosen_bimbing_prodi
@@ -170,7 +188,9 @@ exports.remove = async (req, res, next) => {
       [id, programStudiId],
     );
     if (result.affectedRows === 0) {
-      return res.status(404).json({ ok: false, message: "Supervisor eligibility not found" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Supervisor eligibility not found" });
     }
     return res.json({ ok: true });
   } catch (err) {
@@ -181,11 +201,15 @@ exports.remove = async (req, res, next) => {
 exports.listForStudent = async (req, res, next) => {
   try {
     if (!req.user.hasRole("STUDENT")) {
-      return res.status(403).json({ ok: false, message: "Only students can access this endpoint" });
+      return res
+        .status(403)
+        .json({ ok: false, message: "Only students can access this endpoint" });
     }
     const programStudiId = req.user.programStudiId;
     if (!programStudiId) {
-      return res.status(400).json({ ok: false, message: "Program studi tidak valid" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Program studi tidak valid" });
     }
     const data = await service.listByProgramStudiId(programStudiId);
     return res.json({ ok: true, data });

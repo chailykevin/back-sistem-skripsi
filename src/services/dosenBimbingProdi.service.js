@@ -4,7 +4,9 @@ async function listByProgramStudiId(programStudiId) {
   const [rows] = await db.query(
     `SELECT dbp.id_dosen_bimbing_prodi, d.nidn, d.nama, d.email
        FROM dosen_bimbing_prodi dbp INNER JOIN dosen d ON d.nidn = dbp.dosen_nidn
-      WHERE dbp.program_studi_id = ? ORDER BY d.nama ASC`, [programStudiId]);
+      WHERE dbp.program_studi_id = ? ORDER BY d.nama ASC`,
+    [programStudiId],
+  );
   return rows;
 }
 
@@ -13,7 +15,8 @@ async function areEligible(programStudiId, nidns) {
   if (!uniqueNidns.length) return true;
   const [rows] = await db.query(
     `SELECT dosen_nidn FROM dosen_bimbing_prodi WHERE program_studi_id = ? AND dosen_nidn IN (${uniqueNidns.map(() => "?").join(", ")})`,
-    [programStudiId, ...uniqueNidns]);
+    [programStudiId, ...uniqueNidns],
+  );
   return rows.length === uniqueNidns.length;
 }
 
@@ -29,7 +32,9 @@ async function getManagementData({
 
   if (q) {
     const pattern = `%${q}%`;
-    where.push(`(d.nama LIKE ? OR d.nidn LIKE ? OR COALESCE(d.email, '') LIKE ?)`);
+    where.push(
+      `(d.nama LIKE ? OR d.nidn LIKE ? OR COALESCE(d.email, '') LIKE ?)`,
+    );
     params.push(pattern, pattern, pattern);
   }
   if (homeProgramStudiId) {
