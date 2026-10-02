@@ -653,8 +653,11 @@ exports.submitPenilaian = async (req, res, next) => {
     }
 
     const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
+      [nidn],
     );
 
     assertSignatures([
@@ -973,7 +976,10 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     // Hasil Penilaian Akhir DOCX is always signed by Pembimbing 1, regardless of
     // which pembimbing (P1 or P2) actually submits this form.
     const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
       [sidang.pembimbing1_nidn],
     );
 
@@ -1264,8 +1270,23 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
       ? formatTanggal(new Date(sidang.tanggal_sidang))
       : "";
 
+    async function getLecturerSignature(nidn) {
+      if (!nidn) return null;
+      const [[row]] = await conn.query(
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
+        [nidn],
+      );
+      return row?.signature_image ?? null;
+    }
+
     for (const row of notulenRows) {
       const role = row.role;
+      const pengujiSignature = await getLecturerSignature(
+        role === "PENGUJI_1" ? sidang.penguji1_nidn : sidang.penguji2_nidn,
+      );
 
       // DOCX generator (legacy)
       // const templatePath = path.join(
@@ -1312,7 +1333,7 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
           role: NOTULEN_ROLE_LABEL[role],
           nama:
             role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-          signatureBase64: null,
+          signatureBase64: pengujiSignature,
         },
         note: row.note,
       });
@@ -1360,11 +1381,14 @@ async function generateAndStoreBeritaAcara(
   ];
   const ujianKeStr = `${ujianKeNum} (${UJIAN_KE_LABEL[ujianKeNum] ?? ujianKeNum})`;
 
-  // Get signatures for all 4 participants via nidn lookup
+  // Get signatures for all four lecturer participants from SIMIKO.
   async function getSig(nidn) {
     if (!nidn) return null;
     const [[row]] = await conn.query(
-      `SELECT signature_image FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
       [nidn],
     );
     return row?.signature_image ?? null;

@@ -113,7 +113,10 @@ async function getSigByUserId(conn, userId) {
 async function getSigByNidn(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+    `SELECT dsnTtd AS signature_image
+     FROM widya_miko.m_dosen
+     WHERE dsnId = ?
+     LIMIT 1`,
     [nidn],
   );
   return row?.signature_image ?? null;
@@ -122,13 +125,12 @@ async function getSigByNidn(conn, nidn) {
 async function getSigByNidnAndRole(conn, nidn, roleCode) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT u.signature_image
-     FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-      WHERE COALESCE(u.nidn, u.staff_usr_id) = ? AND u.is_active = 1 AND r.code = ?
+    `SELECT d.dsnTtd AS signature_image
+     FROM widya_miko.c_useradm u
+     JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
+     WHERE u.usrId = ?
      LIMIT 1`,
-    [nidn, roleCode],
+    [nidn],
   );
   return row?.signature_image ?? null;
 }
@@ -809,7 +811,10 @@ exports.reviewRevisi = async (req, res, next) => {
           [revisi.sidang_id, activeStage.signer_role],
         );
         if (notulenRow && notulenRow.submitted_at) {
-          const sigImage = await getSigByUserId(conn, activeStage.user_id);
+          const sigImage = await getSigByNidn(
+            conn,
+            getNidnForRole(revisi, activeStage.signer_role),
+          );
           assertSignatures([
             {
               role: getRoleLabel(activeStage.signer_role),

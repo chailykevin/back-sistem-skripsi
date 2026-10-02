@@ -2420,7 +2420,7 @@ exports.submitKaprodi = async (req, res, next) => {
               s.judul AS judul_skripsi,
               d1.nama AS dospem1_nama,
               d2.nama AS dospem2_nama,
-              u_kaprodi.signature_image AS kaprodi_sig,
+              md_kaprodi.dsnTtd AS kaprodi_sig,
               d_kaprodi.nama AS nama_kaprodi,
               u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
@@ -2437,6 +2437,8 @@ exports.submitKaprodi = async (req, res, next) => {
            WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
          )
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
+       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_nidn
+       LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
       [skripsiId],
@@ -3464,7 +3466,7 @@ exports.submitDisposisi = async (req, res, next) => {
          s.judul AS judul_skripsi,
          d1.nama AS dospem1_nama,
          d2.nama AS dospem2_nama,
-         u_kaprodi.signature_image AS kaprodi_sig,
+         md_kaprodi.dsnTtd AS kaprodi_sig,
          d_kaprodi.nama AS nama_kaprodi,
          u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
@@ -3481,6 +3483,8 @@ exports.submitDisposisi = async (req, res, next) => {
            WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
          )
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
+       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_nidn
+       LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
       [skripsiId],
@@ -3815,7 +3819,11 @@ exports.generateSuratUndangan = async (req, res, next) => {
     const kaprodiNidn = dataRow?.kaprodi_nidn ?? null;
     const [[kaprodiUserRow]] = kaprodiNidn
       ? await conn.query(
-          `SELECT u.signature_image FROM users u WHERE COALESCE(u.nidn, u.staff_usr_id) = ? AND u.is_active = 1 ORDER BY u.id DESC LIMIT 1`,
+          `SELECT d.dsnTtd AS signature_image
+           FROM widya_miko.c_useradm u
+           JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
+           WHERE u.usrId = ?
+           LIMIT 1`,
           [kaprodiNidn],
         )
       : [[null]];

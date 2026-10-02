@@ -719,11 +719,10 @@ exports.review = async (req, res, next) => {
       [id],
     );
     const [[kaprodiUserRow]] = await conn.query(
-      `SELECT u.signature_image
-       FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE COALESCE(u.nidn, u.staff_usr_id) = ? AND r.code = 'KAPRODI'
+      `SELECT d.dsnTtd AS signature_image
+       FROM widya_miko.c_useradm u
+       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
+       WHERE u.usrId = ?
        LIMIT 1`,
       [reviewDocRows[0]?.kaprodi_nidn],
     );

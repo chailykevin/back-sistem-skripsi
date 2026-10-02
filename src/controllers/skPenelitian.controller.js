@@ -362,13 +362,14 @@ async function generateSkDocuments(conn, sk, outlineId) {
     );
   }
 
-  // Fetch dekan user + dosen name + signature
   const [[dekan]] = await conn.query(
-    `SELECT u.signature_image, d.nama AS nama_dekan
+    `SELECT md.dsnTtd AS signature_image, d.nama AS nama_dekan
      FROM users u
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
      JOIN dosen d ON d.nidn = u.nidn
+     JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+     JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
      WHERE r.code = 'DEKAN' AND u.nidn = ?
      LIMIT 1`,
     [ps.dekan_nidn],
@@ -379,11 +380,13 @@ async function generateSkDocuments(conn, sk, outlineId) {
     });
 
   const [[kaprodi]] = await conn.query(
-    `SELECT u.signature_image, d.nama AS nama_kaprodi
+    `SELECT md.dsnTtd AS signature_image, d.nama AS nama_kaprodi
      FROM users u
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
      JOIN dosen d ON d.nidn = u.nidn
+     JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+     JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
      JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
      WHERE r.code = 'KAPRODI' AND ps.id = ?
      LIMIT 1`,
@@ -715,24 +718,26 @@ exports.initSkPenelitian = async (req, res, next) => {
         [kartu.npm],
       );
       const [[p2Row]] = await conn.query(
-        `SELECT u.signature_image FROM users u
-         JOIN user_roles ur ON ur.user_id = u.id
-         JOIN roles r ON r.id = ur.role_id
-         WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
         [kartu.pembimbing2_nidn],
       );
       const [[p1Row]] = await conn.query(
-        `SELECT u.signature_image FROM users u
-         JOIN user_roles ur ON ur.user_id = u.id
-         JOIN roles r ON r.id = ur.role_id
-         WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
         [kartu.pembimbing1_nidn],
       );
       const [[kaprodiRow]] = await conn.query(
-        `SELECT u.signature_image FROM users u
+        `SELECT md.dsnTtd AS signature_image FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
          JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
+         JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+         JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
          WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
         [kartu.program_studi_id],
       );

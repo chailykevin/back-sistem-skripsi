@@ -143,6 +143,19 @@ async function getSigByNpm(conn, npm) {
   return row?.signature_image ?? null;
 }
 
+async function getSigByDosenUserId(conn, userId) {
+  if (!userId) return null;
+  const [[row]] = await conn.query(
+    `SELECT sd.dsnTtd AS signature_image
+     FROM users u
+     JOIN widya_miko.m_dosen sd ON sd.dsnId = u.nidn
+     WHERE u.id = ?
+     LIMIT 1`,
+    [userId],
+  );
+  return row?.signature_image ?? null;
+}
+
 async function getSigByRole(conn, role, userIdForRole) {
   if (!userIdForRole) return null;
   const [[row]] = await conn.query(
@@ -252,10 +265,10 @@ async function generateSuratDoc(
 
   const [sigMhs, sigPb1, sigPb2, sigPg1, sigPg2] = await Promise.all([
     getSigByNpm(conn, pengumpulan.npm),
-    getSigByUserId(conn, confMap["PEMBIMBING_1"]?.user_id ?? null),
-    getSigByUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
-    getSigByUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
-    getSigByUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PEMBIMBING_1"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
   ]);
 
   async function getDosenNamaByUserId(userId) {
@@ -925,10 +938,13 @@ exports.signPengumpulan = async (req, res, next) => {
       }
     }
 
-    // Get sekprodi signature and nama
     const [[sekprodiSigRow]] = await conn.query(
-      `SELECT u.signature_image FROM users u WHERE u.id = ? LIMIT 1`,
-      [userId],
+      `SELECT d.dsnTtd AS signature_image
+       FROM widya_miko.c_useradm u
+       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
+       WHERE u.usrId = ?
+       LIMIT 1`,
+      [sekprodiUserRow.nidn],
     );
     const [[dosRow]] = await conn.query(
       `SELECT d.nama FROM dosen d WHERE d.nidn = ? LIMIT 1`,

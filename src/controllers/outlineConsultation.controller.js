@@ -86,24 +86,16 @@ async function getKartuByOutlineId(outlineId) {
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       pu1.signature_image AS pembimbing1_signature,
-       pu2.signature_image AS pembimbing2_signature
+       sd1.dsnTtd AS pembimbing1_signature,
+       sd2.dsnTtd AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-       )
-     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-       )
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
@@ -345,7 +337,7 @@ async function getKartuLogs(queryable, kartuId) {
        s.stage,
        r.submission_no,
        d.nama   AS reviewer_nama,
-       u.signature_image AS reviewer_signature,
+       sd.dsnTtd AS reviewer_signature,
        r.decision_status AS status,
        r.catatan_kartu,
        r.reviewed_at AS logged_at,
@@ -356,6 +348,7 @@ async function getKartuLogs(queryable, kartuId) {
      JOIN konsultasi_outline_review r ON r.konsultasi_outline_stage_id = s.id
      LEFT JOIN users u ON u.id = r.reviewer_user_id
      LEFT JOIN dosen d ON d.nidn = u.nidn
+     LEFT JOIN widya_miko.m_dosen sd ON sd.dsnId = s.pembimbing_nidn
      LEFT JOIN konsultasi_outline_review_file rf
        ON rf.konsultasi_outline_review_id = r.id
      WHERE s.kartu_konsultasi_outline_id = ?
@@ -382,24 +375,16 @@ async function generateAndStoreFinalKartuDocx(
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       pu1.signature_image AS pembimbing1_signature,
-       pu2.signature_image AS pembimbing2_signature
+       sd1.dsnTtd AS pembimbing1_signature,
+       sd2.dsnTtd AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-       )
-     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-       )
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.id = ?
      LIMIT 1`,
 
@@ -578,7 +563,7 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     return { skippedReason: "missing_files", missingFiles };
   }
 
-  // Generate halaman persetujuan DOCX inline from users.signature_image
+  // Lecturer signatures are sourced from SIMIKO's m_dosen.dsnTtd.
   // Non-fatal: a missing signature must not abort the outline-review transaction
   let halamanFile = null;
   try {
@@ -589,24 +574,26 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       [kartu.outline_id],
     );
     const [[p2Row]] = await conn.query(
-      `SELECT u.signature_image FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
       [kartu.pembimbing2_nidn],
     );
     const [[p1Row]] = await conn.query(
-      `SELECT u.signature_image FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
       [kartu.pembimbing1_nidn],
     );
     const [[kaprodiRow]] = await conn.query(
-      `SELECT u.signature_image FROM users u
+      `SELECT md.dsnTtd AS signature_image FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
        JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
+       JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+       JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
        WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
       [kartu.program_studi_id],
     );
@@ -808,24 +795,16 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       pu1.signature_image AS pembimbing1_signature,
-       pu2.signature_image AS pembimbing2_signature
+       sd1.dsnTtd AS pembimbing1_signature,
+       sd2.dsnTtd AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-       )
-     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-       )
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
@@ -2114,24 +2093,16 @@ exports.getDetailForKaprodi = async (req, res, next) => {
          o.judul             AS judul_skripsi,
          d1.nama             AS pembimbing1_nama,
          d2.nama             AS pembimbing2_nama,
-         pu1.signature_image AS pembimbing1_signature,
-         pu2.signature_image AS pembimbing2_signature
+         sd1.dsnTtd AS pembimbing1_signature,
+         sd2.dsnTtd AS pembimbing2_signature
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
        JOIN mahasiswa m ON m.npm = o.npm
        JOIN program_studi ps ON ps.id = o.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-       LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-         AND EXISTS (
-           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-           WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-         )
-       LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-         AND EXISTS (
-           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-           WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-         )
+       LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+       LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
        WHERE k.outline_id = ?
          AND o.program_studi_id IN (?)
        LIMIT 1`,
@@ -2449,8 +2420,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
     if (shouldRequireSignature) {
       const [[sigRow]] = await conn.query(
-        `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-        [req.user.id],
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
+        [stage.pembimbing_nidn],
       );
       if (!sigRow?.signature_image) {
         await conn.rollback();

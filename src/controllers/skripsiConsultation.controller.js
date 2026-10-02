@@ -236,7 +236,7 @@ async function getKartuLogs(queryable, kartuId) {
        rv.submission_no,
        u.nidn          AS reviewer_nidn,
        d.nama          AS reviewer_nama,
-       u.signature_image AS reviewer_signature,
+       sd.dsnTtd       AS reviewer_signature,
        rv.decision_status AS status,
        rv.catatan_kartu,
        rv.reviewed_at  AS logged_at
@@ -244,6 +244,7 @@ async function getKartuLogs(queryable, kartuId) {
      JOIN konsultasi_skripsi_stage st ON st.id = rv.konsultasi_skripsi_stage_id
      LEFT JOIN users u ON u.id = rv.reviewer_user_id
      LEFT JOIN dosen d ON d.nidn = u.nidn
+     LEFT JOIN widya_miko.m_dosen sd ON sd.dsnId = st.pembimbing_nidn
      WHERE st.kartu_konsultasi_skripsi_id = ?
      ORDER BY rv.reviewed_at ASC, rv.id ASC
      LIMIT 53`,
@@ -375,11 +376,13 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
   let kaprodiSignature = null;
   if (psRow?.kaprodi_nidn) {
     const [[kaprodiRow]] = await queryable.query(
-      `SELECT d.nama, u.signature_image
+      `SELECT d.nama, md.dsnTtd AS signature_image
        FROM dosen d
        LEFT JOIN users u ON u.nidn = d.nidn
        LEFT JOIN user_roles ur ON ur.user_id = u.id
        LEFT JOIN roles r ON r.id = ur.role_id AND r.code = 'KAPRODI'
+       JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, d.nidn)
+       JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
        WHERE d.nidn = ? AND r.id IS NOT NULL
        LIMIT 1`,
       [psRow.kaprodi_nidn],
@@ -402,16 +405,16 @@ async function fetchKartuDenorm(queryable, kartu) {
     `SELECT m.npm AS npm, m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
             sk.judul AS judul_skripsi,
             d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
-            u1.signature_image AS pembimbing1_signature,
-            u2.signature_image AS pembimbing2_signature
+            sd1.dsnTtd AS pembimbing1_signature,
+            sd2.dsnTtd AS pembimbing2_signature
      FROM kartu_konsultasi_skripsi k
      JOIN skripsi sk ON sk.id = k.skripsi_id
      JOIN mahasiswa m ON m.npm = sk.npm
      JOIN program_studi ps ON ps.id = sk.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
-     LEFT JOIN users u1 ON u1.nidn = sk.pembimbing1_nidn AND u1.is_active = 1
-     LEFT JOIN users u2 ON u2.nidn = sk.pembimbing2_nidn AND u2.is_active = 1
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = sk.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = sk.pembimbing2_nidn
      WHERE k.id = ? LIMIT 1`,
     [kartu.id],
   );
@@ -1052,8 +1055,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     let signatureImageValue = null;
     if (shouldRequireSignature) {
       const [[sigRow]] = await conn.query(
-        `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-        [req.user.id],
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
+        [stage.pembimbing_nidn],
       );
       if (!sigRow?.signature_image) {
         await conn.rollback();
@@ -1061,7 +1067,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         return res.status(400).json({
           ok: false,
           message:
-            "No saved signature found. Please upload your signature first.",
+            "No signature found in SIMIKO. Please update it in SIMIKO first.",
         });
       }
       signatureImageValue = sigRow.signature_image;
