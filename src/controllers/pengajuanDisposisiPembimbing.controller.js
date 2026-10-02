@@ -1,5 +1,6 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -395,6 +396,19 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: "Dosen pembimbing yang dipilih tidak valid",
+      });
+    }
+
+    if (
+      !(await dosenBimbingProdiService.areEligible(programStudiId, [
+        pembimbing1Val,
+        pembimbing2Val,
+      ]))
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
       });
     }
 
@@ -1003,7 +1017,8 @@ exports.resubmit = async (req, res, next) => {
     txStarted = true;
 
     const [rows] = await conn.query(
-      `SELECT id, status, syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
+      `SELECT id, status, program_studi_id, pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
+              syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
        FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
@@ -1028,6 +1043,29 @@ exports.resubmit = async (req, res, next) => {
         ok: false,
         message:
           "Pengajuan disposisi pembimbing status is not eligible for resubmit",
+      });
+    }
+
+    const effectivePembimbing1 =
+      pembimbing1Val && pembimbing1Val.length > 0
+        ? pembimbing1Val
+        : rows[0].pembimbing1_diajukan_nidn;
+    const effectivePembimbing2 =
+      pembimbing2Val && pembimbing2Val.length > 0
+        ? pembimbing2Val
+        : rows[0].pembimbing2_diajukan_nidn;
+    if (
+      !(await dosenBimbingProdiService.areEligible(rows[0].program_studi_id, [
+        effectivePembimbing1,
+        effectivePembimbing2,
+      ]))
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
       });
     }
 
