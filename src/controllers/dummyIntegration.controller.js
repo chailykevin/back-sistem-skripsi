@@ -1,6 +1,7 @@
 const bcrypt = require("bcrypt");
 const db = require("../db");
 const nodemailer = require("nodemailer");
+const formatPersonName = require("../utils/formatPersonName");
 
 const DUMMY_PASSWORD_PLAIN = "123";
 const PREDEFINED_MAHASISWA = [
@@ -547,7 +548,7 @@ async function getStaffFromSimiko(conn, programRows) {
 
       return {
         nidn: String(sourceUser.usrId ?? "").trim(),
-        nama: String(sourceUser.usrNama ?? "").trim(),
+        nama: formatPersonName(sourceUser.usrNama),
         username: String(sourceUser.usrUName ?? "").trim(),
         gpuNama: sourceUser.gpuNama,
         ...classification,
@@ -585,7 +586,7 @@ async function getDosenFromSimiko(conn, programRows) {
 
     return {
       nidn: String(item.dsnId ?? "").trim(),
-      nama: String(item.dsnNama ?? "").trim(),
+      nama: formatPersonName(item.dsnNama),
       email: String(item.dsnEmail ?? "").trim(),
       username: String(item.dsnEmail ?? "").trim(),
       dsnPenempatan: penempatan,
@@ -637,7 +638,7 @@ async function getMahasiswaFromSimiko(conn) {
 
   return students.map((item) => ({
     npm: item.mhsNpm,
-    nama: item.bdtNama,
+    nama: formatPersonName(item.bdtNama),
     username: item.mhsUName,
     password: null,
     sks: item.akmSKSLulus,
@@ -744,6 +745,23 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
       });
     }
 
+    const syncedNpms = [...new Set(input.map((mhs) => mhs.npm))];
+    const missingNpmCondition = syncedNpms.length
+      ? `AND npm NOT IN (${syncedNpms.map(() => "?").join(", ")})`
+      : "";
+    // An empty successful source result deactivates all mahasiswa accounts.
+    // Keep historical records and exclude accounts with dosen/staf identities.
+    const [deactivationResult] = await conn.query(
+      `UPDATE users
+       SET is_active = 0
+       WHERE npm IS NOT NULL
+         AND nidn IS NULL
+         AND staff_usr_id IS NULL
+         AND is_active = 1
+         ${missingNpmCondition}`,
+      syncedNpms,
+    );
+
     await conn.commit();
     txStarted = false;
 
@@ -753,6 +771,7 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
       data: {
         credentials: { note: "Each mahasiswa's password equals their npm" },
         mahasiswa: result,
+        deactivated: deactivationResult.affectedRows,
       },
     });
   } catch (err) {
@@ -1231,13 +1250,34 @@ exports.seedDosenDummy = async (req, res, next) => {
       });
     }
 
+    const syncedNidns = [...new Set(input.map((dosen) => dosen.nidn))];
+    const missingNidnCondition = syncedNidns.length
+      ? `AND u.nidn NOT IN (${syncedNidns.map(() => "?").join(", ")})`
+      : "";
+    // An empty successful source result deactivates all linked dosen accounts.
+    // Preserve supervision history and exclude mahasiswa/staf identities.
+    const [deactivationResult] = await conn.query(
+      `UPDATE users u
+       JOIN dosen d ON d.nidn = u.nidn
+       SET u.is_active = 0
+       WHERE u.npm IS NULL
+         AND u.staff_usr_id IS NULL
+         AND u.is_active = 1
+         ${missingNidnCondition}`,
+      syncedNidns,
+    );
+
     await conn.commit();
     txStarted = false;
 
     return res.status(201).json({
       ok: true,
       message: "SIMIKO dosen synchronized",
-      data: { summary: { total: result.length }, dosen: result },
+      data: {
+        summary: { total: result.length },
+        dosen: result,
+        deactivated: deactivationResult.affectedRows,
+      },
     });
   } catch (err) {
     try {
@@ -1345,13 +1385,34 @@ exports.seedStafDummy = async (req, res, next) => {
       });
     }
 
+    const syncedStaffIds = [...new Set(input.map((staff) => staff.nidn))];
+    const missingStaffCondition = syncedStaffIds.length
+      ? `AND u.staff_usr_id NOT IN (${syncedStaffIds.map(() => "?").join(", ")})`
+      : "";
+    // An empty successful classified source result deactivates all staf accounts.
+    // Keep historical assignments and exclude mahasiswa/dosen identities.
+    const [deactivationResult] = await conn.query(
+      `UPDATE users u
+       JOIN staf s ON s.usr_id = u.staff_usr_id
+       SET u.is_active = 0
+       WHERE u.npm IS NULL
+         AND u.nidn IS NULL
+         AND u.is_active = 1
+         ${missingStaffCondition}`,
+      syncedStaffIds,
+    );
+
     await conn.commit();
     txStarted = false;
 
     return res.status(201).json({
       ok: true,
       message: "SIMIKO staff synchronized",
-      data: { summary: { total: result.length }, staff: result },
+      data: {
+        summary: { total: result.length },
+        staff: result,
+        deactivated: deactivationResult.affectedRows,
+      },
     });
   } catch (err) {
     try {
