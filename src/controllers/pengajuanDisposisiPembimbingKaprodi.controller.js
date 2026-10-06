@@ -441,10 +441,7 @@ exports.review = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid status" });
     }
 
-    if (
-      status === "APPROVED" &&
-      (!pembimbing1Val || !pembimbing2Val)
-    ) {
+    if (status === "APPROVED" && (!pembimbing1Val || !pembimbing2Val)) {
       return res.status(400).json({
         ok: false,
         message:
@@ -506,10 +503,10 @@ exports.review = async (req, res, next) => {
 
     if (
       status === "APPROVED" &&
-      !(await dosenBimbingProdiService.areEligible(
-        check[0].program_studi_id,
-        [pembimbing1Val, pembimbing2Val],
-      ))
+      !(await dosenBimbingProdiService.areEligible(check[0].program_studi_id, [
+        pembimbing1Val,
+        pembimbing2Val,
+      ]))
     ) {
       return res.status(400).json({
         ok: false,
@@ -721,21 +718,20 @@ exports.review = async (req, res, next) => {
       console.log("[review] syarat updated");
     }
 
-    console.log("[review] fetching reviewDocRows");
     const [reviewDocRows] = await conn.query(
       `SELECT
          pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
          pj.submitted_at,
          pj.syarat_transkrip, pj.syarat_krs, pj.syarat_metodologi_nilai_min_c,
          m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
-         ps.nama AS program_studi_nama, ps.kaprodi_nidn,
+         ps.nama AS program_studi_nama, ps.kaprodi_staff_usr_id AS kaprodi_nidn,
          o.judul AS judul_skripsi,
          d1.nama AS pembimbing1_diajukan_nama,
          d2.nama AS pembimbing2_diajukan_nama,
          d3.nama AS pembimbing1_ditetapkan_nama,
          d4.nama AS pembimbing2_ditetapkan_nama,
          u_student.signature_image AS student_signature,
-         dkap.nama AS kaprodi_nama
+         staf.nama AS kaprodi_nama
        FROM pengajuan_disposisi_pembimbing pj
        JOIN mahasiswa m ON m.npm = pj.npm
        JOIN program_studi ps ON ps.id = pj.program_studi_id
@@ -745,7 +741,7 @@ exports.review = async (req, res, next) => {
        LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
        LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
        LEFT JOIN users u_student ON u_student.npm = pj.npm AND u_student.is_active = 1
-       LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
+       LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
        WHERE pj.id = ?
        LIMIT 1`,
       [id],
