@@ -48,12 +48,10 @@ async function requireAdminProdi(req, res) {
 
 function handleWriteError(err, res, next) {
   if (err.code === "ER_DUP_ENTRY") {
-    return res
-      .status(409)
-      .json({
-        ok: false,
-        message: "Dosen is already eligible for this program studi",
-      });
+    return res.status(409).json({
+      ok: false,
+      message: "Dosen is already eligible for this program studi",
+    });
   }
   if (err.code === "ER_NO_REFERENCED_ROW_2") {
     return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
@@ -198,12 +196,15 @@ exports.remove = async (req, res, next) => {
   }
 };
 
-exports.listForStudent = async (req, res, next) => {
+exports.listEligible = async (req, res, next) => {
   try {
-    if (!req.user.hasRole("STUDENT")) {
+    if (!req.user.hasRole("STUDENT", "KAPRODI")) {
       return res
         .status(403)
-        .json({ ok: false, message: "Only students can access this endpoint" });
+        .json({
+          ok: false,
+          message: "Only students or Kaprodi can access this endpoint",
+        });
     }
     const programStudiId = req.user.programStudiId;
     if (!programStudiId) {

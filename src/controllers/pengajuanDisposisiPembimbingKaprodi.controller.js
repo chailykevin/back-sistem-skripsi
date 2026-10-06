@@ -1,6 +1,7 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
+const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -417,6 +418,15 @@ exports.review = async (req, res, next) => {
       syaratMetodologi,
     } = req.body || {};
 
+    const pembimbing1Val =
+      pembimbing1DitapkanNidn != null
+        ? String(pembimbing1DitapkanNidn).trim()
+        : "";
+    const pembimbing2Val =
+      pembimbing2DitapkanNidn != null
+        ? String(pembimbing2DitapkanNidn).trim()
+        : "";
+
     console.log("[review] parsed body:", {
       status,
       pembimbing1DitapkanNidn,
@@ -433,12 +443,19 @@ exports.review = async (req, res, next) => {
 
     if (
       status === "APPROVED" &&
-      (!pembimbing2DitapkanNidn ||
-        String(pembimbing2DitapkanNidn).trim().length === 0)
+      (!pembimbing1Val || !pembimbing2Val)
     ) {
       return res.status(400).json({
         ok: false,
-        message: "pembimbing2DitapkanNidn is required for APPROVED status",
+        message:
+          "Pembimbing 1 dan Pembimbing 2 wajib diisi untuk status APPROVED",
+      });
+    }
+
+    if (status === "APPROVED" && pembimbing1Val === pembimbing2Val) {
+      return res.status(400).json({
+        ok: false,
+        message: "Pembimbing 1 and Pembimbing 2 cannot be the same",
       });
     }
 
@@ -466,7 +483,8 @@ exports.review = async (req, res, next) => {
     // Pastikan pengajuan ini memang milik prodinya Kaprodi
     const [check] = await db.query(
       `
-      SELECT pj.id, pj.syarat_transkrip, pj.syarat_krs, pj.syarat_metodologi_nilai_min_c
+      SELECT pj.id, pj.program_studi_id, pj.syarat_transkrip, pj.syarat_krs,
+             pj.syarat_metodologi_nilai_min_c
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -483,6 +501,20 @@ exports.review = async (req, res, next) => {
       return res.status(404).json({
         ok: false,
         message: "Pengajuan tidak ditemukan / bukan wewenang Anda",
+      });
+    }
+
+    if (
+      status === "APPROVED" &&
+      !(await dosenBimbingProdiService.areEligible(
+        check[0].program_studi_id,
+        [pembimbing1Val, pembimbing2Val],
+      ))
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi ini",
       });
     }
 
@@ -513,8 +545,8 @@ exports.review = async (req, res, next) => {
       `,
       [
         status,
-        pembimbing1DitapkanNidn ?? null,
-        pembimbing2DitapkanNidn ?? null,
+        pembimbing1Val || null,
+        pembimbing2Val || null,
         catatanKaprodi ?? null,
         req.user.id,
         id,
