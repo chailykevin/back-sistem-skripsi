@@ -3,6 +3,7 @@ const { escapeHtml } = require("./shared/html.js");
 const { renderSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
+const sharp = require("sharp");
 const templatePath = path.join(
   __dirname,
   "../templates/formulir-pengajuan-disposisi-pembimbing-skripsi-fti/template.html",
@@ -32,14 +33,45 @@ function renderRequirements(requirements) {
     .join("");
 }
 
+async function renderNormalizedSignature(signatureBase64, alt) {
+  if (signatureBase64 == null || signatureBase64 === "") return "";
+
+  try {
+    // Accept the same raw base64 and base64 data URLs as renderSignature.
+    const base64 = signatureBase64.startsWith("data:")
+      ? signatureBase64.replace(/^data:image\/[^;,]+;base64,/i, "")
+      : signatureBase64;
+    // Flatten first so transparent PNGs and white-background scans trim alike.
+    const flattened = await sharp(Buffer.from(base64, "base64"))
+      .autoOrient()
+      .flatten({ background: "#ffffff" })
+      .png()
+      .toBuffer();
+    const normalized = await sharp(flattened)
+      .trim({ background: "#ffffff", threshold: 10, lineArt: true })
+      // About 300 DPI for the signature overlay's maximum 40mm by 12mm size.
+      .resize(472, 142, { fit: "inside" })
+      .png()
+      .toBuffer();
+    return renderSignature(normalized.toString("base64"), alt);
+  } catch (error) {
+    throw new Error(`Unable to normalize ${alt}: ${error.message}`, {
+      cause: error,
+    });
+  }
+}
+
 async function renderTemplate(template, data) {
   const { mahasiswa, pengajuan, disposisi } = data;
   if (!["Diterima", "Ditolak"].includes(disposisi.keputusan)) {
     throw new Error('Keputusan must be either "Diterima" or "Ditolak".');
   }
   const [signaturePemohon, signatureKetuaProgramStudi] = await Promise.all([
-    renderSignature(pengajuan.signatureBase64, "Tanda tangan pemohon"),
-    renderSignature(
+    renderNormalizedSignature(
+      pengajuan.signatureBase64,
+      "Tanda tangan pemohon",
+    ),
+    renderNormalizedSignature(
       disposisi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
@@ -99,7 +131,7 @@ async function generateFormulirPengajuanDisposisiPembimbingSkripsiFTI(data) {
       const root = document.documentElement;
       const pageHeight = (296 / 25.4) * 96;
       const minimumHeight = (5 / 25.4) * 96;
-      const maximumHeight = (50 / 25.4) * 96;
+      const maximumHeight = (12 / 25.4) * 96;
       const fits = (height) => {
         root.style.setProperty("--signature-height", `${height}px`);
         return form.getBoundingClientRect().height <= pageHeight + 1;
