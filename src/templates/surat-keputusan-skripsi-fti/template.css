@@ -148,3 +148,29 @@ footer {
   font-size: 12pt;
   line-height: 1.2;
 }
+
+/* Normalized signatures: 40mm wide, name overlap, and a 2mm upward shift. */
+.signature-space {
+  position: relative;
+  width: 100%;
+  height: 12mm;
+  margin: 0 auto;
+}
+.signature-space > .signature-image {
+  position: absolute;
+  bottom: -2mm;
+  left: 50%;
+  transform: translate(-50%, -2mm);
+  width: 40mm;
+  max-width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  object-position: center bottom;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.signature-space + * {
+  display: block;
+  transform: translateY(-2mm);
+}

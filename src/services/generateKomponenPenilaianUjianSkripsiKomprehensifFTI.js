@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/komponen-penilaian-ujian-skripsi-komprehensif-fti/template.html");
@@ -46,7 +46,7 @@ async function renderTemplate(template, data) {
     throw new TypeError("komponenPenilaian must be an array.");
   const [logoUWDP, signature] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(data.penilai.signatureBase64),
+    renderNormalizedSignature(data.penilai.signatureBase64),
   ]);
   const values = {
     "{{logoUWDP}}": logoUWDP,

@@ -1,9 +1,8 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { renderSignature } = require("./shared/images.js");
+const { renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
-const sharp = require("sharp");
 const templatePath = path.join(
   __dirname,
   "../templates/formulir-pengajuan-disposisi-pembimbing-skripsi-fti/template.html",
@@ -31,34 +30,6 @@ function renderRequirements(requirements) {
         `<li class="requirement-item"><span class="checkbox">${checked ? "&#10003;" : ""}</span>${escapeHtml(label)}</li>`,
     )
     .join("");
-}
-
-async function renderNormalizedSignature(signatureBase64, alt) {
-  if (signatureBase64 == null || signatureBase64 === "") return "";
-
-  try {
-    // Accept the same raw base64 and base64 data URLs as renderSignature.
-    const base64 = signatureBase64.startsWith("data:")
-      ? signatureBase64.replace(/^data:image\/[^;,]+;base64,/i, "")
-      : signatureBase64;
-    // Flatten first so transparent PNGs and white-background scans trim alike.
-    const flattened = await sharp(Buffer.from(base64, "base64"))
-      .autoOrient()
-      .flatten({ background: "#ffffff" })
-      .png()
-      .toBuffer();
-    const normalized = await sharp(flattened)
-      .trim({ background: "#ffffff", threshold: 10, lineArt: true })
-      // About 300 DPI for the signature overlay's maximum 40mm by 12mm size.
-      .resize(472, 142, { fit: "inside" })
-      .png()
-      .toBuffer();
-    return renderSignature(normalized.toString("base64"), alt);
-  } catch (error) {
-    throw new Error(`Unable to normalize ${alt}: ${error.message}`, {
-      cause: error,
-    });
-  }
 }
 
 async function renderTemplate(template, data) {

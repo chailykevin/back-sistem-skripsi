@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/hasil-penilaian-akhir-ujian-skripsi-fti/template.html");
@@ -39,7 +39,7 @@ async function renderTemplate(template, data) {
   const average = grandTotal / scores.length;
   const [logoUWDP, signaturePimpinanSidang] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(pembimbingPertama.signatureBase64),
+    renderNormalizedSignature(pembimbingPertama.signatureBase64),
   ]);
   const values = {
     "{{logoUWDP}}": logoUWDP,

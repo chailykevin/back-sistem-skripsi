@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const { renderPdf } = require("./shared/pdf.js");
 const templatePath = path.join(__dirname, "../templates/notulen-penguji-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/notulen-penguji-fti/template.css");
@@ -17,7 +17,7 @@ async function renderTemplate(template, data) {
 
   const [logoFTI, signature] = await Promise.all([
     imageToDataUrl("assets/logo-FTI.png"),
-    renderSignature(data.penguji.signatureBase64, "Tanda tangan penguji"),
+    renderNormalizedSignature(data.penguji.signatureBase64, "Tanda tangan penguji"),
   ]);
   const values = {
     "{{logoFTI}}": logoFTI,

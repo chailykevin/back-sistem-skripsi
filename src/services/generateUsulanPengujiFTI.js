@@ -1,7 +1,7 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { escapeHtml } = require("./shared/html.js");
-const { renderSignature } = require("./shared/images.js");
+const { renderNormalizedSignature } = require("./shared/images.js");
 const { renderPdf } = require("./shared/pdf.js");
 const templatePath = path.join(__dirname, "../templates/usulan-penguji-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/usulan-penguji-fti/template.css");
@@ -88,12 +88,12 @@ async function renderTemplate(template, data) {
 
   const [signatureKetuaProgramStudi, signatureMahasiswa, signatureDisposisi] =
     await Promise.all([
-      renderSignature(
+      renderNormalizedSignature(
         data.ketuaProgramStudi.signatureBase64,
         "Tanda tangan ketua program studi",
       ),
-      renderSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
-      renderSignature(data.disposisi.signatureBase64, "Tanda tangan disposisi kaprodi"),
+      renderNormalizedSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
+      renderNormalizedSignature(data.disposisi.signatureBase64, "Tanda tangan disposisi kaprodi"),
     ]);
 
   const values = {

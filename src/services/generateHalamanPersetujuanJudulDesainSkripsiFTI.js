@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/halaman-persetujuan-judul-desain-skripsi-fti/template.html");
@@ -70,16 +70,16 @@ async function renderTemplate(template, data) {
     signaturePembimbingKedua,
     signatureKetuaProgramStudi,
   ] = await Promise.all([
-    renderSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
-    renderSignature(
+    renderNormalizedSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
+    renderNormalizedSignature(
       data.pembimbing.pertama.signatureBase64,
       "Tanda tangan pembimbing pertama",
     ),
-    renderSignature(
+    renderNormalizedSignature(
       data.pembimbing.kedua.signatureBase64,
       "Tanda tangan pembimbing kedua",
     ),
-    renderSignature(
+    renderNormalizedSignature(
       data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),

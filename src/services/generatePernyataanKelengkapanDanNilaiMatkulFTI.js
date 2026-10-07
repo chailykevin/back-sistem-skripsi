@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/pernyataan-kelengkapan-dan-nilai-matkul-fti/template.html");
@@ -27,7 +27,7 @@ async function renderTemplate(template, data) {
     )
     .replace(
       "{{signatureMahasiswa}}",
-      await renderSignature(data.mahasiswa.signatureBase64),
+      await renderNormalizedSignature(data.mahasiswa.signatureBase64),
     );
 }
 

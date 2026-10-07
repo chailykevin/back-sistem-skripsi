@@ -1,13 +1,13 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const { renderPdf } = require("./shared/pdf.js");
 const templatePath = path.join(__dirname, "../templates/surat-undangan-sidang-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/surat-undangan-sidang-fti/template.css");
 async function renderTemplate(template, data) {
   const [logoUWDP, signature] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(
+    renderNormalizedSignature(
       data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
