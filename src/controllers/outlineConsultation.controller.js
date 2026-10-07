@@ -375,14 +375,24 @@ async function generateAndStoreFinalKartuDocx(
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       sd1.dsnTtd AS pembimbing1_signature,
-       sd2.dsnTtd AS pembimbing2_signature
+       CASE WHEN st1.current_status = 'ACCEPTED'
+         THEN sd1.dsnTtd ELSE NULL END AS pembimbing1_signature,
+       CASE WHEN st2.current_status = 'CONTINUE'
+         THEN sd2.dsnTtd ELSE NULL END AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     LEFT JOIN konsultasi_outline_stage st1
+       ON st1.kartu_konsultasi_outline_id = k.id
+       AND st1.stage = 'PEMBIMBING_1'
+       AND st1.pembimbing_nidn = o.pembimbing1_nidn
+     LEFT JOIN konsultasi_outline_stage st2
+       ON st2.kartu_konsultasi_outline_id = k.id
+       AND st2.stage = 'PEMBIMBING_2'
+       AND st2.pembimbing_nidn = o.pembimbing2_nidn
      LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
      LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.id = ?
@@ -795,14 +805,24 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       sd1.dsnTtd AS pembimbing1_signature,
-       sd2.dsnTtd AS pembimbing2_signature
+       CASE WHEN st1.current_status = 'ACCEPTED'
+         THEN sd1.dsnTtd ELSE NULL END AS pembimbing1_signature,
+       CASE WHEN st2.current_status = 'CONTINUE'
+         THEN sd2.dsnTtd ELSE NULL END AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     LEFT JOIN konsultasi_outline_stage st1
+       ON st1.kartu_konsultasi_outline_id = k.id
+       AND st1.stage = 'PEMBIMBING_1'
+       AND st1.pembimbing_nidn = o.pembimbing1_nidn
+     LEFT JOIN konsultasi_outline_stage st2
+       ON st2.kartu_konsultasi_outline_id = k.id
+       AND st2.stage = 'PEMBIMBING_2'
+       AND st2.pembimbing_nidn = o.pembimbing2_nidn
      LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
      LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.outline_id = ?
