@@ -363,7 +363,7 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
   );
 
   const [[psRow]] = await queryable.query(
-    `SELECT f.nama AS fakultas_nama, ps.kaprodi_nidn
+    `SELECT f.nama AS fakultas_nama, ps.kaprodi_staff_usr_id
      FROM kartu_konsultasi_skripsi k
      JOIN skripsi sk ON sk.id = k.skripsi_id
      JOIN program_studi ps ON ps.id = sk.program_studi_id
@@ -374,18 +374,14 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
 
   let kaprodiNama = "";
   let kaprodiSignature = null;
-  if (psRow?.kaprodi_nidn) {
+  if (psRow?.kaprodi_staff_usr_id) {
     const [[kaprodiRow]] = await queryable.query(
-      `SELECT d.nama, md.dsnTtd AS signature_image
-       FROM dosen d
-       LEFT JOIN users u ON u.nidn = d.nidn
-       LEFT JOIN user_roles ur ON ur.user_id = u.id
-       LEFT JOIN roles r ON r.id = ur.role_id AND r.code = 'KAPRODI'
-       JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, d.nidn)
+      `SELECT staf.nama, md.dsnTtd AS signature_image
+       FROM widya_miko.c_useradm cua
        JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-       WHERE d.nidn = ? AND r.id IS NOT NULL
-       LIMIT 1`,
-      [psRow.kaprodi_nidn],
+       LEFT JOIN staf ON staf.usr_id = cua.usrId
+       WHERE cua.usrId = ? LIMIT 1`,
+      [psRow.kaprodi_staff_usr_id],
     );
     kaprodiNama = kaprodiRow?.nama ?? "";
     kaprodiSignature = kaprodiRow?.signature_image ?? null;

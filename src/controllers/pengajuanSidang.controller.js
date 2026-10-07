@@ -2421,7 +2421,7 @@ exports.submitKaprodi = async (req, res, next) => {
               d1.nama AS dospem1_nama,
               d2.nama AS dospem2_nama,
               md_kaprodi.dsnTtd AS kaprodi_sig,
-              d_kaprodi.nama AS nama_kaprodi,
+              COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
               u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
@@ -2429,15 +2429,9 @@ exports.submitKaprodi = async (req, res, next) => {
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN users u_kaprodi ON COALESCE(u_kaprodi.nidn, u_kaprodi.staff_usr_id) = ps.kaprodi_nidn
-         AND u_kaprodi.is_active = 1
-         AND EXISTS (
-           SELECT 1 FROM user_roles ur2
-           INNER JOIN roles r2 ON r2.id = ur2.role_id
-           WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
-         )
+       LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_nidn
+       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_staff_usr_id
        LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
@@ -3467,7 +3461,7 @@ exports.submitDisposisi = async (req, res, next) => {
          d1.nama AS dospem1_nama,
          d2.nama AS dospem2_nama,
          md_kaprodi.dsnTtd AS kaprodi_sig,
-         d_kaprodi.nama AS nama_kaprodi,
+         COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
          u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
@@ -3475,15 +3469,9 @@ exports.submitDisposisi = async (req, res, next) => {
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN users u_kaprodi ON COALESCE(u_kaprodi.nidn, u_kaprodi.staff_usr_id) = ps.kaprodi_nidn
-         AND u_kaprodi.is_active = 1
-         AND EXISTS (
-           SELECT 1 FROM user_roles ur2
-           INNER JOIN roles r2 ON r2.id = ur2.role_id
-           WHERE ur2.user_id = u_kaprodi.id AND r2.code = 'KAPRODI'
-         )
+       LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_nidn
+       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_staff_usr_id
        LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
@@ -3785,7 +3773,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
          ps.id AS program_studi_id,
          ps.nama AS prodi_nama,
          ps.kode AS ps_kode,
-         ps.kaprodi_nidn,
+         ps.kaprodi_staff_usr_id,
          f.nama AS fakultas_nama,
          f.kode AS f_kode,
          s.judul AS judul_skripsi,
@@ -3816,27 +3804,27 @@ exports.generateSuratUndangan = async (req, res, next) => {
     const npm = dataRow?.npm ?? "";
 
     // Kaprodi signature + name
-    const kaprodiNidn = dataRow?.kaprodi_nidn ?? null;
-    const [[kaprodiUserRow]] = kaprodiNidn
+    const kaprodiStaffUserId = dataRow?.kaprodi_staff_usr_id ?? null;
+    const [[kaprodiUserRow]] = kaprodiStaffUserId
       ? await conn.query(
           `SELECT d.dsnTtd AS signature_image
            FROM widya_miko.c_useradm u
            JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
            WHERE u.usrId = ?
            LIMIT 1`,
-          [kaprodiNidn],
+          [kaprodiStaffUserId],
         )
       : [[null]];
-    const [[kaprodiDosenRow]] = kaprodiNidn
-      ? await conn.query(`SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`, [
-          kaprodiNidn,
+    const [[kaprodiStaffRow]] = kaprodiStaffUserId
+      ? await conn.query(`SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`, [
+          kaprodiStaffUserId,
         ])
       : [[null]];
 
     assertSignatures([
       {
         role: "Kaprodi",
-        nama: kaprodiDosenRow?.nama,
+        nama: kaprodiStaffRow?.nama,
         signatureImage: kaprodiUserRow?.signature_image,
       },
     ]);
@@ -3907,7 +3895,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
     //   sidangTime,
     //   tempatSidang: dataRow?.tempat_sidang ?? "",
     //   ttdKaprodi: kaprodiUserRow?.signature_image ?? null,
-    //   namaKaprodi: kaprodiDosenRow?.nama ?? "",
+    //   namaKaprodi: kaprodiStaffRow?.nama ?? "",
     // });
     // const fileBase64 = suratBuffer.toString("base64");
 
@@ -3933,7 +3921,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
       waktuSidang: sidangTime,
       tempatSidang: dataRow?.tempat_sidang ?? "",
       ketuaProgramStudi: {
-        nama: kaprodiDosenRow?.nama ?? "",
+        nama: kaprodiStaffRow?.nama ?? "",
         signatureBase64: kaprodiUserRow?.signature_image ?? null,
       },
     };

@@ -598,24 +598,23 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
       [kartu.pembimbing1_nidn],
     );
     const [[kaprodiRow]] = await conn.query(
-      `SELECT md.dsnTtd AS signature_image FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
-       JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+      // Match the working pengajuan-disposisi lookup using the assigned staff ID.
+      `SELECT md.dsnTtd AS signature_image FROM program_studi ps
+       JOIN widya_miko.c_useradm cua ON cua.usrId = ps.kaprodi_staff_usr_id
        JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-       WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
+       WHERE ps.id = ? LIMIT 1`,
       [kartu.program_studi_id],
     );
     const [[psRow]] = await conn.query(
       `SELECT
          ps.nama AS program_studi_nama,
-         d.nama AS kaprodi_nama,
+         COALESCE(staf.nama, d.nama) AS kaprodi_nama,
          m.nama AS nama_mahasiswa,
          o.judul AS judul_skripsi,
          d1.nama AS pembimbing1_nama,
          d2.nama AS pembimbing2_nama
        FROM program_studi ps
+       LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
        LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
        JOIN outline o ON o.id = ?
        JOIN mahasiswa m ON m.npm = o.npm
