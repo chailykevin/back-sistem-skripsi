@@ -223,11 +223,31 @@ async function generateHalamanPengesahanMajelisDoc(conn, sidangRow) {
   ]);
 
   assertSignatures([
-    { role: "Mahasiswa", nama: sidangRow.nama_mahasiswa, signatureImage: sigMhs },
-    { role: "Pembimbing 1", nama: sidangRow.pembimbing1_nama, signatureImage: sig1 },
-    { role: "Pembimbing 2", nama: sidangRow.pembimbing2_nama, signatureImage: sig2 },
-    { role: "Penguji 1", nama: sidangRow.penguji1_nama, signatureImage: sigPg1 },
-    { role: "Penguji 2", nama: sidangRow.penguji2_nama, signatureImage: sigPg2 },
+    {
+      role: "Mahasiswa",
+      nama: sidangRow.nama_mahasiswa,
+      signatureImage: sigMhs,
+    },
+    {
+      role: "Pembimbing 1",
+      nama: sidangRow.pembimbing1_nama,
+      signatureImage: sig1,
+    },
+    {
+      role: "Pembimbing 2",
+      nama: sidangRow.pembimbing2_nama,
+      signatureImage: sig2,
+    },
+    {
+      role: "Penguji 1",
+      nama: sidangRow.penguji1_nama,
+      signatureImage: sigPg1,
+    },
+    {
+      role: "Penguji 2",
+      nama: sidangRow.penguji2_nama,
+      signatureImage: sigPg2,
+    },
   ]);
 
   // DOCX generator (legacy)
@@ -269,7 +289,10 @@ async function generateHalamanPengesahanMajelisDoc(conn, sidangRow) {
       ketua: { nama: sidangRow.pembimbing1_nama, signatureBase64: sig1 },
       sekretaris: { nama: sidangRow.pembimbing2_nama, signatureBase64: sig2 },
       pengujiUtama: { nama: sidangRow.penguji1_nama, signatureBase64: sigPg1 },
-      anggotaPenguji: { nama: sidangRow.penguji2_nama, signatureBase64: sigPg2 },
+      anggotaPenguji: {
+        nama: sidangRow.penguji2_nama,
+        signatureBase64: sigPg2,
+      },
     },
   });
 }
@@ -280,7 +303,7 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     : new Date().getFullYear();
 
   const [[prodiRow]] = await conn.query(
-    `SELECT ps.fakultas_id, f.dekan_nidn, d.nama AS dekan_nama
+    `SELECT ps.fakultas_id, f.dekan_staff_usr_id AS dekan_nidn, d.nama AS dekan_nama
      FROM program_studi ps
      LEFT JOIN fakultas f ON f.id = ps.fakultas_id
      LEFT JOIN dosen d ON d.nidn = f.dekan_nidn
@@ -300,9 +323,21 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
   ]);
 
   assertSignatures([
-    { role: "Mahasiswa", nama: sidangRow.nama_mahasiswa, signatureImage: sigMhs },
-    { role: "Pembimbing 1", nama: sidangRow.pembimbing1_nama, signatureImage: sig1 },
-    { role: "Pembimbing 2", nama: sidangRow.pembimbing2_nama, signatureImage: sig2 },
+    {
+      role: "Mahasiswa",
+      nama: sidangRow.nama_mahasiswa,
+      signatureImage: sigMhs,
+    },
+    {
+      role: "Pembimbing 1",
+      nama: sidangRow.pembimbing1_nama,
+      signatureImage: sig1,
+    },
+    {
+      role: "Pembimbing 2",
+      nama: sidangRow.pembimbing2_nama,
+      signatureImage: sig2,
+    },
     { role: "Dekan", nama: dekanNama, signatureImage: sigDekan },
   ]);
 
@@ -356,19 +391,15 @@ exports.initRevisi = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Hanya mahasiswa yang dapat menginisiasi revisi",
-        });
+      return res.status(403).json({
+        ok: false,
+        message: "Hanya mahasiswa yang dapat menginisiasi revisi",
+      });
     }
 
     const [[sidang]] = await db.query(
@@ -465,19 +496,15 @@ exports.submitRevisi = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Hanya mahasiswa yang dapat mengunggah revisi",
-        });
+      return res.status(403).json({
+        ok: false,
+        message: "Hanya mahasiswa yang dapat mengunggah revisi",
+      });
     }
 
     const { fileContent, fileName } = req.body;
@@ -612,9 +639,7 @@ exports.reviewRevisi = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -624,26 +649,30 @@ exports.reviewRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Hanya dosen yang dapat mereview revisi" });
     }
 
-    const { decision, catatan, reviewFile, reviewFileName, reviewFileMimeType } = req.body;
+    const {
+      decision,
+      catatan,
+      reviewFile,
+      reviewFileName,
+      reviewFileMimeType,
+    } = req.body;
     if (!decision || !["APPROVED", "NEED_REVISION"].includes(decision)) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "decision harus APPROVED atau NEED_REVISION",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "decision harus APPROVED atau NEED_REVISION",
+      });
     }
     if (decision === "NEED_REVISION" && (!catatan || !catatan.trim())) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "catatan wajib diisi untuk NEED_REVISION",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "catatan wajib diisi untuk NEED_REVISION",
+      });
     }
 
     const hasReviewFile =
-      reviewFile !== undefined && reviewFile !== null && String(reviewFile) !== "";
+      reviewFile !== undefined &&
+      reviewFile !== null &&
+      String(reviewFile) !== "";
     const safeReviewFileName = String(reviewFileName ?? "").trim();
     if (hasReviewFile && !safeReviewFileName) {
       return res.status(400).json({
@@ -827,7 +856,10 @@ exports.reviewRevisi = async (req, res, next) => {
           ]);
           try {
             const templateBuffer = await readFile(
-              path.join(__dirname, "../templates/template_notulen_penguji.docx"),
+              path.join(
+                __dirname,
+                "../templates/template_notulen_penguji.docx",
+              ),
             );
             const outputBuffer = await patchDocument({
               outputType: "nodebuffer",
@@ -1001,9 +1033,7 @@ exports.getRevisi = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[revisi]] = await db.query(
@@ -1147,12 +1177,10 @@ exports.getRevisi = async (req, res, next) => {
 exports.getLecturerRevisi = async (req, res, next) => {
   try {
     if (req.user.userType !== "LECTURER") {
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Only lecturers can access this endpoint",
-        });
+      return res.status(403).json({
+        ok: false,
+        message: "Only lecturers can access this endpoint",
+      });
     }
 
     const nidn = await getLecturerNidn(req.user.id);
@@ -1228,7 +1256,10 @@ exports.getLecturerRevisi = async (req, res, next) => {
         let latestSubmittedAt = null;
         for (const stage of revisiStages) {
           const stageLatest = latestSubmittedByStage[stage.id];
-          if (stageLatest && (!latestSubmittedAt || stageLatest > latestSubmittedAt)) {
+          if (
+            stageLatest &&
+            (!latestSubmittedAt || stageLatest > latestSubmittedAt)
+          ) {
             latestSubmittedAt = stageLatest;
           }
         }
@@ -1266,7 +1297,9 @@ exports.getKaprodiRevisi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "status tidak valid" });
     }
     const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn ? await getKaprodiProgramStudiIdsByNidn(nidn) : [];
+    const programStudiIds = nidn
+      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+      : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });
     }
@@ -1281,13 +1314,14 @@ exports.getKaprodiRevisi = async (req, res, next) => {
       WHERE rs.revisi_id = rps.id AND rs.current_status != 'APPROVED'
       ORDER BY FIELD(rs.signer_role, 'PENGUJI_2', 'PENGUJI_1', 'PEMBIMBING_2', 'PEMBIMBING_1')
       LIMIT 1)`;
-    const statusCondition = status === "SELESAI"
-      ? "AND rps.is_completed = 1"
-      : status === "PERLU_REVISI"
-        ? `AND rps.is_completed = 0 AND ${activeStageStatus} = 'NEED_REVISION'`
-        : status === "MENUNGGU_TTD"
-          ? `AND rps.is_completed = 0 AND ${activeStageStatus} IS NOT NULL AND ${activeStageStatus} != 'NEED_REVISION'`
-          : "";
+    const statusCondition =
+      status === "SELESAI"
+        ? "AND rps.is_completed = 1"
+        : status === "PERLU_REVISI"
+          ? `AND rps.is_completed = 0 AND ${activeStageStatus} = 'NEED_REVISION'`
+          : status === "MENUNGGU_TTD"
+            ? `AND rps.is_completed = 0 AND ${activeStageStatus} IS NOT NULL AND ${activeStageStatus} != 'NEED_REVISION'`
+            : "";
     const [[countRow]] = await db.query(
       `SELECT COUNT(*) AS total
        FROM revisi_pasca_sidang rps
@@ -1320,7 +1354,12 @@ exports.getKaprodiRevisi = async (req, res, next) => {
        WHERE prog.id IN (${placeholders}) ${searchCondition} ${statusCondition}
        ORDER BY rps.created_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
       pagination.enabled
-        ? [...programStudiIds, ...searchParams, pagination.limit, pagination.offset]
+        ? [
+            ...programStudiIds,
+            ...searchParams,
+            pagination.limit,
+            pagination.offset,
+          ]
         : [...programStudiIds, ...searchParams],
     );
 
@@ -1367,7 +1406,10 @@ exports.getKaprodiRevisi = async (req, res, next) => {
         let latestSubmittedAt = null;
         for (const stage of revisiStages) {
           const stageLatest = latestSubmittedByStage[stage.id];
-          if (stageLatest && (!latestSubmittedAt || stageLatest > latestSubmittedAt)) {
+          if (
+            stageLatest &&
+            (!latestSubmittedAt || stageLatest > latestSubmittedAt)
+          ) {
             latestSubmittedAt = stageLatest;
           }
         }
@@ -1383,14 +1425,17 @@ exports.getKaprodiRevisi = async (req, res, next) => {
 };
 
 const MIME_BY_EXT = {
-  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".doc": "application/msword",
   ".pdf": "application/pdf",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
 function mimeFromFileName(fileName) {
-  const ext = fileName ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase() : "";
+  const ext = fileName
+    ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase()
+    : "";
   return MIME_BY_EXT[ext] ?? "application/octet-stream";
 }
 
@@ -1410,9 +1455,7 @@ exports.getSubmissionFile = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[revisi]] = await db.query(
@@ -1505,7 +1548,9 @@ exports.getReviewFile = async (req, res, next) => {
       [reviewId],
     );
     if (!file) {
-      return res.status(404).json({ ok: false, message: "Review file not found" });
+      return res
+        .status(404)
+        .json({ ok: false, message: "Review file not found" });
     }
 
     const isStudent = req.user.hasRole("STUDENT");
@@ -1514,7 +1559,10 @@ exports.getReviewFile = async (req, res, next) => {
       if (npm !== file.npm) {
         return res.status(403).json({ ok: false, message: "Forbidden" });
       }
-    } else if (!req.user.hasRole("SEKRETARIAT") && !req.user.hasRole("KAPRODI")) {
+    } else if (
+      !req.user.hasRole("SEKRETARIAT") &&
+      !req.user.hasRole("KAPRODI")
+    ) {
       const nidn = await getLecturerNidn(req.user.id);
       if (!isRevisiParticipant(file, nidn)) {
         return res.status(403).json({ ok: false, message: "Forbidden" });
@@ -1539,9 +1587,7 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[revisi]] = await db.query(
@@ -1584,12 +1630,10 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
       [revisi.id],
     );
     if (!fileRow) {
-      return res
-        .status(404)
-        .json({
-          ok: false,
-          message: "Halaman pengesahan majelis penguji belum tersedia",
-        });
+      return res.status(404).json({
+        ok: false,
+        message: "Halaman pengesahan majelis penguji belum tersedia",
+      });
     }
 
     return sendDocx(res, fileRow);
@@ -1603,9 +1647,7 @@ exports.getHalamanDekanFile = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Invalid skripsiId" });
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
     const [[revisi]] = await db.query(
@@ -1649,12 +1691,10 @@ exports.getHalamanDekanFile = async (req, res, next) => {
       [revisi.id],
     );
     if (!fileRow) {
-      return res
-        .status(404)
-        .json({
-          ok: false,
-          message: "Halaman pengesahan dekan belum tersedia",
-        });
+      return res.status(404).json({
+        ok: false,
+        message: "Halaman pengesahan dekan belum tersedia",
+      });
     }
 
     return sendDocx(res, fileRow);

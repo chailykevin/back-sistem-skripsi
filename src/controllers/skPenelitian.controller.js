@@ -344,7 +344,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   // Fetch program studi + fakultas
   const [[ps]] = await conn.query(
-    `SELECT ps.kode AS ps_kode, ps.nama AS ps_nama, f.kode AS f_kode, f.dekan_nidn
+    `SELECT ps.kode AS ps_kode, ps.nama AS ps_nama, f.kode AS f_kode, f.dekan_staff_usr_id AS dekan_nidn
      FROM program_studi ps
      LEFT JOIN fakultas f ON f.id = ps.fakultas_id
      WHERE ps.id = ?
@@ -362,18 +362,31 @@ async function generateSkDocuments(conn, sk, outlineId) {
     );
   }
 
+  console.log(ps.dekan_nidn);
+
   const [[dekan]] = await conn.query(
-    `SELECT md.dsnTtd AS signature_image, d.nama AS nama_dekan
-     FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-     JOIN dosen d ON d.nidn = u.nidn
-     JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+    `SELECT md.dsnTtd AS signature_image, s.nama AS nama_dekan 
+     from staf s
+     JOIN widya_miko.c_useradm cua ON cua.usrId = s.usr_id 
      JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-     WHERE r.code = 'DEKAN' AND u.nidn = ?
+     WHERE s.usr_id = ?
      LIMIT 1`,
     [ps.dekan_nidn],
   );
+
+  // const [[dekan]] = await conn.query(
+  //   `SELECT md.dsnTtd AS signature_image, d.nama AS nama_dekan
+  //    FROM users u
+  //    JOIN user_roles ur ON ur.user_id = u.id
+  //    JOIN roles r ON r.id = ur.role_id
+  //    JOIN dosen d ON d.nidn = u.nidn
+  //    JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
+  //    JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
+  //    WHERE r.code = 'DEKAN' AND u.nidn = ?
+  //    LIMIT 1`,
+  //   [ps.dekan_nidn],
+  // );
+
   if (!dekan)
     throw Object.assign(new Error("Dekan belum dikonfigurasi"), {
       statusCode: 400,
@@ -533,9 +546,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
   const penyelesaianBuffer = await generatePernyataanPenyelesaianSkripsiFTI(
     dataPernyataanPenyelesaianSkripsiFTI,
   );
-  const penyelesaianBase64 = Buffer.from(penyelesaianBuffer).toString(
-    "base64",
-  );
+  const penyelesaianBase64 = Buffer.from(penyelesaianBuffer).toString("base64");
   const mimePenyelesaianPdf = "application/pdf";
 
   await conn.query(
