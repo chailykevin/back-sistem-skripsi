@@ -14,8 +14,12 @@ router.post("/me/signature", auth, userSignatureController.upsertMySignature);
 router.delete("/me/signature", auth, userSignatureController.deleteMySignature);
 
 router.get("/me/email-status", auth, mahasiswaEmailController.getMyEmailStatus);
-router.post("/me/email", auth, mahasiswaEmailController.submitMyEmail);
+// router.post("/me/email", auth, mahasiswaEmailController.submitMyEmail);
 
-router.post("/me/change-password", auth, userPasswordController.changeMyPassword);
+router.post(
+  "/me/change-password",
+  auth,
+  userPasswordController.changeMyPassword,
+);
 
 module.exports = router;
