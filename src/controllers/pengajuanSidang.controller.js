@@ -2626,9 +2626,7 @@ exports.submitKaprodi = async (req, res, next) => {
       await generatePernyataanKelengkapanDanNilaiMatkulFTI(
         dataPernyataanKelengkapanDanNilaiMatkulFTI,
       );
-    const kelengkapanBase64 = Buffer.from(kelengkapanBuffer).toString(
-      "base64",
-    );
+    const kelengkapanBase64 = Buffer.from(kelengkapanBuffer).toString("base64");
     const mimeKelengkapanPdf = "application/pdf";
 
     await conn.query(
@@ -2759,13 +2757,11 @@ exports.submitKaprodi = async (req, res, next) => {
           signatureBase64: docData?.kaprodi_sig ?? null,
         },
       };
-      const penyelesaianBuffer =
-        await generatePernyataanPenyelesaianSkripsiFTI(
-          dataPernyataanPenyelesaianSkripsiFTI,
-        );
-      const penyelesaianBase64 = Buffer.from(penyelesaianBuffer).toString(
-        "base64",
+      const penyelesaianBuffer = await generatePernyataanPenyelesaianSkripsiFTI(
+        dataPernyataanPenyelesaianSkripsiFTI,
       );
+      const penyelesaianBase64 =
+        Buffer.from(penyelesaianBuffer).toString("base64");
       const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.pdf`;
       const mimePenyelesaianPdf = "application/pdf";
 
@@ -3253,7 +3249,9 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
        LEFT JOIN sidang_submission_period ssp ON ssp.id = pengajuan_sidang.sidang_submission_period_id
        WHERE ${conditions.join(" AND ")}
        ORDER BY psk.submitted_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
-      pagination.enabled ? [...params, pagination.limit, pagination.offset] : params,
+      pagination.enabled
+        ? [...params, pagination.limit, pagination.offset]
+        : params,
     );
 
     pagination.totalItems = Number(countRow.total);
