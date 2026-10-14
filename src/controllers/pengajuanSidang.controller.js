@@ -761,6 +761,33 @@ async function getActiveSidang(conn, skripsiId) {
   return rows[0] ?? null;
 }
 
+// The consultation-completion auto-init can create an original sidang draft
+// before an administrator opens a submission period. Attach that period at
+// the student's first eligible submission without changing a prior assignment.
+async function attachOpenSidangPeriodIfMissing(conn, sidang, openPeriod) {
+  if (
+    Number(sidang.ujian_ke) !== 1 ||
+    sidang.sidang_submission_period_id != null
+  ) {
+    return { attached: false, period: null };
+  }
+
+  const period = openPeriod === undefined
+    ? await getSidangOpenPeriod()
+    : openPeriod;
+  if (!period) return { attached: false, period: null };
+
+  await conn.query(
+    `UPDATE pengajuan_sidang
+     SET sidang_submission_period_id = ?
+     WHERE id = ?
+       AND ujian_ke = 1
+       AND sidang_submission_period_id IS NULL`,
+    [period.id, sidang.id],
+  );
+  return { attached: true, period };
+}
+
 exports.initPengajuanSidang = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -1277,8 +1304,12 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       });
     }
 
-    // Gate by period: only on first-time submit (original flow, DRAFT status)
-    if (sidang.ujian_ke === 1 && sidang.status === "DRAFT") {
+    // Gate original first submissions by period, and repair legacy/auto-created
+    // drafts that predate an open period by assigning it once.
+    const requiresOpenPeriod =
+      sidang.ujian_ke === 1 &&
+      (sidang.status === "DRAFT" || sidang.sidang_submission_period_id == null);
+    if (requiresOpenPeriod) {
       const openPeriod = await getSidangOpenPeriod();
       if (!openPeriod) {
         await conn.rollback();
@@ -1288,6 +1319,7 @@ exports.submitPengajuanSidang = async (req, res, next) => {
           message: "Tidak ada periode pengajuan sidang yang sedang dibuka.",
         });
       }
+      await attachOpenSidangPeriodIfMissing(conn, sidang, openPeriod);
     }
 
     const [[skripsiForSubmit]] = await conn.query(
@@ -2393,6 +2425,23 @@ exports.submitKaprodi = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: "Konfirmasi seluruh mata kuliah sudah lulus harus dicentang",
+      });
+    }
+
+    const { period: openPeriod } = await attachOpenSidangPeriodIfMissing(
+      conn,
+      activeSidangForSubmit,
+    );
+    if (
+      Number(activeSidangForSubmit.ujian_ke) === 1 &&
+      activeSidangForSubmit.sidang_submission_period_id == null &&
+      !openPeriod
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Tidak ada periode pengajuan sidang yang sedang dibuka.",
       });
     }
 
