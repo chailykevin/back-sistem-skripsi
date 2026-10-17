@@ -772,9 +772,8 @@ async function attachOpenSidangPeriodIfMissing(conn, sidang, openPeriod) {
     return { attached: false, period: null };
   }
 
-  const period = openPeriod === undefined
-    ? await getSidangOpenPeriod()
-    : openPeriod;
+  const period =
+    openPeriod === undefined ? await getSidangOpenPeriod() : openPeriod;
   if (!period) return { attached: false, period: null };
 
   await conn.query(
@@ -2104,7 +2103,8 @@ exports.getKaprodi = async (req, res, next) => {
               ps.nama AS program_studi_nama, s.judul AS judul_skripsi,
               s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
               s.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
-              COALESCE(psd.ujian_ke, 0) AS ujian_ke
+              COALESCE(psd.ujian_ke, 0) AS ujian_ke,
+              m.tempat_lahir, m.tanggal_lahir, m.ipk
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
        JOIN program_studi ps ON ps.id = s.program_studi_id
@@ -2142,7 +2142,10 @@ exports.getKaprodi = async (req, res, next) => {
           ? {
               npm: autoData.npm,
               nama_mahasiswa: autoData.nama_mahasiswa,
+              tempat_lahir: autoData.tempat_lahir,
+              tanggal_lahir: autoData.tanggal_lahir,
               sks: autoData.sks,
+              ipk: autoData.ipk,
               program_studi_id: autoData.program_studi_id,
               program_studi_nama: autoData.program_studi_nama,
               judul_skripsi: autoData.judul_skripsi,

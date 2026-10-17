@@ -249,17 +249,24 @@ async function upsertMahasiswa(conn, mahasiswa) {
   // set on first insert (seed data carries none). Re-seeding an existing
   // student must never erase an email they've since captured/verified.
   await conn.query(
-    `INSERT INTO mahasiswa (npm, nama, email, sks, program_studi_id)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO mahasiswa (npm, nama, tempat_lahir, tanggal_lahir, email, sks, ipk, program_studi_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
+       tempat_lahir = VALUES(tempat_lahir),
+       tanggal_lahir = VALUES(tanggal_lahir),
+       email = VALUES(email),
        sks = VALUES(sks),
+       ipk = VALUES(ipk),
        program_studi_id = VALUES(program_studi_id)`,
     [
       mahasiswa.npm,
       mahasiswa.nama,
+      mahasiswa.tempatLahir ?? null,
+      mahasiswa.tanggalLahir ?? null,
       mahasiswa.email ?? null,
       mahasiswa.sks,
+      mahasiswa.ipk,
       mahasiswa.programStudiId,
     ],
   );
@@ -392,7 +399,10 @@ async function getPredefinedMahasiswa(programRows, conn) {
       npm: item.npm,
       nama: item.nama,
       email: null,
+      tempatLahir: item.tempatLahir,
+      tanggalLahir: item.tanggalLahir,
       sks: item.sks,
+      ipk: item.ipk,
       username: item.username,
       password: null,
       npmProgramCode,
@@ -626,7 +636,7 @@ async function getMahasiswaFromSimiko(conn) {
   const scheduleIds = schedules.map((schedule) => schedule.jadId);
   const schedulePlaceholders = scheduleIds.map(() => "?").join(", ");
   const [students] = await conn.query(
-    `SELECT DISTINCT m.mhsId, m.mhsNpm, usrMhs.mhsUName, bio.bdtNama, akmSKSLulus
+    `SELECT DISTINCT m.mhsId, m.mhsNpm, usrMhs.mhsUName, bio.bdtNama, bio.bdtT4Lahir, bio.bdtTglLahir, aktMhs.akmIPK, akmSKSLulus
      FROM widya_miko.m_mahasiswa m
      JOIN widya_miko.t_krs krs ON m.mhsId = krs.mhsId
      JOIN widya_miko.m_biodata bio ON bio.bdtId = m.bdtId
@@ -636,13 +646,33 @@ async function getMahasiswaFromSimiko(conn) {
     [...scheduleIds, previousPeriod.akdKode],
   );
 
+  for (const student of students) {
+    student.bdtT4Lahir = normalizeTempatLahir(student.bdtT4Lahir);
+  }
+
   return students.map((item) => ({
     npm: item.mhsNpm,
     nama: formatPersonName(item.bdtNama),
     username: item.mhsUName,
     password: null,
     sks: item.akmSKSLulus,
+    tempatLahir: item.bdtT4Lahir,
+    tanggalLahir: item.bdtTglLahir,
+    ipk: item.akmIPK,
   }));
+}
+
+function normalizeTempatLahir(tempatLahir) {
+  const normalized = String(tempatLahir ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!normalized) return null;
+
+  return normalized
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
 }
 
 exports.seedMahasiswaDummy = async (req, res, next) => {
