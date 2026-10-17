@@ -4,6 +4,22 @@ const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.j
 const { renderPdf } = require("./shared/pdf.js");
 const templatePath = path.join(__dirname, "../templates/surat-undangan-sidang-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/surat-undangan-sidang-fti/template.css");
+
+function formatWaktuSidang(waktuSidang) {
+  const match = String(waktuSidang ?? "").match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+
+  const startMinutes = Number(match[1]) * 60 + Number(match[2]);
+  const endMinutes = (startMinutes + 2 * 60) % (24 * 60);
+  const formatTime = (minutes) => {
+    const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const mins = String(minutes % 60).padStart(2, "0");
+    return `${hours}.${mins}`;
+  };
+
+  return `${formatTime(startMinutes)} - ${formatTime(endMinutes)} WIB`;
+}
+
 async function renderTemplate(template, data) {
   const [logoUWDP, signature] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
@@ -29,7 +45,7 @@ async function renderTemplate(template, data) {
     "{{namaPengujiPertama}}": pengajar.pengujiPertama,
     "{{namaPengujiKedua}}": pengajar.pengujiKedua,
     "{{tanggalSidang}}": data.tanggalSidang,
-    "{{waktuSidang}}": data.waktuSidang,
+    "{{rentangWaktuSidang}}": formatWaktuSidang(data.waktuSidang),
     "{{tempatSidang}}": data.tempatSidang,
     "{{namaKetuaProgramStudi}}": data.ketuaProgramStudi.nama,
   };
