@@ -20,6 +20,21 @@ const BULAN_ID = [
   "Desember",
 ];
 
+const BULAN_ROMAWI = [
+  "I",
+  "II",
+  "III",
+  "IV",
+  "V",
+  "VI",
+  "VII",
+  "VIII",
+  "IX",
+  "X",
+  "XI",
+  "XII",
+];
+
 function formatDateId(date) {
   const d = date instanceof Date ? date : new Date(date);
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
@@ -345,6 +360,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
+      alamatPerusahaan,
       syaratTranskrip,
       syaratKrs,
       syaratMetodologi,
@@ -428,19 +444,64 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       });
     }
 
+    const alamatPerusahaanVal =
+      alamatPerusahaan != null ? String(alamatPerusahaan).trim() : "";
+    if (perluSuratPengantar && !alamatPerusahaanVal) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "alamatPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    if (perluSuratPengantar && alamatPerusahaanVal.length < 2) {
+      return res.status(400).json({
+        ok: false,
+        message: "Alamat perusahaan minimal 2 karakter",
+      });
+    }
+
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const [[programStudi]] = await conn.query(
+      `SELECT ps.kode AS ps_kode, f.kode AS f_kode
+       FROM program_studi ps
+       JOIN fakultas f ON f.id = ps.fakultas_id
+       WHERE ps.id = ?
+       LIMIT 1`,
+      [programStudiId],
+    );
+    if (!programStudi?.ps_kode || !programStudi?.f_kode) {
+      throw Object.assign(new Error("Kode program studi atau fakultas belum dikonfigurasi"), {
+        statusCode: 400,
+      });
+    }
+
+    const [[{ seq }]] = await conn.query(
+      `SELECT COUNT(*) AS seq
+       FROM pengajuan_disposisi_pembimbing
+       WHERE program_studi_id = ?
+         AND nomor_sk_surat_pengantar IS NOT NULL
+         AND YEAR(submitted_at) = ?
+         AND MONTH(submitted_at) = ?`,
+      [programStudiId, year, month],
+    );
+    const nomorSkSuratPengantar = `${String(Number(seq) + 1).padStart(3, "0")}/${programStudi.f_kode}/${programStudi.ps_kode}/SIM/${BULAN_ROMAWI[month - 1]}/${year}`;
 
     const [result] = await conn.query(
       `INSERT INTO pengajuan_disposisi_pembimbing (
          outline_id, npm, program_studi_id,
          no_hp,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
-         perlu_surat_pengantar, nama_perusahaan,
+         perlu_surat_pengantar, nomor_sk_surat_pengantar, nama_perusahaan, alamat_perusahaan,
          syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
@@ -449,7 +510,9 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         pembimbing1Val,
         pembimbing2Val,
         perluSuratPengantar ? 1 : 0,
+        nomorSkSuratPengantar,
         namaPerusahaanVal || null,
+        alamatPerusahaanVal || null,
         toBit(syaratTranskrip, 0),
         toBit(syaratKrs, 0),
         toBit(syaratMetodologi, 0),
