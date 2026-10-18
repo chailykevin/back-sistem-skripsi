@@ -53,6 +53,7 @@ async function renderTemplate(template, data) {
     "{{dosenPembimbingKedua}}": mahasiswa.dosenPembimbingKedua,
     "{{perluSuratPengantar}}": `<span class="checkbox-group">${renderCheckbox("Ya", pengajuan.perluSuratPengantar.ya)}${renderCheckbox("Tidak", pengajuan.perluSuratPengantar.tidak)}</span>`,
     "{{namaPerusahaan}}": pengajuan.namaPerusahaan,
+    "{{alamatPerusahaan}}": pengajuan.alamatPerusahaan,
     "{{tanggalPengajuan}}": pengajuan.tanggal,
     "{{namaPemohon}}": pengajuan.namaPemohon,
     "{{programStudiDisposisi}}": disposisi.programStudi.toUpperCase(),

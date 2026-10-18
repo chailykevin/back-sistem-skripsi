@@ -44,8 +44,11 @@ h2 {
 }
 .application-details > .company-row {
   margin-left: 64mm;
-  grid-template-columns: 42mm 5mm max-content;
-  white-space: nowrap;
+  grid-template-columns: 42mm 5mm minmax(0, 1fr);
+  align-items: start;
+}
+.application-details > .company-row > span {
+  overflow-wrap: anywhere;
 }
 .requirements-row {
   margin-top: 1mm;

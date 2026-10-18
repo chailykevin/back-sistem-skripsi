@@ -142,6 +142,7 @@ async function generateFormulirDoc(data) {
         tidak: !data.perluSuratPengantar,
       },
       namaPerusahaan: data.namaPerusahaan,
+      alamatPerusahaan: data.alamatPerusahaan,
       syaratAdministratif: {
         salinanTranskripNilai: data.syaratTranskrip,
       },
@@ -698,6 +699,7 @@ exports.review = async (req, res, next) => {
     const [reviewDocRows] = await conn.query(
       `SELECT
          pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
+         pj.alamat_perusahaan,
          pj.submitted_at,
          pj.syarat_transkrip,
          m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
@@ -766,6 +768,7 @@ exports.review = async (req, res, next) => {
       pembimbing2DiajukanNama: rd.pembimbing2_diajukan_nama ?? "",
       perluSuratPengantar: Boolean(rd.perlu_surat_pengantar),
       namaPerusahaan: rd.nama_perusahaan ?? null,
+      alamatPerusahaan: rd.alamat_perusahaan ?? null,
       studentSignature: rd.student_signature,
       submittedAt: rd.submitted_at ? new Date(rd.submitted_at) : new Date(),
       programStudiNamaUpper: rd.program_studi_nama
