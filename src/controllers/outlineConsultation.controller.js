@@ -533,13 +533,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     return { skippedReason: "already_exists" };
   }
 
-  const [krsRows] = await conn.query(
-    `SELECT pf.file_content, pf.file_name
-     FROM pengajuan_disposisi_pembimbing_file pf
-     JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
-     WHERE pj.outline_id = ? AND pf.file_type = 'KRS' LIMIT 1`,
-    [outlineId],
-  );
   const [rekapRows] = await conn.query(
     `SELECT pf.file_content, pf.file_name
      FROM pengajuan_disposisi_pembimbing_file pf
@@ -557,14 +550,12 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   );
 
   console.log("[autoSubmitSkPenelitian] files found", {
-    krs: krsRows.length > 0,
     rekap: rekapRows.length > 0,
     kartu: kartuFileRows.length > 0,
     outline: outlineRows.length > 0,
   });
 
   const missingFiles = [];
-  if (krsRows.length === 0) missingFiles.push("KRS");
   if (rekapRows.length === 0) missingFiles.push("REKAP_NILAI");
   if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
   if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
@@ -747,12 +738,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   const skId = ins.insertId;
 
   const files = [
-    {
-      type: "KRS",
-      name: krsRows[0].file_name,
-      mime: null,
-      content: krsRows[0].file_content,
-    },
     {
       type: "REKAP_NILAI",
       name: rekapRows[0].file_name,

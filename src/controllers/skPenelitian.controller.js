@@ -949,24 +949,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
       });
     }
 
-    // System-pull KRS
-    const [krsRows] = await conn.query(
-      `SELECT pf.file_content, pf.file_name
-       FROM pengajuan_disposisi_pembimbing_file pf
-       JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
-       WHERE pj.outline_id = ? AND pf.file_type = 'KRS' LIMIT 1`,
-      [outlineId],
-    );
-    if (krsRows.length === 0) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message: "File KRS tidak ditemukan pada pengajuan disposisi pembimbing",
-      });
-    }
-    const krsRow = krsRows[0];
-
     // Resolve kartu_id
     const [kartuRows] = await conn.query(
       `SELECT id FROM kartu_konsultasi_outline WHERE outline_id = ? LIMIT 1`,
@@ -1038,7 +1020,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
     }
     const rekapRow = rekapRows[0];
 
-    // Upsert all 5 files
+    // Upsert all 3 files
     await upsertSkFile(
       conn,
       sk.id,
@@ -1046,15 +1028,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
       rekapRow.file_name,
       "application/octet-stream",
       rekapRow.file_content,
-      "SYSTEM",
-    );
-    await upsertSkFile(
-      conn,
-      sk.id,
-      "KRS",
-      krsRow.file_name,
-      "application/octet-stream",
-      krsRow.file_content,
       "SYSTEM",
     );
     await upsertSkFile(
@@ -1115,7 +1088,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
 };
 
 const REQUIRED_FILE_TYPES = [
-  "KRS",
   "REKAP_NILAI",
   "KARTU_KONSULTASI_OUTLINE",
   "FILE_OUTLINE",

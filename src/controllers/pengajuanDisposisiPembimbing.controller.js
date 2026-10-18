@@ -155,8 +155,6 @@ async function generateFormulirDoc(data) {
     dosenPembimbing2,
     catatan,
     syaratTranskrip,
-    syaratKrs,
-    syaratMetodologi,
     namaKaprodi,
     kaprodiSignature,
   } = data;
@@ -195,8 +193,6 @@ async function generateFormulirDoc(data) {
     dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
     catatan: textPatch(catatan || "-"),
     syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
-    syarat_krs: textPatch(checkbox(syaratKrs)),
-    syarat_metodologi: textPatch(checkbox(syaratMetodologi)),
     nama_kaprodi: textPatch(namaKaprodi ?? ""),
     kaprodi_signature: signatureImagePatch(kaprodiSignature),
   };
@@ -228,10 +224,6 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
     file_pengajuan_disposisi_pembimbing_name: null,
     file_transkrip: null,
     file_transkrip_name: null,
-    file_krs: null,
-    file_krs_name: null,
-    file_metodologi: null,
-    file_metodologi_name: null,
   };
 
   const byType = {
@@ -240,8 +232,6 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
       "file_pengajuan_disposisi_pembimbing_name",
     ],
     TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
-    KRS: ["file_krs", "file_krs_name"],
-    METODOLOGI: ["file_metodologi", "file_metodologi_name"],
   };
 
   for (const row of fileRows) {
@@ -362,14 +352,8 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       namaPerusahaan,
       alamatPerusahaan,
       syaratTranskrip,
-      syaratKrs,
-      syaratMetodologi,
       fileTranskrip,
       fileTranskripName,
-      fileKrs,
-      fileKrsName,
-      fileMetodologi,
-      fileMetodologiName,
     } = req.body || {};
 
     const noHpVal = noHp != null ? String(noHp).trim() : "";
@@ -477,9 +461,12 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       [programStudiId],
     );
     if (!programStudi?.ps_kode || !programStudi?.f_kode) {
-      throw Object.assign(new Error("Kode program studi atau fakultas belum dikonfigurasi"), {
-        statusCode: 400,
-      });
+      throw Object.assign(
+        new Error("Kode program studi atau fakultas belum dikonfigurasi"),
+        {
+          statusCode: 400,
+        },
+      );
     }
 
     const [[{ seq }]] = await conn.query(
@@ -499,9 +486,9 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
          no_hp,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
          perlu_surat_pengantar, nomor_sk_surat_pengantar, nama_perusahaan, alamat_perusahaan,
-         syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
+         syarat_transkrip,
          status, submitted_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
         outlineId,
         npm,
@@ -514,8 +501,6 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         namaPerusahaanVal || null,
         alamatPerusahaanVal || null,
         toBit(syaratTranskrip, 0),
-        toBit(syaratKrs, 0),
-        toBit(syaratMetodologi, 0),
       ],
     );
 
@@ -580,28 +565,6 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         String(fileTranskrip),
         fileTranskripName !== undefined && fileTranskripName !== null
           ? String(fileTranskripName).trim()
-          : null,
-      );
-    }
-    if (fileKrs !== undefined && fileKrs !== null) {
-      await upsertFileByType(
-        conn,
-        pengajuanDisposisiPembimbingId,
-        "KRS",
-        String(fileKrs),
-        fileKrsName !== undefined && fileKrsName !== null
-          ? String(fileKrsName).trim()
-          : null,
-      );
-    }
-    if (fileMetodologi !== undefined && fileMetodologi !== null) {
-      await upsertFileByType(
-        conn,
-        pengajuanDisposisiPembimbingId,
-        "METODOLOGI",
-        String(fileMetodologi),
-        fileMetodologiName !== undefined && fileMetodologiName !== null
-          ? String(fileMetodologiName).trim()
           : null,
       );
     }
@@ -853,8 +816,6 @@ exports.getById = async (req, res, next) => {
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
           pj.syarat_transkrip,
-          pj.syarat_krs,
-          pj.syarat_metodologi_nilai_min_c,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -938,14 +899,8 @@ exports.resubmit = async (req, res, next) => {
       perluSuratPengantar,
       namaPerusahaan,
       syaratTranskrip,
-      syaratKrs,
-      syaratMetodologi,
       fileTranskrip,
       fileTranskripName,
-      fileKrs,
-      fileKrsName,
-      fileMetodologi,
-      fileMetodologiName,
     } = req.body || {};
 
     const noHpVal =
@@ -981,20 +936,6 @@ exports.resubmit = async (req, res, next) => {
       fileTranskripName !== undefined && fileTranskripName !== null
         ? String(fileTranskripName).trim()
         : null;
-    const fileKrsVal =
-      fileKrs !== undefined && fileKrs !== null ? String(fileKrs) : null;
-    const fileKrsNameVal =
-      fileKrsName !== undefined && fileKrsName !== null
-        ? String(fileKrsName).trim()
-        : null;
-    const fileMetodologiVal =
-      fileMetodologi !== undefined && fileMetodologi !== null
-        ? String(fileMetodologi)
-        : null;
-    const fileMetodologiNameVal =
-      fileMetodologiName !== undefined && fileMetodologiName !== null
-        ? String(fileMetodologiName).trim()
-        : null;
 
     const hasMeaningfulUpdate =
       (noHpVal !== null && noHpVal.length > 0) ||
@@ -1003,11 +944,7 @@ exports.resubmit = async (req, res, next) => {
       perluSuratProvided ||
       (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
       syaratTranskrip !== undefined ||
-      syaratKrs !== undefined ||
-      syaratMetodologi !== undefined ||
-      (fileTranskripVal !== null && fileTranskripVal.length > 0) ||
-      (fileKrsVal !== null && fileKrsVal.length > 0) ||
-      (fileMetodologiVal !== null && fileMetodologiVal.length > 0);
+      (fileTranskripVal !== null && fileTranskripVal.length > 0);
 
     if (!hasMeaningfulUpdate) {
       return res.status(400).json({
@@ -1081,7 +1018,7 @@ exports.resubmit = async (req, res, next) => {
 
     const [rows] = await conn.query(
       `SELECT id, status, program_studi_id, pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
-              syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
+              syarat_transkrip
        FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
@@ -1165,12 +1102,6 @@ exports.resubmit = async (req, res, next) => {
     const currentRow = rows[0];
     sets.push("syarat_transkrip = ?");
     params.push(toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0));
-    sets.push("syarat_krs = ?");
-    params.push(toBit(syaratKrs, currentRow.syarat_krs ?? 0));
-    sets.push("syarat_metodologi_nilai_min_c = ?");
-    params.push(
-      toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0),
-    );
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
     sets.push("disposisi_at = NULL");
@@ -1251,28 +1182,6 @@ exports.resubmit = async (req, res, next) => {
         fileTranskripVal,
         fileTranskripNameVal !== null && fileTranskripNameVal.length > 0
           ? fileTranskripNameVal
-          : null,
-      );
-    }
-    if (fileKrsVal !== null && fileKrsVal.length > 0) {
-      await upsertFileByType(
-        conn,
-        id,
-        "KRS",
-        fileKrsVal,
-        fileKrsNameVal !== null && fileKrsNameVal.length > 0
-          ? fileKrsNameVal
-          : null,
-      );
-    }
-    if (fileMetodologiVal !== null && fileMetodologiVal.length > 0) {
-      await upsertFileByType(
-        conn,
-        id,
-        "METODOLOGI",
-        fileMetodologiVal,
-        fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0
-          ? fileMetodologiNameVal
           : null,
       );
     }

@@ -144,8 +144,6 @@ async function generateFormulirDoc(data) {
       namaPerusahaan: data.namaPerusahaan,
       syaratAdministratif: {
         salinanTranskripNilai: data.syaratTranskrip,
-        kartuRencanaStudi: data.syaratKrs,
-        lulusMetodologiPenelitian: data.syaratMetodologi,
       },
       tanggal: formatDateId(data.submittedAt),
       namaPemohon: data.namaMahasiswa,
@@ -190,8 +188,6 @@ async function generateFormulirDoc(data) {
   //   dosenPembimbing2,
   //   catatan,
   //   syaratTranskrip,
-  //   syaratKrs,
-  //   syaratMetodologi,
   //   namaKaprodi,
   //   kaprodiSignature,
   // } = data;
@@ -229,8 +225,6 @@ async function generateFormulirDoc(data) {
   //   dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
   //   catatan: textPatch(catatan || "-"),
   //   syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
-  //   syarat_krs: textPatch(checkbox(syaratKrs)),
-  //   syarat_metodologi: textPatch(checkbox(syaratMetodologi)),
   //   nama_kaprodi: textPatch(namaKaprodi ?? ""),
   //   kaprodi_signature: signatureImagePatch(kaprodiSignature),
   // };
@@ -414,8 +408,6 @@ exports.review = async (req, res, next) => {
       pembimbing2DitapkanNidn,
       catatanKaprodi,
       syaratTranskrip,
-      syaratKrs,
-      syaratMetodologi,
     } = req.body || {};
 
     const pembimbing1Val =
@@ -433,8 +425,6 @@ exports.review = async (req, res, next) => {
       pembimbing2DitapkanNidn,
       catatanKaprodi,
       syaratTranskrip,
-      syaratKrs,
-      syaratMetodologi,
     });
 
     if (!["APPROVED", "NEED_REVISION"].includes(status)) {
@@ -480,8 +470,7 @@ exports.review = async (req, res, next) => {
     // Pastikan pengajuan ini memang milik prodinya Kaprodi
     const [check] = await db.query(
       `
-      SELECT pj.id, pj.program_studi_id, pj.syarat_transkrip, pj.syarat_krs,
-             pj.syarat_metodologi_nilai_min_c
+      SELECT pj.id, pj.program_studi_id, pj.syarat_transkrip
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
@@ -694,26 +683,14 @@ exports.review = async (req, res, next) => {
       }
     }
 
-    if (
-      syaratTranskrip !== undefined ||
-      syaratKrs !== undefined ||
-      syaratMetodologi !== undefined
-    ) {
+    if (syaratTranskrip !== undefined) {
       console.log("[review] updating syarat");
       const currentRow = check[0];
       await conn.query(
         `UPDATE pengajuan_disposisi_pembimbing
-         SET syarat_transkrip = ?, syarat_krs = ?, syarat_metodologi_nilai_min_c = ?
+         SET syarat_transkrip = ?
          WHERE id = ?`,
-        [
-          toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0),
-          toBit(syaratKrs, currentRow.syarat_krs ?? 0),
-          toBit(
-            syaratMetodologi,
-            currentRow.syarat_metodologi_nilai_min_c ?? 0,
-          ),
-          id,
-        ],
+        [toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0), id],
       );
       console.log("[review] syarat updated");
     }
@@ -722,7 +699,7 @@ exports.review = async (req, res, next) => {
       `SELECT
          pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
          pj.submitted_at,
-         pj.syarat_transkrip, pj.syarat_krs, pj.syarat_metodologi_nilai_min_c,
+         pj.syarat_transkrip,
          m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
          ps.nama AS program_studi_nama, ps.kaprodi_staff_usr_id AS kaprodi_nidn,
          o.judul AS judul_skripsi,
@@ -800,8 +777,6 @@ exports.review = async (req, res, next) => {
       dosenPembimbing2: rd.pembimbing2_ditetapkan_nama ?? "",
       catatan: catatanKaprodi ?? null,
       syaratTranskrip: Boolean(rd.syarat_transkrip),
-      syaratKrs: Boolean(rd.syarat_krs),
-      syaratMetodologi: Boolean(rd.syarat_metodologi_nilai_min_c),
       namaKaprodi: rd.kaprodi_nama ?? "",
       kaprodiSignature: rd.kaprodi_signature,
     });

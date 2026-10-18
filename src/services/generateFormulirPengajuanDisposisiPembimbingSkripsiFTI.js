@@ -18,11 +18,6 @@ function renderCheckbox(label, checked) {
 function renderRequirements(requirements) {
   const items = [
     ["Salinan transkrip nilai", requirements.salinanTranskripNilai],
-    ["Kartu Rencana Studi (KRS)", requirements.kartuRencanaStudi],
-    [
-      "Lulus mata kuliah Metodologi Penelitian dengan nilai minimal C",
-      requirements.lulusMetodologiPenelitian,
-    ],
   ];
   return items
     .map(
