@@ -151,6 +151,38 @@ function resolveActiveStage(stages, isCompleted) {
   };
 }
 
+const TITLE_CHANGE_PENDING_STATUSES = [
+  "WAITING_PEMBIMBING_2",
+  "WAITING_PEMBIMBING_1",
+];
+
+function validateJudulUsulan(judul) {
+  if (judul.length < 5) return "Judul usulan minimal 5 karakter";
+  if (judul.length > 255) return "Judul usulan maksimal 255 karakter";
+  return null;
+}
+
+async function getTitleChangesByOutlineId(conn, outlineId) {
+  const [rows] = await conn.query(
+    `SELECT
+       u.id, u.outline_id, u.konsultasi_outline_submission_id,
+       s.submission_no, u.diajukan_pada_stage,
+       u.judul_lama, u.judul_usulan, u.alasan, u.status,
+       u.pembimbing2_keputusan_at, u.pembimbing2_catatan, d2.nama AS pembimbing2_nama,
+       u.pembimbing1_keputusan_at, u.pembimbing1_catatan, d1.nama AS pembimbing1_nama,
+       u.alasan_penolakan, u.created_at, u.updated_at
+     FROM usulan_perubahan_judul u
+     JOIN outline o ON o.id = u.outline_id
+     LEFT JOIN konsultasi_outline_submission s ON s.id = u.konsultasi_outline_submission_id
+     LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     WHERE u.outline_id = ?
+     ORDER BY u.created_at DESC, u.id DESC`,
+    [outlineId],
+  );
+  return rows;
+}
+
 function canReviewStageStatus(stageStatus) {
   return stageStatus === "SUBMITTED" || stageStatus === "IN_REVIEW";
 }
@@ -1018,6 +1050,11 @@ exports.getMyDetail = async (req, res, next) => {
       [kartu.id],
     );
 
+    const titleChanges = await getTitleChangesByOutlineId(db, outlineId);
+    const hasPendingTitleChange = titleChanges.some((t) =>
+      TITLE_CHANGE_PENDING_STATUSES.includes(t.status),
+    );
+
     return res.json({
       ok: true,
       data: {
@@ -1027,6 +1064,9 @@ exports.getMyDetail = async (req, res, next) => {
         submissions,
         reviews,
         isCompleted: Boolean(kartu.is_completed),
+        titleChanges,
+        canProposeTitleChange:
+          !Number(kartu.is_completed) && !hasPendingTitleChange,
       },
     });
   } catch (err) {
@@ -1048,6 +1088,11 @@ exports.submitMyOutline = async (req, res, next) => {
     }
 
     const { fileOutline, fileOutlineName } = req.body || {};
+    const judulUsulan = String(req.body?.judulUsulan ?? "").trim();
+    const alasanPerubahanJudul = String(
+      req.body?.alasanPerubahanJudul ?? "",
+    ).trim();
+    const hasTitleProposal = judulUsulan.length > 0;
     const safeFileOutlineName = String(fileOutlineName ?? "").trim();
     if (!fileOutline) {
       return res
@@ -1058,6 +1103,18 @@ exports.submitMyOutline = async (req, res, next) => {
       return res
         .status(400)
         .json({ ok: false, message: "fileOutlineName is required" });
+    }
+    if (hasTitleProposal) {
+      const judulError = validateJudulUsulan(judulUsulan);
+      if (judulError) {
+        return res.status(400).json({ ok: false, message: judulError });
+      }
+      if (!alasanPerubahanJudul) {
+        return res.status(400).json({
+          ok: false,
+          message: "Alasan perubahan judul wajib diisi",
+        });
+      }
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1135,9 +1192,41 @@ exports.submitMyOutline = async (req, res, next) => {
         .json({ ok: false, message: "Consultation already accepted" });
     }
 
+    let judulLama = null;
+    if (hasTitleProposal) {
+      const [[outlineRow]] = await conn.query(
+        `SELECT judul FROM outline WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [outlineId],
+      );
+      judulLama = outlineRow?.judul ?? "";
+      if (judulUsulan === String(judulLama).trim()) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: "Judul usulan sama dengan judul saat ini",
+        });
+      }
+      const [pendingRows] = await conn.query(
+        `SELECT id FROM usulan_perubahan_judul
+         WHERE outline_id = ? AND status IN (?)
+         LIMIT 1`,
+        [outlineId, TITLE_CHANGE_PENDING_STATUSES],
+      );
+      if (pendingRows.length > 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message:
+            "Masih ada usulan perubahan judul yang menunggu keputusan pembimbing",
+        });
+      }
+    }
+
     const nextSubmissionNo = Number(activeStage.current_submission_no || 0) + 1;
 
-    await conn.query(
+    const [submissionIns] = await conn.query(
       `INSERT INTO konsultasi_outline_submission (
          konsultasi_outline_stage_id,
          submission_no,
@@ -1153,6 +1242,33 @@ exports.submitMyOutline = async (req, res, next) => {
         req.user.id,
       ],
     );
+
+    let titleChangeId = null;
+    if (hasTitleProposal) {
+      const [titleIns] = await conn.query(
+        `INSERT INTO usulan_perubahan_judul (
+           outline_id,
+           konsultasi_outline_submission_id,
+           diajukan_pada_stage,
+           judul_lama,
+           judul_usulan,
+           alasan,
+           status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          outlineId,
+          submissionIns.insertId,
+          activeStage.stage,
+          judulLama,
+          judulUsulan,
+          alasanPerubahanJudul,
+          activeStage.stage === "PEMBIMBING_2"
+            ? "WAITING_PEMBIMBING_2"
+            : "WAITING_PEMBIMBING_1",
+        ],
+      );
+      titleChangeId = titleIns.insertId;
+    }
 
     await conn.query(
       `UPDATE konsultasi_outline_stage
@@ -1182,7 +1298,9 @@ exports.submitMyOutline = async (req, res, next) => {
         conn,
         pUserRows[0].id,
         "OUTLINE_CONSULTATION_SUBMITTED",
-        `Mahasiswa ${namaMahasiswa} mengumpulkan file outline untuk dikonsultasikan`,
+        hasTitleProposal
+          ? `Mahasiswa ${namaMahasiswa} mengumpulkan file outline beserta usulan perubahan judul`
+          : `Mahasiswa ${namaMahasiswa} mengumpulkan file outline untuk dikonsultasikan`,
         "/pembimbing/outline-consultations",
       );
     }
@@ -1197,6 +1315,7 @@ exports.submitMyOutline = async (req, res, next) => {
         stageId: activeStage.id,
         stage: activeStage.stage,
         submissionNo: nextSubmissionNo,
+        titleChangeId,
       },
     });
   } catch (err) {
@@ -2296,9 +2415,24 @@ exports.getLecturerStageDetail = async (req, res, next) => {
 
     const kartuLogs = await getKartuLogs(db, row.kartu_id);
 
+    const titleChanges = await getTitleChangesByOutlineId(
+      db,
+      row.kartu_outline_id,
+    );
+    const awaitingStatus =
+      row.stage_name === "PEMBIMBING_2"
+        ? "WAITING_PEMBIMBING_2"
+        : "WAITING_PEMBIMBING_1";
+    const pendingTitleChange =
+      row.stage_pembimbing_nidn === nidn
+        ? (titleChanges.find((t) => t.status === awaitingStatus) ?? null)
+        : null;
+
     return res.json({
       ok: true,
       data: {
+        pendingTitleChange,
+        titleChanges,
         stage: {
           id: row.stage_id,
           kartuKonsultasiOutlineId: row.stage_kartu_konsultasi_outline_id,
@@ -2355,7 +2489,26 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       reviewFile,
       reviewFileName,
       reviewFileMimeType,
+      titleDecision,
+      titleCatatan,
+      titleAlasanPenolakan,
     } = req.body || {};
+    const hasTitleDecision =
+      titleDecision !== undefined && titleDecision !== null && titleDecision !== "";
+    if (hasTitleDecision && !["APPROVE", "REJECT"].includes(titleDecision)) {
+      return res.status(400).json({
+        ok: false,
+        message: "titleDecision must be APPROVE or REJECT",
+      });
+    }
+    const safeTitleCatatan = String(titleCatatan ?? "").trim() || null;
+    const safeTitleAlasanPenolakan = String(titleAlasanPenolakan ?? "").trim();
+    if (titleDecision === "REJECT" && !safeTitleAlasanPenolakan) {
+      return res.status(400).json({
+        ok: false,
+        message: "Alasan penolakan usulan judul wajib diisi",
+      });
+    }
     if (!decisionStatus || !String(catatanKartu || "").trim()) {
       return res.status(400).json({
         ok: false,
@@ -2472,6 +2625,94 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res
         .status(409)
         .json({ ok: false, message: "Submission already reviewed" });
+    }
+
+    // A pending title proposal waiting on this stage must be decided in the
+    // same review, so consultation can never finish with a title in limbo.
+    const [[outlineRefRow]] = await conn.query(
+      `SELECT outline_id FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
+      [stage.kartu_id],
+    );
+    const stageOutlineId = outlineRefRow?.outline_id ?? null;
+    const [pendingTitleRows] = await conn.query(
+      `SELECT *
+       FROM usulan_perubahan_judul
+       WHERE outline_id = ? AND status = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [
+        stageOutlineId,
+        stage.stage === "PEMBIMBING_2"
+          ? "WAITING_PEMBIMBING_2"
+          : "WAITING_PEMBIMBING_1",
+      ],
+    );
+    const pendingTitle = pendingTitleRows[0] ?? null;
+    if (pendingTitle && !hasTitleDecision) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "Keputusan usulan perubahan judul wajib diisi",
+      });
+    }
+    if (!pendingTitle && hasTitleDecision) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Tidak ada usulan perubahan judul yang menunggu keputusan Anda",
+      });
+    }
+
+    let titleStatusAfter = null;
+    if (pendingTitle) {
+      const prefix =
+        stage.stage === "PEMBIMBING_2" ? "pembimbing2" : "pembimbing1";
+      if (titleDecision === "REJECT") {
+        titleStatusAfter = "REJECTED";
+      } else if (stage.stage === "PEMBIMBING_2") {
+        titleStatusAfter = "WAITING_PEMBIMBING_1";
+      } else {
+        titleStatusAfter = "APPROVED";
+      }
+
+      if (titleStatusAfter === "APPROVED") {
+        const [[outlineRow]] = await conn.query(
+          `SELECT judul FROM outline WHERE id = ? LIMIT 1 FOR UPDATE`,
+          [stageOutlineId],
+        );
+        if (outlineRow?.judul !== pendingTitle.judul_lama) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message:
+              "Judul outline telah berubah sejak usulan dibuat; usulan ini tidak dapat disetujui",
+          });
+        }
+        await conn.query(`UPDATE outline SET judul = ? WHERE id = ?`, [
+          pendingTitle.judul_usulan,
+          stageOutlineId,
+        ]);
+      }
+
+      await conn.query(
+        `UPDATE usulan_perubahan_judul
+         SET status = ?,
+             ${prefix}_user_id = ?,
+             ${prefix}_keputusan_at = CURRENT_TIMESTAMP,
+             ${prefix}_catatan = ?,
+             alasan_penolakan = ?
+         WHERE id = ?`,
+        [
+          titleStatusAfter,
+          req.user.id,
+          safeTitleCatatan,
+          titleDecision === "REJECT" ? safeTitleAlasanPenolakan : null,
+          pendingTitle.id,
+        ],
+      );
     }
 
     const [reviewIns] = await conn.query(
@@ -2611,6 +2852,23 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       const studentUserId = studentUserRow?.id ?? null;
       const namaMahasiswaForNotif = studentUserRow?.nama ?? kartuInfo.npm;
 
+      if (titleStatusAfter && studentUserId) {
+        const titleMessages = {
+          WAITING_PEMBIMBING_1:
+            "Usulan perubahan judul Anda disetujui Pembimbing 2 dan akan diputuskan oleh Pembimbing 1",
+          APPROVED:
+            "Usulan perubahan judul Anda disetujui; judul outline telah diperbarui",
+          REJECTED: `Usulan perubahan judul Anda ditolak oleh ${stage.stage === "PEMBIMBING_2" ? "Pembimbing 2" : "Pembimbing 1"}`,
+        };
+        await insertNotification(
+          conn,
+          studentUserId,
+          `OUTLINE_TITLE_CHANGE_${titleStatusAfter === "WAITING_PEMBIMBING_1" ? "CONTINUE" : titleStatusAfter}`,
+          titleMessages[titleStatusAfter],
+          "/student/outline-consultations",
+        );
+      }
+
       if (decisionStatus === "NEED_REVISION" && studentUserId) {
         await insertNotification(
           conn,
@@ -2691,6 +2949,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         hasReviewFile,
         finalFile: autoFinalizedFile,
         skPenelitian: autoSkResult,
+        titleChangeStatus: titleStatusAfter,
       },
     });
   } catch (err) {
