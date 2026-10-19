@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Surat Pengantar Penelitian</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <img
+          class="masthead-logo"
+          src="{{logoUWDP}}"
+          alt="Logo Universitas Widya Dharma Pontianak"
+        />
+        <div class="masthead-text">
+          <div class="university">UNIVERSITAS</div>
+          <div class="university">WIDYA DHARMA PONTIANAK</div>
+          <div class="faculty">FAKULTAS TEKNOLOGI INFORMASI</div>
+          <div class="decree-number">SK MENRISTEKDIKTI NO. 784/KPT/I/2019</div>
+          <div class="address">
+            Jalan H.O.S. Cokroaminoto No. 445 Telp. 731966 – 742063. Fax. 739191
+          </div>
+          <div class="city">Pontianak, Kalbar</div>
+        </div>
+      </header>
+
+      <section class="letter-meta">
+        <div>
+          <span>No.</span><span>:</span><span>{{nomorSurat}}</span
+          ><span>{{tanggalSurat}}</span>
+        </div>
+        <div><span>Lampiran</span><span>:</span><span>{{lampiran}}</span></div>
+        <div>
+          <span>Perihal</span><span>:</span
+          ><span>Pengumpulan Data untuk Penyusunan Skripsi</span>
+        </div>
+      </section>
+
+      <section class="recipient">
+        <div>Kepada Yth.</div>
+        <div class="recipient-title">
+          <span>Bapak / Ibu</span><span>:</span><span>Kepala</span>
+        </div>
+        <strong>{{namaPerusahaan}}</strong>
+        <div>di -</div>
+        <div class="recipient-address">{{alamatPerusahaan}}</div>
+      </section>
+
+      <p class="salutation">Dengan hormat,</p>
+
+      <p class="indented">
+        Dalam rangka penerapan/pelaksanaan Tri Dharma Perguruan Tinggi maka
+        setiap mahasiswa yang akan menyelesaikan studi di Perguruan Tinggi
+        diwajibkan untuk mengadakan penelitian guna pembuatan karya ilmiah
+        dalam bentuk penyusunan Skripsi.
+      </p>
+      <p class="indented">
+        Sehubungan dengan hal tersebut, maka bersama ini kami mohon bantuan
+        Bapak/Ibu untuk memberikan izin penelitian kepada Mahasiswa kami untuk
+        mengumpulkan data atau informasi di Perusahaan/Kantor yang Bapak/Ibu
+        pimpin.
+      </p>
+
+      <p>Adapun yang akan mengadakan penelitian itu adalah :</p>
+      <section class="details">
+        <div>
+          <span>Nama Mahasiswa</span><span>:</span
+          ><strong>{{namaMahasiswa}}</strong>
+        </div>
+        <div><span>NPM</span><span>:</span><strong>{{npm}}</strong></div>
+        <div>
+          <span>Program Studi</span><span>:</span
+          ><strong>{{programStudi}}</strong>
+        </div>
+        <div>
+          <span>Judul Skripsi</span><span>:</span
+          ><strong class="title">{{judulSkripsi}}</strong>
+        </div>
+      </section>
+
+      <p class="indented">
+        Atas bantuan Bapak/Ibu untuk memberikan kesempatan meneliti kepada
+        mahasiswa kami tersebut di atas, kami ucapkan terima kasih.
+      </p>
+
+      <section class="signing">
+        <div>Kaprodi {{programStudi}},</div>
+        <div class="signature-space">{{signatureKetuaProgramStudi}}</div>
+        <strong>{{namaKetuaProgramStudi}}</strong>
+      </section>
+    </main>
+  </body>
+</html>

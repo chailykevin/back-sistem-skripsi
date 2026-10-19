@@ -35,6 +35,39 @@ const BULAN_ROMAWI = [
   "XII",
 ];
 
+// Next sequence is MAX of the existing numbers for this prodi/month/year rather than a
+// COUNT by submitted_at: resubmit resets submitted_at, and toggling perlu_surat_pengantar
+// off clears a number, both of which made COUNT-based sequences collide.
+async function generateNomorSkSuratPengantar(conn, programStudiId) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const [[programStudi]] = await conn.query(
+    `SELECT ps.kode AS ps_kode, f.kode AS f_kode
+     FROM program_studi ps
+     JOIN fakultas f ON f.id = ps.fakultas_id
+     WHERE ps.id = ?
+     LIMIT 1`,
+    [programStudiId],
+  );
+  if (!programStudi?.ps_kode || !programStudi?.f_kode) {
+    throw Object.assign(
+      new Error("Kode program studi atau fakultas belum dikonfigurasi"),
+      { statusCode: 400 },
+    );
+  }
+
+  const suffix = `/${programStudi.f_kode}/${programStudi.ps_kode}/SIM/${BULAN_ROMAWI[month - 1]}/${year}`;
+  const [[{ maxSeq }]] = await conn.query(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(nomor_sk_surat_pengantar, '/', 1) AS UNSIGNED)), 0) AS maxSeq
+     FROM pengajuan_disposisi_pembimbing
+     WHERE program_studi_id = ?
+       AND nomor_sk_surat_pengantar LIKE ?`,
+    [programStudiId, `%${suffix}`],
+  );
+  return `${String(Number(maxSeq) + 1).padStart(3, "0")}${suffix}`;
+}
+
 function formatDateId(date) {
   const d = date instanceof Date ? date : new Date(date);
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
@@ -449,36 +482,9 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const [[programStudi]] = await conn.query(
-      `SELECT ps.kode AS ps_kode, f.kode AS f_kode
-       FROM program_studi ps
-       JOIN fakultas f ON f.id = ps.fakultas_id
-       WHERE ps.id = ?
-       LIMIT 1`,
-      [programStudiId],
-    );
-    if (!programStudi?.ps_kode || !programStudi?.f_kode) {
-      throw Object.assign(
-        new Error("Kode program studi atau fakultas belum dikonfigurasi"),
-        {
-          statusCode: 400,
-        },
-      );
-    }
-
-    const [[{ seq }]] = await conn.query(
-      `SELECT COUNT(*) AS seq
-       FROM pengajuan_disposisi_pembimbing
-       WHERE program_studi_id = ?
-         AND nomor_sk_surat_pengantar IS NOT NULL
-         AND YEAR(submitted_at) = ?
-         AND MONTH(submitted_at) = ?`,
-      [programStudiId, year, month],
-    );
-    const nomorSkSuratPengantar = `${String(Number(seq) + 1).padStart(3, "0")}/${programStudi.f_kode}/${programStudi.ps_kode}/SIM/${BULAN_ROMAWI[month - 1]}/${year}`;
+    const nomorSkSuratPengantar = perluSuratPengantar
+      ? await generateNomorSkSuratPengantar(conn, programStudiId)
+      : null;
 
     const [result] = await conn.query(
       `INSERT INTO pengajuan_disposisi_pembimbing (
@@ -741,6 +747,7 @@ exports.getById = async (req, res, next) => {
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
+          pj.alamat_perusahaan,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -815,6 +822,7 @@ exports.getById = async (req, res, next) => {
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
+          pj.alamat_perusahaan,
           pj.syarat_transkrip,
           pj.status,
           pj.submitted_at,
@@ -898,6 +906,7 @@ exports.resubmit = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
+      alamatPerusahaan,
       syaratTranskrip,
       fileTranskrip,
       fileTranskripName,
@@ -928,6 +937,10 @@ exports.resubmit = async (req, res, next) => {
       namaPerusahaan !== undefined && namaPerusahaan !== null
         ? String(namaPerusahaan).trim()
         : null;
+    const alamatPerusahaanVal =
+      alamatPerusahaan !== undefined && alamatPerusahaan !== null
+        ? String(alamatPerusahaan).trim()
+        : null;
     const fileTranskripVal =
       fileTranskrip !== undefined && fileTranskrip !== null
         ? String(fileTranskrip)
@@ -943,6 +956,7 @@ exports.resubmit = async (req, res, next) => {
       (pembimbing2Val !== null && pembimbing2Val.length > 0) ||
       perluSuratProvided ||
       (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
+      (alamatPerusahaanVal !== null && alamatPerusahaanVal.length > 0) ||
       syaratTranskrip !== undefined ||
       (fileTranskripVal !== null && fileTranskripVal.length > 0);
 
@@ -988,6 +1002,30 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
+    if (
+      perluSuratProvided &&
+      Boolean(perluSuratPengantar) &&
+      (!alamatPerusahaanVal || alamatPerusahaanVal.length === 0)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "alamatPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    if (
+      perluSuratProvided &&
+      Boolean(perluSuratPengantar) &&
+      alamatPerusahaanVal &&
+      alamatPerusahaanVal.length < 2
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Alamat perusahaan minimal 2 karakter",
+      });
+    }
+
     const nidnsToCheck = [pembimbing1Val, pembimbing2Val].filter(
       (val) => val && val.length > 0,
     );
@@ -1018,7 +1056,7 @@ exports.resubmit = async (req, res, next) => {
 
     const [rows] = await conn.query(
       `SELECT id, status, program_studi_id, pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
-              syarat_transkrip
+              syarat_transkrip, nomor_sk_surat_pengantar
        FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
@@ -1089,6 +1127,13 @@ exports.resubmit = async (req, res, next) => {
       params.push(Boolean(perluSuratPengantar) ? 1 : 0);
       if (!Boolean(perluSuratPengantar)) {
         sets.push("nama_perusahaan = NULL");
+        sets.push("alamat_perusahaan = NULL");
+        sets.push("nomor_sk_surat_pengantar = NULL");
+      } else if (!rows[0].nomor_sk_surat_pengantar) {
+        sets.push("nomor_sk_surat_pengantar = ?");
+        params.push(
+          await generateNomorSkSuratPengantar(conn, rows[0].program_studi_id),
+        );
       }
     }
     if (
@@ -1098,6 +1143,14 @@ exports.resubmit = async (req, res, next) => {
     ) {
       sets.push("nama_perusahaan = ?");
       params.push(namaPerusahaanVal);
+    }
+    if (
+      alamatPerusahaanVal !== null &&
+      alamatPerusahaanVal.length > 0 &&
+      (!perluSuratProvided || Boolean(perluSuratPengantar))
+    ) {
+      sets.push("alamat_perusahaan = ?");
+      params.push(alamatPerusahaanVal);
     }
     const currentRow = rows[0];
     sets.push("syarat_transkrip = ?");

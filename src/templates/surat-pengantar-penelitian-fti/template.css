@@ -1,0 +1,151 @@
+@page {
+  size: 8.5in 13in;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  color: #000;
+  font-family: "Times New Roman", serif;
+  font-size: 12pt;
+}
+.page {
+  position: relative;
+  width: 8.5in;
+  min-height: 13in;
+  padding: 50mm 22mm 15mm 25mm;
+}
+
+.masthead {
+  position: absolute;
+  top: 8mm;
+  left: 18mm;
+  right: 20mm;
+  border-bottom: 3px double #000;
+  padding-bottom: 2mm;
+  text-align: center;
+}
+.masthead-logo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 31mm;
+  height: 31mm;
+  object-fit: contain;
+}
+.masthead-text {
+  margin-left: 31mm;
+  color: #800080;
+  font-weight: bold;
+  line-height: 1.03;
+}
+.masthead .university {
+  font-size: 20pt;
+}
+.masthead .faculty {
+  margin-top: 1mm;
+  font-size: 16pt;
+}
+.masthead .decree-number {
+  margin-top: 1mm;
+  font-size: 10pt;
+}
+.masthead .address {
+  margin-top: 1mm;
+  font-size: 9pt;
+}
+.masthead .city {
+  margin-top: 1mm;
+  font-size: 10pt;
+}
+
+.letter-meta {
+  line-height: 1.15;
+}
+.letter-meta > div {
+  display: grid;
+  grid-template-columns: 1in 0.2in 1fr;
+  min-height: 0.27in;
+}
+.letter-meta > div:first-child {
+  grid-template-columns: 1in 0.2in 1fr auto;
+}
+
+.recipient {
+  margin-top: 0.25in;
+  line-height: 1.5;
+}
+.recipient > strong {
+  display: block;
+}
+.recipient-title {
+  display: grid;
+  grid-template-columns: 0.85in 0.2in 1fr;
+}
+.recipient-address {
+  margin-left: 0.4in;
+}
+
+p {
+  margin: 0.12in 0;
+  line-height: 1.5;
+  text-align: justify;
+}
+.salutation {
+  margin: 0.2in 0 0.15in 0.4in;
+}
+.indented {
+  text-indent: 0.5in;
+}
+
+.details {
+  margin: 0.08in 0 0.12in;
+}
+.details > div {
+  display: grid;
+  grid-template-columns: 1.95in 0.25in 1fr;
+  line-height: 1.5;
+}
+.details .title {
+  text-align: justify;
+}
+
+.signing {
+  width: 2.8in;
+  margin: 0.25in 0 0 auto;
+  line-height: 1.15;
+}
+.signing strong {
+  display: block;
+  text-decoration: underline;
+}
+
+/* Normalized signatures: 40mm wide, name overlap, and a 2mm upward shift. */
+.signature-space {
+  position: relative;
+  width: 100%;
+  height: 20mm;
+  margin: 0 auto;
+}
+.signature-space > .signature-image {
+  position: absolute;
+  bottom: -2mm;
+  left: 0;
+  transform: translateY(-2mm);
+  width: 40mm;
+  max-width: 100%;
+  height: 12mm;
+  object-fit: contain;
+  object-position: left bottom;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.signature-space + * {
+  transform: translateY(-2mm);
+}
