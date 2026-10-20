@@ -15,6 +15,10 @@ const {
 const {
   generateSuratKeteranganFTI,
 } = require("../services/generateSuratKeteranganFTI.js");
+const {
+  getSuratPengantarPenelitianData,
+  generateSuratPengantarPenelitianFTI,
+} = require("../services/generateSuratPengantarPenelitianFTI.js");
 
 async function getStudentNpm(userId) {
   const [rows] = await db.query(
@@ -331,7 +335,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   // Fetch pengajuan disposisi pembimbing for perlu_surat_pengantar + nama_perusahaan
   const [[pj]] = await conn.query(
-    `SELECT perlu_surat_pengantar, nama_perusahaan FROM pengajuan_disposisi_pembimbing WHERE outline_id = ? LIMIT 1`,
+    `SELECT id, perlu_surat_pengantar, nama_perusahaan FROM pengajuan_disposisi_pembimbing WHERE outline_id = ? LIMIT 1`,
     [outlineId],
   );
   if (!pj)
@@ -606,6 +610,30 @@ async function generateSkDocuments(conn, sk, outlineId) {
        VALUES (?, 'SURAT_KETERANGAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
       [sk.id, `Surat_Keterangan_${kartu.npm}.pdf`, mimeSuratPdf, suratBase64],
     );
+
+    const dataSuratPengantarPenelitianFTI =
+      await getSuratPengantarPenelitianData(conn, pj.id);
+    dataSuratPengantarPenelitianFTI.tanggalSurat = tanggal;
+    const pengantarBuffer = await generateSuratPengantarPenelitianFTI(
+      dataSuratPengantarPenelitianFTI,
+    );
+    const pengantarBase64 = Buffer.from(pengantarBuffer).toString("base64");
+
+    await conn.query(
+      `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENGANTAR_PENELITIAN'`,
+      [sk.id],
+    );
+    await conn.query(
+      `INSERT INTO pengajuan_sk_penelitian_files
+         (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+       VALUES (?, 'SURAT_PENGANTAR_PENELITIAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+      [
+        sk.id,
+        `Surat_Pengantar_Penelitian_${kartu.npm}.pdf`,
+        mimeSuratPdf,
+        pengantarBase64,
+      ],
+    );
   }
 }
 
@@ -617,6 +645,7 @@ const VALID_FILE_TYPES = [
   "HALAMAN_PERSETUJUAN",
   "SK_PENUNJUKAN_PEMBIMBING",
   "SURAT_KETERANGAN",
+  "SURAT_PENGANTAR_PENELITIAN",
   "SURAT_PENYELESAIAN_SKRIPSI",
 ];
 
@@ -1647,6 +1676,10 @@ exports.listSkForSekretariat = async (req, res, next) => {
          ) AS has_surat_keterangan,
          EXISTS(
            SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENGANTAR_PENELITIAN'
+         ) AS has_surat_pengantar_penelitian,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
            WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
          ) AS has_surat_penyelesaian_skripsi
        FROM pengajuan_sk_penelitian sk
@@ -1713,6 +1746,10 @@ exports.listSkForKaprodi = async (req, res, next) => {
            SELECT 1 FROM pengajuan_sk_penelitian_files f
            WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_KETERANGAN'
          ) AS has_surat_keterangan,
+         EXISTS(
+           SELECT 1 FROM pengajuan_sk_penelitian_files f
+           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENGANTAR_PENELITIAN'
+         ) AS has_surat_pengantar_penelitian,
          EXISTS(
            SELECT 1 FROM pengajuan_sk_penelitian_files f
            WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
