@@ -35,6 +35,9 @@ app.use("/program-studi", programStudiRoutes);
 const dosenBimbingProdiRoutes = require("./routes/dosenBimbingProdi.routes");
 app.use("/dosen-bimbing-prodi", dosenBimbingProdiRoutes);
 
+const dosenUjiSidangSkripsiProdiRoutes = require("./routes/dosenUjiSidangSkripsiProdi.routes");
+app.use("/dosen-uji-sidang-skripsi-prodi", dosenUjiSidangSkripsiProdiRoutes);
+
 const usersRoutes = require("./routes/users.routes");
 app.use("/users", usersRoutes);
 

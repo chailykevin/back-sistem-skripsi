@@ -5,6 +5,7 @@ const { sendSuratUndangan } = require("../utils/email");
 const {
   getOpenPeriod: getSidangOpenPeriod,
 } = require("../services/sidangSubmissionPeriod.service");
+const dosenUjiSidangSkripsiProdiService = require("../services/dosenUjiSidangSkripsiProdi.service");
 const path = require("path");
 const { readFile } = require("fs/promises");
 const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
@@ -95,6 +96,31 @@ function validatePengujiAssignment({
     return "Penguji tidak boleh sama dengan pembimbing";
   }
   return null;
+}
+
+// Pass undefined/null for a position to skip checking it.
+async function getIneligiblePengujiMessage(
+  conn,
+  programStudiId,
+  { penguji1Nidn, penguji2Nidn },
+) {
+  const ineligible = await dosenUjiSidangSkripsiProdiService.findIneligible(
+    conn,
+    programStudiId,
+    [
+      { nidn: penguji1Nidn, role: "PENGUJI_1" },
+      { nidn: penguji2Nidn, role: "PENGUJI_2" },
+    ],
+  );
+  if (!ineligible.length) return null;
+  const roleLabel = { PENGUJI_1: "Penguji 1", PENGUJI_2: "Penguji 2" };
+  const names = ineligible
+    .map(
+      (d) =>
+        `${roleLabel[d.role]}: ${d.nama ? `${d.nama} (${d.nidn})` : d.nidn}`,
+    )
+    .join(", ");
+  return `Dosen penguji berikut tidak tersedia untuk posisi tersebut di program studi ini: ${names}`;
 }
 
 const MIME_DOCX =
@@ -2312,7 +2338,7 @@ exports.updateKaprodi = async (req, res, next) => {
           ? String(penguji2Nidn).trim() || null
           : kaprodi.penguji2_nidn;
       const [[skripsiRow]] = await db.query(
-        `SELECT pembimbing1_nidn, pembimbing2_nidn FROM skripsi WHERE id = ? LIMIT 1`,
+        `SELECT pembimbing1_nidn, pembimbing2_nidn, program_studi_id FROM skripsi WHERE id = ? LIMIT 1`,
         [skripsiId],
       );
       const pengujiError = validatePengujiAssignment({
@@ -2323,6 +2349,20 @@ exports.updateKaprodi = async (req, res, next) => {
       });
       if (pengujiError) {
         return res.status(400).json({ ok: false, message: pengujiError });
+      }
+      // Only newly chosen NIDNs here; stale saved picks are caught at submit.
+      const eligibilityError = await getIneligiblePengujiMessage(
+        db,
+        skripsiRow?.program_studi_id,
+        {
+          penguji1Nidn:
+            penguji1Nidn !== undefined ? effectivePenguji1Nidn : null,
+          penguji2Nidn:
+            penguji2Nidn !== undefined ? effectivePenguji2Nidn : null,
+        },
+      );
+      if (eligibilityError) {
+        return res.status(400).json({ ok: false, message: eligibilityError });
       }
     }
 
@@ -2429,6 +2469,26 @@ exports.submitKaprodi = async (req, res, next) => {
         ok: false,
         message: "Konfirmasi seluruh mata kuliah sudah lulus harus dicentang",
       });
+    }
+
+    const [[skripsiProdiRow]] = await conn.query(
+      `SELECT program_studi_id FROM skripsi WHERE id = ? LIMIT 1`,
+      [skripsiId],
+    );
+    const submitEligibilityError = await getIneligiblePengujiMessage(
+      conn,
+      skripsiProdiRow?.program_studi_id,
+      {
+        penguji1Nidn: kaprodi.penguji1_nidn,
+        penguji2Nidn: kaprodi.penguji2_nidn,
+      },
+    );
+    if (submitEligibilityError) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(400)
+        .json({ ok: false, message: submitEligibilityError });
     }
 
     const { period: openPeriod } = await attachOpenSidangPeriodIfMissing(
@@ -3122,6 +3182,21 @@ exports.reviewKaprodi = async (req, res, next) => {
           unverifiedFiles,
         });
       }
+      const reviewEligibilityError = await getIneligiblePengujiMessage(
+        conn,
+        kaprodi.program_studi_id,
+        {
+          penguji1Nidn: kaprodi.penguji1_nidn,
+          penguji2Nidn: kaprodi.penguji2_nidn,
+        },
+      );
+      if (reviewEligibilityError) {
+        await conn.rollback();
+        txStarted = false;
+        return res
+          .status(400)
+          .json({ ok: false, message: reviewEligibilityError });
+      }
     }
 
     const newStatus = action === "VALID" ? "VALID" : action;
@@ -3383,6 +3458,20 @@ exports.updateDisposisi = async (req, res, next) => {
         .json({ ok: false, message: "Tidak ada field yang diubah" });
     }
 
+    const disposisiEligibilityError = await getIneligiblePengujiMessage(
+      db,
+      kaprodi.program_studi_id,
+      {
+        penguji1Nidn: updates.penguji1_nidn,
+        penguji2Nidn: updates.penguji2_nidn,
+      },
+    );
+    if (disposisiEligibilityError) {
+      return res
+        .status(400)
+        .json({ ok: false, message: disposisiEligibilityError });
+    }
+
     const setClauses = Object.keys(updates)
       .map((k) => `${k} = ?`)
       .join(", ");
@@ -3490,6 +3579,22 @@ exports.submitDisposisi = async (req, res, next) => {
         message:
           "Pengajuan Sidang harus berstatus WAITING_FOR_DISPOSISI sebelum mengirim disposisi",
       });
+    }
+
+    const submitDisposisiEligibilityError = await getIneligiblePengujiMessage(
+      conn,
+      kaprodi.program_studi_id,
+      {
+        penguji1Nidn: kaprodi.penguji1_nidn,
+        penguji2Nidn: kaprodi.penguji2_nidn,
+      },
+    );
+    if (submitDisposisiEligibilityError) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(400)
+        .json({ ok: false, message: submitDisposisiEligibilityError });
     }
 
     const [[docData]] = await conn.query(
