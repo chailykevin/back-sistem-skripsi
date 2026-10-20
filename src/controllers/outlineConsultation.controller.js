@@ -565,11 +565,18 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     return { skippedReason: "already_exists" };
   }
 
-  const [rekapRows] = await conn.query(
+  const [transkripRows] = await conn.query(
     `SELECT pf.file_content, pf.file_name
      FROM pengajuan_disposisi_pembimbing_file pf
      JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
      WHERE pj.outline_id = ? AND pf.file_type = 'TRANSKRIP' LIMIT 1`,
+    [outlineId],
+  );
+  const [formulirRows] = await conn.query(
+    `SELECT pf.file_content, pf.file_name
+     FROM pengajuan_disposisi_pembimbing_file pf
+     JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+     WHERE pj.outline_id = ? AND pf.file_type = 'PENGAJUAN_DISPOSISI_PEMBIMBING' LIMIT 1`,
     [outlineId],
   );
   const [kartuFileRows] = await conn.query(
@@ -582,13 +589,16 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   );
 
   console.log("[autoSubmitSkPenelitian] files found", {
-    rekap: rekapRows.length > 0,
+    formulir: formulirRows.length > 0,
+    transkrip: transkripRows.length > 0,
     kartu: kartuFileRows.length > 0,
     outline: outlineRows.length > 0,
   });
 
   const missingFiles = [];
-  if (rekapRows.length === 0) missingFiles.push("REKAP_NILAI");
+  if (formulirRows.length === 0)
+    missingFiles.push("PENGAJUAN_DISPOSISI_PEMBIMBING");
+  if (transkripRows.length === 0) missingFiles.push("TRANSKRIP_NILAI");
   if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
   if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
   if (missingFiles.length > 0) {
@@ -771,10 +781,16 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
 
   const files = [
     {
-      type: "REKAP_NILAI",
-      name: rekapRows[0].file_name,
+      type: "PENGAJUAN_DISPOSISI_PEMBIMBING",
+      name: formulirRows[0].file_name,
+      mime: "application/pdf",
+      content: formulirRows[0].file_content,
+    },
+    {
+      type: "TRANSKRIP_NILAI",
+      name: transkripRows[0].file_name,
       mime: null,
-      content: rekapRows[0].file_content,
+      content: transkripRows[0].file_content,
     },
     {
       type: "KARTU_KONSULTASI_OUTLINE",

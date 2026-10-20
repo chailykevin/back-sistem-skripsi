@@ -638,8 +638,8 @@ async function generateSkDocuments(conn, sk, outlineId) {
 }
 
 const VALID_FILE_TYPES = [
-  "KRS",
-  "REKAP_NILAI",
+  "PENGAJUAN_DISPOSISI_PEMBIMBING",
+  "TRANSKRIP_NILAI",
   "KARTU_KONSULTASI_OUTLINE",
   "FILE_OUTLINE",
   "HALAMAN_PERSETUJUAN",
@@ -1030,33 +1030,59 @@ exports.submitSkPenelitian = async (req, res, next) => {
     }
     const outlineRow = outlineRows[0];
 
-    // System-pull Rekap Nilai (Transkrip)
-    const [rekapRows] = await conn.query(
+    // System-pull Transkrip Nilai
+    const [transkripRows] = await conn.query(
       `SELECT pf.file_content, pf.file_name
        FROM pengajuan_disposisi_pembimbing_file pf
        JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
        WHERE pj.outline_id = ? AND pf.file_type = 'TRANSKRIP' LIMIT 1`,
       [outlineId],
     );
-    if (rekapRows.length === 0) {
+    if (transkripRows.length === 0) {
       await conn.rollback();
       txStarted = false;
       return res.status(400).json({
         ok: false,
         message:
-          "File transkrip/rekap nilai tidak ditemukan pada pengajuan disposisi pembimbing",
+          "File transkrip nilai tidak ditemukan pada pengajuan disposisi pembimbing",
       });
     }
-    const rekapRow = rekapRows[0];
+    const transkripRow = transkripRows[0];
 
-    // Upsert all 3 files
+    // System-pull Formulir Pengajuan Disposisi Pembimbing (generated at Kaprodi review)
+    const [formulirRows] = await conn.query(
+      `SELECT pf.file_content, pf.file_name
+       FROM pengajuan_disposisi_pembimbing_file pf
+       JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+       WHERE pj.outline_id = ? AND pf.file_type = 'PENGAJUAN_DISPOSISI_PEMBIMBING' LIMIT 1`,
+      [outlineId],
+    );
+    if (formulirRows.length === 0) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "File formulir pengajuan disposisi pembimbing tidak ditemukan",
+      });
+    }
+    const formulirRow = formulirRows[0];
+
     await upsertSkFile(
       conn,
       sk.id,
-      "REKAP_NILAI",
-      rekapRow.file_name,
+      "PENGAJUAN_DISPOSISI_PEMBIMBING",
+      formulirRow.file_name,
+      "application/pdf",
+      formulirRow.file_content,
+      "SYSTEM",
+    );
+    await upsertSkFile(
+      conn,
+      sk.id,
+      "TRANSKRIP_NILAI",
+      transkripRow.file_name,
       "application/octet-stream",
-      rekapRow.file_content,
+      transkripRow.file_content,
       "SYSTEM",
     );
     await upsertSkFile(
@@ -1117,7 +1143,8 @@ exports.submitSkPenelitian = async (req, res, next) => {
 };
 
 const REQUIRED_FILE_TYPES = [
-  "REKAP_NILAI",
+  "PENGAJUAN_DISPOSISI_PEMBIMBING",
+  "TRANSKRIP_NILAI",
   "KARTU_KONSULTASI_OUTLINE",
   "FILE_OUTLINE",
   "HALAMAN_PERSETUJUAN",
