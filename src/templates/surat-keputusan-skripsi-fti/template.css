@@ -122,10 +122,16 @@ h2 {
   text-align: justify;
 }
 .dean-approval {
-  width: 64mm;
+  width: 82mm;
   margin: 5mm 0 0 auto;
   font-size: 12pt;
   line-height: 1.2;
+}
+.dean-approval-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 2mm;
+  white-space: nowrap;
 }
 .signature-space {
   display: flex;
