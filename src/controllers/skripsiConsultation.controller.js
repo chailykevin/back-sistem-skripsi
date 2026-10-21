@@ -8,6 +8,9 @@ const {
   getOpenPeriod: getSidangOpenPeriod,
 } = require("../services/sidangSubmissionPeriod.service");
 const {
+  attachSidangSystemFiles,
+} = require("../services/pengajuanSidangSystemFiles.service");
+const {
   generateKartuPenulisanSkripsiFTI,
 } = require("../services/generateKartuPenulisanSkripsiFTI.js");
 
@@ -1248,6 +1251,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             [autoSidangId],
           );
         }
+
+        await attachSidangSystemFiles(conn, autoSidangId, kartuSkripsiId);
       }
     }
 
