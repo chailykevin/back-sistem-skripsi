@@ -1,0 +1,2 @@
+ALTER TABLE mahasiswa
+  ADD COLUMN tahap_tugas_akhir ENUM('SEMINAR_BISNIS_DIGITAL', 'SKRIPSI') NULL AFTER ipk;

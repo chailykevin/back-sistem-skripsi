@@ -18,6 +18,7 @@ exports.listMahasiswa = async (req, res, next) => {
          u.npm,
          m.nama AS mahasiswa_nama,
          m.sks AS mahasiswa_sks,
+         m.tahap_tugas_akhir,
          m.program_studi_id,
          ps.nama AS program_studi_nama,
          GROUP_CONCAT(DISTINCT r.code ORDER BY r.code SEPARATOR ',') AS role_codes
@@ -33,6 +34,7 @@ exports.listMahasiswa = async (req, res, next) => {
          u.is_active,
          u.npm,
          m.nama,
+         m.tahap_tugas_akhir,
          m.program_studi_id,
          ps.nama
        ORDER BY m.nama ASC`
@@ -45,6 +47,7 @@ exports.listMahasiswa = async (req, res, next) => {
       npm: row.npm,
       nama: row.mahasiswa_nama,
       sks: row.mahasiswa_sks,
+      tahapTugasAkhir: row.tahap_tugas_akhir,
       programStudiId: row.program_studi_id,
       programStudiNama: row.program_studi_nama,
       roles: mapRoleCodes(row.role_codes),

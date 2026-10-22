@@ -176,6 +176,16 @@ const NPM_PROGRAM_STUDI_KODE = {
   43: "BD",
 };
 
+// SIMIKO course codes whose KRS registration makes a mahasiswa eligible.
+// Bisnis Digital takes Seminar Bisnis Digital as the step before its Skripsi.
+const TAHAP_TUGAS_AKHIR_BY_MTK_KODE = {
+  IF801BB: "SKRIPSI",
+  TIBB803: "SKRIPSI",
+  SIBB802: "SKRIPSI",
+  BDPB802: "SKRIPSI",
+  BDPB701: "SEMINAR_BISNIS_DIGITAL",
+};
+
 const DOSEN_PENEMPATAN_PROGRAM_STUDI = {
   72: "Bahasa Mandarin",
   61: "Akuntansi",
@@ -249,8 +259,8 @@ async function upsertMahasiswa(conn, mahasiswa) {
   // set on first insert (seed data carries none). Re-seeding an existing
   // student must never erase an email they've since captured/verified.
   await conn.query(
-    `INSERT INTO mahasiswa (npm, nama, tempat_lahir, tanggal_lahir, email, sks, ipk, program_studi_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO mahasiswa (npm, nama, tempat_lahir, tanggal_lahir, email, sks, ipk, tahap_tugas_akhir, program_studi_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
        tempat_lahir = VALUES(tempat_lahir),
@@ -258,6 +268,7 @@ async function upsertMahasiswa(conn, mahasiswa) {
        email = VALUES(email),
        sks = VALUES(sks),
        ipk = VALUES(ipk),
+       tahap_tugas_akhir = VALUES(tahap_tugas_akhir),
        program_studi_id = VALUES(program_studi_id)`,
     [
       mahasiswa.npm,
@@ -267,6 +278,7 @@ async function upsertMahasiswa(conn, mahasiswa) {
       mahasiswa.email ?? null,
       mahasiswa.sks,
       mahasiswa.ipk,
+      mahasiswa.tahapTugasAkhir ?? null,
       mahasiswa.programStudiId,
     ],
   );
@@ -403,6 +415,7 @@ async function getPredefinedMahasiswa(programRows, conn) {
       tanggalLahir: item.tanggalLahir,
       sks: item.sks,
       ipk: item.ipk,
+      tahapTugasAkhir: item.tahapTugasAkhir,
       username: item.username,
       password: null,
       npmProgramCode,
@@ -618,25 +631,36 @@ async function getMahasiswaFromSimiko(conn) {
   }
 
   const [currentPeriod, previousPeriod] = periods;
+  const courseKodes = Object.keys(TAHAP_TUGAS_AKHIR_BY_MTK_KODE);
   const [courses] = await conn.query(
-    "SELECT mtkId FROM widya_miko.m_matakuliah WHERE mtkKode IN (?, ?, ?)",
-    ["TIBB803", "SIBB802", "BDPB802"],
+    `SELECT mtkId, mtkKode FROM widya_miko.m_matakuliah
+     WHERE mtkKode IN (${courseKodes.map(() => "?").join(", ")})`,
+    courseKodes,
   );
   if (courses.length === 0) return [];
 
+  const courseKodeById = new Map(
+    courses.map((course) => [course.mtkId, course.mtkKode]),
+  );
   const courseIds = courses.map((course) => course.mtkId);
   const coursePlaceholders = courseIds.map(() => "?").join(", ");
   const [schedules] = await conn.query(
-    `SELECT jadId FROM widya_miko.t_jadwal
+    `SELECT jadId, mtkId FROM widya_miko.t_jadwal
      WHERE mtkId IN (${coursePlaceholders}) AND akdKode = ?`,
     [...courseIds, currentPeriod.akdKode],
   );
   if (schedules.length === 0) return [];
 
+  const tahapByScheduleId = new Map(
+    schedules.map((schedule) => [
+      schedule.jadId,
+      TAHAP_TUGAS_AKHIR_BY_MTK_KODE[courseKodeById.get(schedule.mtkId)],
+    ]),
+  );
   const scheduleIds = schedules.map((schedule) => schedule.jadId);
   const schedulePlaceholders = scheduleIds.map(() => "?").join(", ");
-  const [students] = await conn.query(
-    `SELECT DISTINCT m.mhsId, m.mhsNpm, usrMhs.mhsUName, bio.bdtNama, bio.bdtT4Lahir, bio.bdtTglLahir, aktMhs.akmIPK, akmSKSLulus
+  const [rows] = await conn.query(
+    `SELECT DISTINCT m.mhsId, m.mhsNpm, usrMhs.mhsUName, bio.bdtNama, bio.bdtT4Lahir, bio.bdtTglLahir, aktMhs.akmIPK, akmSKSLulus, krs.jadId
      FROM widya_miko.m_mahasiswa m
      JOIN widya_miko.t_krs krs ON m.mhsId = krs.mhsId
      JOIN widya_miko.m_biodata bio ON bio.bdtId = m.bdtId
@@ -645,6 +669,20 @@ async function getMahasiswaFromSimiko(conn) {
      WHERE krs.jadId IN (${schedulePlaceholders}) AND aktMhs.akdKode = ?`,
     [...scheduleIds, previousPeriod.akdKode],
   );
+
+  // A student enrolled in several matching courses yields one row per course;
+  // collapse to one per student, with SKRIPSI outranking the seminar.
+  const studentsByNpm = new Map();
+  for (const row of rows) {
+    const tahap = tahapByScheduleId.get(row.jadId);
+    const existing = studentsByNpm.get(row.mhsNpm);
+    if (existing) {
+      if (tahap === "SKRIPSI") existing.tahapTugasAkhir = tahap;
+      continue;
+    }
+    studentsByNpm.set(row.mhsNpm, { ...row, tahapTugasAkhir: tahap });
+  }
+  const students = [...studentsByNpm.values()];
 
   for (const student of students) {
     student.bdtT4Lahir = normalizeTempatLahir(student.bdtT4Lahir);
@@ -659,6 +697,7 @@ async function getMahasiswaFromSimiko(conn) {
     tempatLahir: item.bdtT4Lahir,
     tanggalLahir: item.bdtTglLahir,
     ipk: item.akmIPK,
+    tahapTugasAkhir: item.tahapTugasAkhir,
   }));
 }
 
@@ -771,6 +810,7 @@ exports.seedMahasiswaDummy = async (req, res, next) => {
         password: mhs.password,
         programStudiId: mhs.programStudiId,
         programStudiNama: programName,
+        tahapTugasAkhir: mhs.tahapTugasAkhir,
         roles: ["STUDENT"],
       });
     }
