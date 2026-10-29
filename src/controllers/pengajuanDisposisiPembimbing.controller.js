@@ -2,21 +2,9 @@
 const { insertNotification } = require("../utils/notify");
 const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
-
-const BULAN_ROMAWI = [
-  "I",
-  "II",
-  "III",
-  "IV",
-  "V",
-  "VI",
-  "VII",
-  "VIII",
-  "IX",
-  "X",
-  "XI",
-  "XII",
-];
+const { getStudentNpm } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { BULAN_ROMAWI } = require("../utils/dates");
 
 // Next sequence is MAX of the existing numbers for this prodi/month/year rather than a
 // COUNT by submitted_at: resubmit resets submitted_at, and toggling perlu_surat_pengantar
@@ -49,69 +37,6 @@ async function generateNomorSkSuratPengantar(conn, programStudiId) {
     [programStudiId, `%${suffix}`],
   );
   return `${String(Number(maxSeq) + 1).padStart(3, "0")}${suffix}`;
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (signatureValue == null) return null;
-  const raw = String(signatureValue).trim();
-  if (!raw) return null;
-  const dataUrlMatch = raw.match(
-    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
-  );
-  if (dataUrlMatch) {
-    try {
-      const mimeType = dataUrlMatch[1].toLowerCase();
-      const type = mimeType === "jpeg" ? "jpg" : mimeType;
-      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) {
-      return null;
-    }
-  }
-  const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 =
-    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
-  if (looksLikeBase64) {
-    try {
-      const buffer = Buffer.from(normalized, "base64");
-      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
-      return { buffer, type };
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
-}
-
-async function getStudentNpm(userId) {
-  const [urows] = await db.query(
-    `SELECT npm
-     FROM users
-     WHERE id = ? AND is_active = 1
-     LIMIT 1`,
-    [userId],
-  );
-  return urows[0]?.npm ?? null;
 }
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
@@ -618,7 +543,7 @@ exports.getById = async (req, res, next) => {
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
+        LEFT JOIN staf dkap ON dkap.usr_id = ps.kaprodi_staff_usr_id
 
         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
@@ -694,7 +619,7 @@ exports.getById = async (req, res, next) => {
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
+        LEFT JOIN staf dkap ON dkap.usr_id = ps.kaprodi_staff_usr_id
 
         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn

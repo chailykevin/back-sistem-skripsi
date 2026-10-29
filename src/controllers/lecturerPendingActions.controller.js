@@ -1,12 +1,5 @@
 const db = require("../db");
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
+const { getLecturerNidn } = require("../utils/identity");
 
 exports.getPendingActions = async (req, res, next) => {
   try {

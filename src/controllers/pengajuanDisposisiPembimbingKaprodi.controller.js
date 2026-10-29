@@ -6,23 +6,10 @@ const path = require("path");
 const {
   generateFormulirPengajuanDisposisiPembimbingSkripsiFTI,
 } = require("../services/generateFormulirPengajuanDisposisiPembimbingSkripsiFTI.js");
+const { assertSignatures } = require("../utils/signature");
+const { BULAN_ID } = require("../utils/dates");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
-
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
 
 function formatDateId(date) {
   const d = date instanceof Date ? date : new Date(date);
@@ -38,58 +25,6 @@ function buildFormulirFileName(npm, namaMahasiswa) {
     .replace(/[^\w\s.-]+/g, "")
     .replace(/\s+/g, " ");
   return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.pdf`;
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (signatureValue == null) return null;
-  const raw = String(signatureValue).trim();
-  if (!raw) return null;
-  const dataUrlMatch = raw.match(
-    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
-  );
-  if (dataUrlMatch) {
-    try {
-      const mimeType = dataUrlMatch[1].toLowerCase();
-      const type = mimeType === "jpeg" ? "jpg" : mimeType;
-      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) {
-      return null;
-    }
-  }
-  const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 =
-    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
-  if (looksLikeBase64) {
-    try {
-      const buffer = Buffer.from(normalized, "base64");
-      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
-      return { buffer, type };
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
 }
 
 async function generateFormulirDoc(data) {

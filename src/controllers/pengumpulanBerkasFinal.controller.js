@@ -7,21 +7,9 @@ const { parsePagination, listResponse } = require("../utils/pagination");
 const {
   generateSuratKeteranganPenyerahanSkripsiFTI,
 } = require("../services/generateSuratKeteranganPenyerahanSkripsiFTI");
-
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { formatTanggal } = require("../utils/dates");
 
 function recipientLink(role, skripsiId) {
   switch (role) {
@@ -40,60 +28,6 @@ function recipientLink(role, skripsiId) {
     default:
       return `/student/berkas-final`;
   }
-}
-
-function formatTanggal(date) {
-  const d = new Date(date);
-  return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (!signatureValue) return null;
-  const base64 = signatureValue.includes(",")
-    ? signatureValue.split(",")[1]
-    : signatureValue;
-  try {
-    return Buffer.from(base64, "base64");
-  } catch {
-    return null;
-  }
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
-}
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
 }
 
 async function getSigByNpm(conn, npm) {
@@ -178,7 +112,7 @@ async function generateSuratDoc(
   const mhs = mhsRow[0] ?? {};
 
   const [[psRow]] = await conn.query(
-    `SELECT ps.nama as prodi_nama, ps.sekprodi_nidn
+    `SELECT ps.nama as prodi_nama
      FROM program_studi ps
      JOIN skripsi sk ON sk.program_studi_id = ps.id AND sk.id = ?
      LIMIT 1`,
@@ -699,11 +633,14 @@ exports.confirmPengumpulan = async (req, res, next) => {
       // Notify SEKPRODI of this prodi
       if (pengumpulan.program_studi_id) {
         const [[psRow]] = await conn.query(
-          `SELECT sekprodi_nidn FROM program_studi WHERE id = ? LIMIT 1`,
+          `SELECT sekprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
           [pengumpulan.program_studi_id],
         );
-        if (psRow?.sekprodi_nidn) {
-          const sekprodiUserId = await resolveUserId(conn, psRow.sekprodi_nidn);
+        if (psRow?.sekprodi_staff_usr_id) {
+          const sekprodiUserId = await resolveUserId(
+            conn,
+            psRow.sekprodi_staff_usr_id,
+          );
           if (sekprodiUserId) {
             await insertNotification(
               conn,
@@ -809,37 +746,36 @@ exports.signPengumpulan = async (req, res, next) => {
 
     // Verify sekprodi belongs to this prodi
     const [[sekprodiUserRow]] = await conn.query(
-      `SELECT COALESCE(u.nidn, u.staff_usr_id) AS nidn FROM users u
+      `SELECT u.staff_usr_id FROM users u
        INNER JOIN user_roles ur ON ur.user_id = u.id
        INNER JOIN roles r ON r.id = ur.role_id
        WHERE u.id = ? AND r.code = 'SEKPRODI' AND ur.is_active = 1
        LIMIT 1`,
       [userId],
     );
-    if (!sekprodiUserRow) {
+    if (!sekprodiUserRow?.staff_usr_id) {
       await conn.rollback();
       txStarted = false;
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    if (pengumpulan.program_studi_id) {
-      const [[psRow]] = await conn.query(
-        `SELECT sekprodi_nidn FROM program_studi WHERE id = ? LIMIT 1`,
-        [pengumpulan.program_studi_id],
-      );
-      if (
-        psRow?.sekprodi_nidn &&
-        psRow.sekprodi_nidn !== sekprodiUserRow.nidn
-      ) {
-        await conn.rollback();
-        txStarted = false;
-        return res
-          .status(403)
-          .json({
-            ok: false,
-            message: "Anda bukan Sekretaris Prodi dari program studi ini",
-          });
-      }
+    // Sekprodi is always a staff account; a prodi with no Sekprodi assigned must refuse, not skip the check.
+    const [[psRow]] = await conn.query(
+      `SELECT sekprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
+      [pengumpulan.program_studi_id],
+    );
+    if (
+      !psRow?.sekprodi_staff_usr_id ||
+      psRow.sekprodi_staff_usr_id !== sekprodiUserRow.staff_usr_id
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Anda bukan Sekretaris Prodi dari program studi ini",
+        });
     }
 
     const [[sekprodiSigRow]] = await conn.query(
@@ -848,14 +784,14 @@ exports.signPengumpulan = async (req, res, next) => {
        JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
        WHERE u.usrId = ?
        LIMIT 1`,
-      [sekprodiUserRow.nidn],
+      [sekprodiUserRow.staff_usr_id],
     );
-    const [[dosRow]] = await conn.query(
-      `SELECT d.nama FROM dosen d WHERE d.nidn = ? LIMIT 1`,
-      [sekprodiUserRow.nidn],
+    const [[stafRow]] = await conn.query(
+      `SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`,
+      [sekprodiUserRow.staff_usr_id],
     );
     const sekprodiSig = sekprodiSigRow?.signature_image ?? null;
-    const namaSekprodi = dosRow?.nama ?? "";
+    const namaSekprodi = stafRow?.nama ?? "";
 
     // Regenerate document with sekprodi signature
     const allConfs = await conn.query(
@@ -1271,16 +1207,6 @@ exports.listForSekretariatProdi = async (req, res, next) => {
   }
 };
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
 const VALID_PENGUMPULAN_STATUSES = [
   "DRAFT",
   "SUBMITTED",
@@ -1304,9 +1230,9 @@ exports.getKaprodiPengumpulan = async (req, res, next) => {
       });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn
-      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    const programStudiIds = staffUsrId
+      ? await getKaprodiProgramStudiIds(staffUsrId)
       : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });

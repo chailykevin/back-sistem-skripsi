@@ -1,20 +1,10 @@
 const db = require("../db");
 const { sendEmailVerificationEmail } = require("../utils/email");
 const { generateToken, hashToken } = require("../utils/token");
+const { getStudentNpm } = require("../utils/identity");
 
 const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm
-     FROM users
-     WHERE id = ? AND is_active = 1
-     LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
 
 exports.getMyEmailStatus = async (req, res, next) => {
   try {

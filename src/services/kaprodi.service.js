@@ -1,17 +1,8 @@
 const db = require("../db");
+const { getKaprodiProgramStudiIds } = require("../utils/identity");
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
-async function getPendingActionsByRole(nidn) {
-  const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+async function getPendingActionsByRole(staffUsrId) {
+  const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
 
   if (programStudiIds.length === 0) {
     return {

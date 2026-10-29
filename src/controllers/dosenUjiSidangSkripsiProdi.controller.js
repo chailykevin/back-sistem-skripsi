@@ -1,6 +1,7 @@
 const db = require("../db");
 const service = require("../services/dosenUjiSidangSkripsiProdi.service");
 const { parsePagination, buildPagination } = require("../utils/pagination");
+const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 
 function parseOptionalPositiveInteger(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -29,32 +30,6 @@ async function programStudiExists(programStudiId) {
     [programStudiId],
   );
   return rows.length > 0;
-}
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
 }
 
 async function requireAdminProdi(req, res) {
@@ -299,9 +274,9 @@ exports.listEligible = async (req, res, next) => {
       allowed = Boolean(npm) && npm === skripsi.npm;
     }
     if (!allowed && isKaprodi) {
-      const nidn = await getLecturerNidn(req.user.id);
-      const kaprodiProgramStudiIds = nidn
-        ? await getKaprodiProgramStudiIdsByNidn(nidn)
+      const staffUsrId = await getStaffUsrId(req.user.id);
+      const kaprodiProgramStudiIds = staffUsrId
+        ? await getKaprodiProgramStudiIds(staffUsrId)
         : [];
       allowed = kaprodiProgramStudiIds.includes(
         Number(skripsi.program_studi_id),

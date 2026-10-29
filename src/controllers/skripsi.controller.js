@@ -1,31 +1,6 @@
 "use strict";
 const db = require("../db");
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((r) => Number(r.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 
 const SELECT_COLS = `s.id, s.npm, s.judul, s.status, s.program_studi_id,
   ps.nama AS program_studi_nama,
@@ -96,11 +71,11 @@ exports.getKaprodiSkripsi = async (req, res, next) => {
         .status(403)
         .json({ ok: false, message: "Only kaprodi can access this endpoint" });
     }
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn)
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId)
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)

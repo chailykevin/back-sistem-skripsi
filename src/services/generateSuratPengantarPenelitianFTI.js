@@ -2,27 +2,9 @@ const path = require("node:path");
 const { replacePlaceholders } = require("./shared/html.js");
 const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const { renderPdf } = require("./shared/pdf.js");
+const { formatTanggal } = require("../utils/dates");
 const templatePath = path.join(__dirname, "../templates/surat-pengantar-penelitian-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/surat-pengantar-penelitian-fti/template.css");
-
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
-
-function formatTanggalIndonesia(date) {
-  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
-}
 
 /**
  * Loads everything the surat pengantar needs for one pengajuan_disposisi_pembimbing row.
@@ -60,7 +42,7 @@ async function getSuratPengantarPenelitianData(conn, pengajuanDisposisiPembimbin
   return {
     nomorSurat: row.nomor_sk_surat_pengantar ?? "",
     tanggalSurat: row.submitted_at
-      ? formatTanggalIndonesia(new Date(row.submitted_at))
+      ? formatTanggal(new Date(row.submitted_at))
       : "",
     lampiran: "-",
     penerima: {

@@ -11,21 +11,9 @@ const {
 const {
   generateNotulenPengujiFTI,
 } = require("../services/generateNotulenPengujiFTI");
-
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { formatTanggal } = require("../utils/dates");
 
 const STAGE_ORDER = ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"];
 
@@ -33,38 +21,6 @@ const NOTULEN_ROLE_LABEL = {
   PENGUJI_1: "Penguji Utama",
   PENGUJI_2: "Anggota Penguji",
 };
-
-function formatTanggal(date) {
-  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (!signatureValue) return null;
-  const base64 = signatureValue.includes(",")
-    ? signatureValue.split(",")[1]
-    : signatureValue;
-  try {
-    return Buffer.from(base64, "base64");
-  } catch {
-    return null;
-  }
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
 
 async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
@@ -116,27 +72,6 @@ async function getSigByNpm(conn, npm) {
     [npm],
   );
   return row?.signature_image ?? null;
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
 }
 
 // Returns the first stage that is not yet APPROVED, or null if all approved / none created
@@ -242,23 +177,23 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     : new Date().getFullYear();
 
   const [[prodiRow]] = await conn.query(
-    `SELECT ps.fakultas_id, f.dekan_staff_usr_id AS dekan_nidn, d.nama AS dekan_nama
+    `SELECT ps.fakultas_id, f.dekan_staff_usr_id, s.nama AS dekan_nama
      FROM program_studi ps
      LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-     LEFT JOIN dosen d ON d.nidn = f.dekan_nidn
+     LEFT JOIN staf s ON s.usr_id = f.dekan_staff_usr_id
      WHERE ps.id = ?
      LIMIT 1`,
     [sidangRow.program_studi_id],
   );
 
-  const dekanNidn = prodiRow?.dekan_nidn ?? null;
+  const dekanStaffUsrId = prodiRow?.dekan_staff_usr_id ?? null;
   const dekanNama = prodiRow?.dekan_nama ?? "";
 
   const [sigMhs, sig1, sig2, sigDekan] = await Promise.all([
     getSigByNpm(conn, sidangRow.npm),
     getSigByNidn(conn, sidangRow.pembimbing1_nidn),
     getSigByNidn(conn, sidangRow.pembimbing2_nidn),
-    getSigByNidnAndRole(conn, dekanNidn, "DEKAN"),
+    getSigByNidnAndRole(conn, dekanStaffUsrId, "DEKAN"),
   ]);
 
   assertSignatures([
@@ -1182,16 +1117,6 @@ exports.getLecturerRevisi = async (req, res, next) => {
   }
 };
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
 exports.getKaprodiRevisi = async (req, res, next) => {
   try {
     if (!req.user.hasRole("KAPRODI")) {
@@ -1205,9 +1130,9 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     if (status && !validStatuses.includes(status)) {
       return res.status(400).json({ ok: false, message: "status tidak valid" });
     }
-    const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn
-      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    const programStudiIds = staffUsrId
+      ? await getKaprodiProgramStudiIds(staffUsrId)
       : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });

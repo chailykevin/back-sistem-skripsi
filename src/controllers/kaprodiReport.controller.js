@@ -1,23 +1,6 @@
 const db = require("../db");
 const ExcelJS = require("exceljs");
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
+const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 
 function formatDateTime(value) {
   if (!value) return "";
@@ -66,13 +49,13 @@ async function resolveKaprodiProgramStudi(req, res) {
     return null;
   }
 
-  const nidn = await getLecturerNidn(req.user.id);
-  if (!nidn) {
+  const staffUsrId = await getStaffUsrId(req.user.id);
+  if (!staffUsrId) {
     res.status(400).json({ ok: false, message: "Data dosen tidak valid" });
     return null;
   }
 
-  const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+  const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
   if (programStudiIds.length === 0) {
     res.status(403).json({ ok: false, message: "You are not assigned as Kaprodi" });
     return null;

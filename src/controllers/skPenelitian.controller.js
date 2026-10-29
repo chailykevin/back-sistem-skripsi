@@ -17,32 +17,9 @@ const {
   getSuratPengantarPenelitianData,
   generateSuratPengantarPenelitianFTI,
 } = require("../services/generateSuratPengantarPenelitianFTI.js");
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
+const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { BULAN_ROMAWI, formatTanggal } = require("../utils/dates");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -52,92 +29,6 @@ function buildKartuFileName(npm, namaMahasiswa, suffix) {
     .trim()
     .replace(/[/\\:*?"<>|]+/g, "_");
   return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (signatureValue === undefined || signatureValue === null) return null;
-  const raw = String(signatureValue).trim();
-  if (!raw) return null;
-  const dataUrlMatch = raw.match(
-    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
-  );
-  if (dataUrlMatch) {
-    try {
-      const mimeType = dataUrlMatch[1].toLowerCase();
-      const type = mimeType === "jpeg" ? "jpg" : mimeType;
-      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) {
-      return null;
-    }
-  }
-  const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 =
-    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
-  if (looksLikeBase64) {
-    try {
-      const buffer = Buffer.from(normalized, "base64");
-      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
-      return { buffer, type };
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    throw Object.assign(
-      new Error(
-        `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-      ),
-      { statusCode: 400, missingSignatures: missing },
-    );
-  }
-}
-
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
-
-const BULAN_ROMAWI = [
-  "I",
-  "II",
-  "III",
-  "IV",
-  "V",
-  "VI",
-  "VII",
-  "VIII",
-  "IX",
-  "X",
-  "XI",
-  "XII",
-];
-
-function formatTanggalIndonesia(date) {
-  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 async function generateSkDocuments(conn, sk, outlineId) {
@@ -270,7 +161,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
     [nomorSurat, sk.id],
   );
 
-  const tanggal = formatTanggalIndonesia(now);
+  const tanggal = formatTanggal(now);
 
   const dataSuratKeputusanSkripsiFTI = {
     nomorSurat,
@@ -1516,12 +1407,12 @@ exports.listSkForKaprodi = async (req, res, next) => {
       });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)

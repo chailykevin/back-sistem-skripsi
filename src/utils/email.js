@@ -1,24 +1,5 @@
 const nodemailer = require("nodemailer");
 
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
-
-function formatTanggalIndonesia(date) {
-  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
-}
-
 function createTransport() {
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST,

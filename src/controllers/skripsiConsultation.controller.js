@@ -11,6 +11,8 @@ const {
 const {
   generateKartuPenulisanSkripsiFTI,
 } = require("../services/generateKartuPenulisanSkripsiFTI.js");
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
 
 const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 const CHAPTER_LABEL = {
@@ -38,86 +40,8 @@ function buildKartuFileName(npm, namaMahasiswa, suffix) {
   return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ?`,
-    [nidn],
-  );
-  return rows
-    .map((r) => Number(r.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
 function hasRole(req, role) {
   return typeof req.user?.hasRole === "function" && req.user.hasRole(role);
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (signatureValue === undefined || signatureValue === null) return null;
-  const raw = String(signatureValue).trim();
-  if (!raw) return null;
-  const dataUrlMatch = raw.match(
-    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
-  );
-  if (dataUrlMatch) {
-    try {
-      const mimeType = dataUrlMatch[1].toLowerCase();
-      const type = mimeType === "jpeg" ? "jpg" : mimeType;
-      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) {
-      return null;
-    }
-  }
-  const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 =
-    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
-  if (looksLikeBase64) {
-    try {
-      const buffer = Buffer.from(normalized, "base64");
-      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
-      return { buffer, type };
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
 }
 
 function formatKartuDate(value) {
@@ -1497,12 +1421,12 @@ exports.listForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can access this endpoint" });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)
@@ -1641,16 +1565,16 @@ exports.getFinalKartuFile = async (req, res, next) => {
       isAuthorized = Boolean(npm) && npm === kartu.npm;
     } else if (req.user.userType === "LECTURER") {
       const nidn = await getLecturerNidn(req.user.id);
-      if (nidn) {
-        isAuthorized =
-          nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn;
-        if (!isAuthorized && hasRole(req, "KAPRODI")) {
-          const kaprodiProgramStudiIds =
-            await getKaprodiProgramStudiIdsByNidn(nidn);
-          isAuthorized = kaprodiProgramStudiIds.includes(
-            Number(kartu.program_studi_id),
-          );
-        }
+      isAuthorized =
+        Boolean(nidn) &&
+        (nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn);
+      if (!isAuthorized && hasRole(req, "KAPRODI")) {
+        const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(
+          await getStaffUsrId(req.user.id),
+        );
+        isAuthorized = kaprodiProgramStudiIds.includes(
+          Number(kartu.program_studi_id),
+        );
       }
     }
 
@@ -1693,12 +1617,12 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)
@@ -1843,16 +1767,16 @@ exports.previewKartuDocx = async (req, res, next) => {
       isAuthorized = Boolean(npm) && npm === kartu.npm;
     } else if (req.user.userType === "LECTURER") {
       const nidn = await getLecturerNidn(req.user.id);
-      if (nidn) {
-        isAuthorized =
-          nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn;
-        if (!isAuthorized && hasRole(req, "KAPRODI")) {
-          const kaprodiProgramStudiIds =
-            await getKaprodiProgramStudiIdsByNidn(nidn);
-          isAuthorized = kaprodiProgramStudiIds.includes(
-            Number(kartu.program_studi_id),
-          );
-        }
+      isAuthorized =
+        Boolean(nidn) &&
+        (nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn);
+      if (!isAuthorized && hasRole(req, "KAPRODI")) {
+        const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(
+          await getStaffUsrId(req.user.id),
+        );
+        isAuthorized = kaprodiProgramStudiIds.includes(
+          Number(kartu.program_studi_id),
+        );
       }
     }
 
