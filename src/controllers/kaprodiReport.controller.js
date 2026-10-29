@@ -639,16 +639,6 @@ function latestByKey(rows, keyField, tieBreakField = "id") {
   return map;
 }
 
-function groupBy(rows, keyField) {
-  const map = new Map();
-  for (const row of rows) {
-    const list = map.get(row[keyField]) ?? [];
-    list.push(row);
-    map.set(row[keyField], list);
-  }
-  return map;
-}
-
 exports.exportOverallProgressReport = async (req, res, next) => {
   try {
     const programStudiIds = await resolveKaprodiProgramStudi(req, res);

@@ -3,8 +3,6 @@ const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   generateFormulirPengajuanDisposisiPembimbingSkripsiFTI,
 } = require("../services/generateFormulirPengajuanDisposisiPembimbingSkripsiFTI.js");
@@ -42,17 +40,6 @@ function buildFormulirFileName(npm, namaMahasiswa) {
   return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.pdf`;
 }
 
-function checkbox(value) {
-  return value ? "☑" : "☐";
-}
-
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue == null) return null;
   const raw = String(signatureValue).trim();
@@ -82,25 +69,6 @@ function decodeSignatureToBuffer(signatureValue) {
     }
   }
   return null;
-}
-
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) return textPatch("");
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: { width: 160, height: 60 },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
 }
 
 function hasSignature(signatureValue) {
@@ -166,75 +134,6 @@ async function generateFormulirDoc(data) {
     await generateFormulirPengajuanDisposisiPembimbingSkripsiFTI(
       dataPengajuanDisposisiPembimbingSkripsi,
     );
-
-  //DOCX GENERATOR
-
-  // const {
-  //   npm,
-  //   namaMahasiswa,
-  //   programStudiNama,
-  //   noHp,
-  //   sks,
-  //   judulSkripsi,
-  //   pembimbing1DiajukanNama,
-  //   pembimbing2DiajukanNama,
-  //   perluSuratPengantar,
-  //   namaPerusahaan,
-  //   studentSignature,
-  //   submittedAt,
-  //   programStudiNamaUpper,
-  //   disposisiDate,
-  //   keputusan,
-  //   dosenPembimbing1,
-  //   dosenPembimbing2,
-  //   catatan,
-  //   syaratTranskrip,
-  //   namaKaprodi,
-  //   kaprodiSignature,
-  // } = data;
-
-  // const templateBuffer = await readFile(
-  //   path.join(
-  //     __dirname,
-  //     "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
-  //   ),
-  // );
-
-  // const patches = {
-  //   npm: textPatch(npm ?? ""),
-  //   nama_mahasiswa: textPatch(namaMahasiswa ?? ""),
-  //   nama: textPatch(namaMahasiswa ?? ""),
-  //   program_studi: textPatch(programStudiNama ?? ""),
-  //   no_hp: textPatch(noHp ?? ""),
-  //   sks: textPatch(String(sks ?? "")),
-  //   judul: textPatch(judulSkripsi ?? ""),
-  //   calon_dosen_pembimbing_1: textPatch(pembimbing1DiajukanNama ?? ""),
-  //   calon_dosen_pembimbing_2: textPatch(pembimbing2DiajukanNama ?? ""),
-  //   perlu_surat_pengantar: textPatch(
-  //     perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak",
-  //   ),
-  //   nama_perusahaan: textPatch(namaPerusahaan || "-"),
-  //   today_date: textPatch(formatDateId(submittedAt ?? new Date())),
-  //   signature: signatureImagePatch(studentSignature),
-  //   nama_program_studi: textPatch(
-  //     programStudiNamaUpper ??
-  //       (programStudiNama ? String(programStudiNama).toUpperCase() : ""),
-  //   ),
-  //   disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
-  //   keputusan: textPatch(keputusan ?? ""),
-  //   dosen_pembimbing_1: textPatch(dosenPembimbing1 ?? ""),
-  //   dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
-  //   catatan: textPatch(catatan || "-"),
-  //   syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
-  //   nama_kaprodi: textPatch(namaKaprodi ?? ""),
-  //   kaprodi_signature: signatureImagePatch(kaprodiSignature),
-  // };
-
-  // const outputBuffer = await patchDocument({
-  //   outputType: "nodebuffer",
-  //   data: templateBuffer,
-  //   patches,
-  // });
 
   return Buffer.from(outputBuffer).toString("base64");
 }

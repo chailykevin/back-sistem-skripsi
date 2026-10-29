@@ -5,12 +5,6 @@ const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/hasil-penilaian-akhir-ujian-skripsi-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/hasil-penilaian-akhir-ujian-skripsi-fti/template.css");
-const projectRootUrl = path.join(__dirname, "../");
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
 
 function formatNumber(value) {
   if (!Number.isFinite(value))

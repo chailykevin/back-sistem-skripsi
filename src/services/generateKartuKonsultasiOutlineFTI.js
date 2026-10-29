@@ -11,13 +11,6 @@ const cssPath = path.join(
   __dirname,
   "../templates/kartu-konsultasi-outline-fti/template.css",
 );
-const projectRootUrl = path.join(__dirname, "../");
-
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
 
 async function renderConsultationRows(rows) {
   const rowsToRender =

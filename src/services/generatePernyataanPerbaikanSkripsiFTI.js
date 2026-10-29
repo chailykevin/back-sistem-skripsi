@@ -1,16 +1,10 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
+const { renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/pernyataan-perbaikan-skripsi-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/pernyataan-perbaikan-skripsi-fti/template.css");
-const projectRootUrl = path.join(__dirname, "../");
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
 
 function toTitleCase(value) {
   return String(value)

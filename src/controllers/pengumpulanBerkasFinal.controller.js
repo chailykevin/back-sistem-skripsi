@@ -2,8 +2,6 @@
 
 const db = require("../db");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const {
@@ -23,15 +21,6 @@ const BULAN_ID = [
   "Oktober",
   "November",
   "Desember",
-];
-
-const RECIPIENT_ROLES = [
-  "PERPUSTAKAAN",
-  "LPPM",
-  "PEMBIMBING_1",
-  "PEMBIMBING_2",
-  "PENGUJI_1",
-  "PENGUJI_2",
 ];
 
 function recipientLink(role, skripsiId) {
@@ -58,13 +47,6 @@ function formatTanggal(date) {
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (!signatureValue) return null;
   const base64 = signatureValue.includes(",")
@@ -75,17 +57,6 @@ function decodeSignatureToBuffer(signatureValue) {
   } catch {
     return null;
   }
-}
-
-function signaturePatch(signatureValue) {
-  const buf = decodeSignatureToBuffer(signatureValue);
-  if (!buf) return textPatch("");
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [
-      new ImageRun({ data: buf, transformation: { width: 100, height: 50 } }),
-    ],
-  };
 }
 
 function hasSignature(signatureValue) {
@@ -123,15 +94,6 @@ async function getLecturerNidn(userId) {
     [userId],
   );
   return rows[0]?.nidn ?? null;
-}
-
-async function getSigByUserId(conn, userId) {
-  if (!userId) return null;
-  const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return row?.signature_image ?? null;
 }
 
 async function getSigByNpm(conn, npm) {
@@ -193,29 +155,6 @@ async function getUserIdByRole(conn, role) {
     [role],
   );
   return row?.id ?? null;
-}
-
-async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
-  const [[row]] = await conn.query(
-    `SELECT sk.npm, sk.status as skripsi_status,
-            s.id as sidang_id,
-            sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-            psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-            m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi,
-            prog.id AS program_studi_id, prog.nama AS program_studi_nama,
-            rps.id as revisi_id, rps.is_completed as revisi_completed
-     FROM skripsi sk
-     JOIN mahasiswa m ON m.npm = sk.npm
-     LEFT JOIN sidang s ON s.skripsi_id = sk.id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = sk.id)
-     LEFT JOIN pengajuan_sidang_kaprodi psk_k
-            ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-     LEFT JOIN program_studi prog ON prog.id = sk.program_studi_id
-     LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
-     WHERE sk.id = ?
-     LIMIT 1`,
-    [skripsiId],
-  );
-  return row ?? null;
 }
 
 async function generateSuratDoc(
@@ -310,41 +249,6 @@ async function generateSuratDoc(
   ]);
 
   const tanggalDibuat = formatTanggal(new Date());
-
-  // DOCX generator (legacy)
-  // const templatePath = path.join(
-  //   __dirname,
-  //   "../templates/template_surat_keterangan_penyerahan_skripsi.docx",
-  // );
-  // const templateBuffer = await readFile(templatePath);
-  // const outputBuffer = await patchDocument({
-  //   outputType: "nodebuffer",
-  //   data: templateBuffer,
-  //   patches: {
-  //     nama_mahasiswa: textPatch(mhs.nama ?? sidangRow?.nama_mahasiswa ?? ""),
-  //     npm: textPatch(pengumpulan.npm),
-  //     no_hp: textPatch(mhs.no_hp ?? ""),
-  //     prodi: textPatch(psRow?.prodi_nama ?? sidangRow?.program_studi_nama ?? ""),
-  //     judul_skripsi: textPatch(skripsiRow?.judul ?? sidangRow?.judul_skripsi ?? ""),
-  //     tanggal_terima_perpus: textPatch(confMap["PERPUSTAKAAN"]?.confirmed_at ? formatTanggal(confMap["PERPUSTAKAAN"].confirmed_at) : ""),
-  //     tanggal_terima_lppm: textPatch(confMap["LPPM"]?.confirmed_at ? formatTanggal(confMap["LPPM"].confirmed_at) : ""),
-  //     tanggal_terima_pembimbing1: textPatch(confMap["PEMBIMBING_1"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_1"].confirmed_at) : ""),
-  //     tanggal_terima_pembimbing2: textPatch(confMap["PEMBIMBING_2"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_2"].confirmed_at) : ""),
-  //     tanggal_terima_penguji1: textPatch(confMap["PENGUJI_1"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_1"].confirmed_at) : ""),
-  //     tanggal_terima_penguji2: textPatch(confMap["PENGUJI_2"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_2"].confirmed_at) : ""),
-  //     ttd_perpustakaan: signaturePatch(perpusSig),
-  //     ttd_lppm: signaturePatch(lppmSig),
-  //     ttd_pembimbing1: signaturePatch(sigPb1),
-  //     ttd_pembimbing2: signaturePatch(sigPb2),
-  //     ttd_penguji1: signaturePatch(sigPg1),
-  //     ttd_penguji2: signaturePatch(sigPg2),
-  //     ttd_mahasiswa: signaturePatch(sigMhs),
-  //     ttd_sekprodi: sekprodiSig ? signaturePatch(sekprodiSig) : textPatch(""),
-  //     nama_sekprodi: textPatch(namaSekprodi ?? ""),
-  //     tanggal_dibuat: textPatch(tanggalDibuat),
-  //   },
-  // });
-  // return outputBuffer;
 
   const confirmationData = (role, signatureBase64) => ({
     tanggal: confMap[role]?.confirmed_at

@@ -10,9 +10,6 @@ const {
 } = require("../services/pengajuanSidangSystemFiles.service");
 const dosenUjiSidangSkripsiProdiService = require("../services/dosenUjiSidangSkripsiProdi.service");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
-const AdmZip = require("adm-zip");
 const {
   generatePermohonanUjianSkripsiFTI,
 } = require("../services/generatePermohonanUjianSkripsiFTI.js");
@@ -181,13 +178,6 @@ function formatTanggalIndonesia(date) {
   return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue == null) return null;
   const raw = String(signatureValue).trim();
@@ -219,25 +209,6 @@ function decodeSignatureToBuffer(signatureValue) {
   return null;
 }
 
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) return textPatch("");
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: { width: 120, height: 50 },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
-}
-
 function hasSignature(signatureValue) {
   return Boolean(decodeSignatureToBuffer(signatureValue));
 }
@@ -257,423 +228,6 @@ function assertSignatures(checks) {
     err.missingSignatures = missing;
     throw err;
   }
-}
-
-async function buildSuratPenyelesaianDocxBuffer({
-  namaMahasiswa,
-  npm,
-  alamat,
-  noHp,
-  judulSkripsi,
-  ttdKaprodi,
-  namaKaprodi,
-  ttdMahasiswa,
-  prodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_penyelesaian_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    alamat: textPatch(alamat),
-    no_hp: textPatch(noHp),
-    judul_skripsi: textPatch(judulSkripsi),
-    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
-    nama_kaprodi: textPatch(namaKaprodi),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-    prodi: textPatch(prodi),
-  };
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-}
-
-async function buildLembarPermohonanUjianBuffer({
-  todayDate,
-  fakultas,
-  namaMahasiswa,
-  npm,
-  ttl,
-  prodi,
-  tahunMasuk,
-  alamat,
-  noHp,
-  noWa,
-  statusPernikahan,
-  judulSkripsi,
-  ujianCount,
-  ujianCountString,
-  ipk,
-  sks,
-  ttdKaprodi,
-  namaKaprodi,
-  ttdMahasiswa,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_permohonan_ujian_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    today_date: textPatch(todayDate),
-    fakultas: textPatch(fakultas),
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    ttl: textPatch(ttl),
-    prodi: textPatch(prodi),
-    tahun_masuk: textPatch(tahunMasuk),
-    alamat: textPatch(alamat),
-    no_hp: textPatch(noHp),
-    no_wa: textPatch(noWa),
-    status: textPatch(statusPernikahan),
-    judul_skripsi: textPatch(judulSkripsi),
-    ujian_count: textPatch(String(ujianCount)),
-    ujian_count_string: textPatch(ujianCountString),
-    ipk: textPatch(String(ipk ?? "")),
-    sks: textPatch(String(sks ?? "")),
-    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
-    nama_kaprodi: textPatch(namaKaprodi),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
-}
-
-async function buildSuratPernyataanPerbaikanBuffer({
-  namaMahasiswa,
-  npm,
-  alamat,
-  noHp,
-  judulSkripsi,
-  fakultas,
-  ttdKaprodi,
-  namaKaprodi,
-  prodi,
-  ttdMahasiswa,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_pernyataan_perbaikan.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    alamat: textPatch(alamat),
-    no_hp: textPatch(noHp),
-    judul_skripsi: textPatch(judulSkripsi),
-    fakultas: textPatch(fakultas),
-    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
-    nama_kaprodi: textPatch(namaKaprodi),
-    prodi: textPatch(prodi),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
-}
-
-async function buildSuratPernyataanKelengkapanBuffer({
-  prodi,
-  fakultas,
-  namaMahasiswa,
-  npm,
-  todayDate,
-  ttdMahasiswa,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_pernyataan_kelengkapan_dan_nilai_matkul.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    prodi: textPatch(prodi),
-    fakultas: textPatch(fakultas),
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    today_date: textPatch(todayDate),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
-}
-
-function injectHighlight(xml, name, cellIndex) {
-  if (!name) return xml;
-  const normalize = (s) => s.trim().replace(/\s+/g, " ").toLowerCase();
-  const targetNorm = normalize(name);
-
-  function highlightInXml(fragment) {
-    const runRe = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
-    const segments = [];
-    let lastIndex = 0;
-    let m;
-    while ((m = runRe.exec(fragment)) !== null) {
-      segments.push({ type: "gap", text: fragment.slice(lastIndex, m.index) });
-      segments.push({ type: "run", text: m[0] });
-      lastIndex = m.index + m[0].length;
-    }
-    segments.push({ type: "gap", text: fragment.slice(lastIndex) });
-
-    const runs = segments.reduce((acc, seg, i) => {
-      if (seg.type === "run") acc.push(i);
-      return acc;
-    }, []);
-
-    function runText(segIndex) {
-      const tMatch = segments[segIndex].text.match(
-        /<w:t(?:[^>]*)>([\s\S]*?)<\/w:t>/,
-      );
-      return tMatch ? tMatch[1] : "";
-    }
-
-    function addHighlightToRun(run) {
-      if (run.includes("<w:highlight")) return run;
-      if (run.includes("<w:rPr>")) {
-        return run.replace("</w:rPr>", '<w:highlight w:val="yellow"/></w:rPr>');
-      }
-      return run.replace(
-        /(<w:t(?:[^>]*)>)/,
-        '<w:rPr><w:highlight w:val="yellow"/></w:rPr>$1',
-      );
-    }
-
-    let i = 0;
-    while (i < runs.length) {
-      let acc = "";
-      let j = i;
-      while (j < runs.length) {
-        acc += runText(runs[j]).replace(/\s+/g, " ");
-        const accNorm = normalize(acc);
-        if (accNorm === targetNorm) {
-          for (let k = i; k <= j; k++) {
-            segments[runs[k]].text = addHighlightToRun(segments[runs[k]].text);
-          }
-          i = j + 1;
-          break;
-        }
-        if (accNorm.length >= targetNorm.length) {
-          i++;
-          break;
-        }
-        j++;
-      }
-      if (j >= runs.length) i++;
-    }
-
-    return segments.map((s) => s.text).join("");
-  }
-
-  if (cellIndex === undefined) return highlightInXml(xml);
-
-  return xml.replace(
-    /(<w:tr\b[^>]*>)([\s\S]*?)(<\/w:tr>)/g,
-    (_, open, rowContent, close) => {
-      const cells = [...rowContent.matchAll(/<w:tc\b[^>]*>/g)];
-      const totalCells = cells.length;
-      let targetIdx;
-      if (cellIndex === "UTAMA") {
-        targetIdx = totalCells === 5 ? 1 : -1;
-      } else if (cellIndex === "KEDUA") {
-        targetIdx = totalCells >= 4 ? totalCells - 1 : -1;
-      } else {
-        targetIdx = cellIndex;
-      }
-      if (targetIdx < 0) return open + rowContent + close;
-      let colCount = 0;
-      const processedRow = rowContent.replace(
-        /(<w:tc\b[^>]*>)([\s\S]*?)(<\/w:tc>)/g,
-        (__, tcOpen, cellContent, tcClose) => {
-          const idx = colCount++;
-          const content =
-            idx === targetIdx ? highlightInXml(cellContent) : cellContent;
-          return tcOpen + content + tcClose;
-        },
-      );
-      return open + processedRow + close;
-    },
-  );
-}
-
-async function buildLembarUsulanPengujiBuffer({
-  prodi,
-  fakultas,
-  namaMahasiswa,
-  npm,
-  namaDospem1,
-  namaDospem2,
-  judul,
-  todayDate,
-  penguji1Nama,
-  penguji2Nama,
-  ttdMahasiswa,
-  namaKaprodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_usulan_penguji.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    prodi: textPatch(prodi),
-    fakultas: textPatch(fakultas),
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    nama_dospem1: textPatch(namaDospem1),
-    nama_dospem2: textPatch(namaDospem2),
-    judul: textPatch(judul),
-    today_date: textPatch(todayDate),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-    sidang_date: textPatch(""),
-    sidang_time: textPatch(""),
-    nama_penguji1: textPatch(""),
-    nama_penguji2: textPatch(""),
-    disposisi_date: textPatch(""),
-    nama_kaprodi: textPatch(namaKaprodi),
-    ttd_kaprodi: textPatch(""),
-  };
-  const patchedBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  const zip = new AdmZip(patchedBuffer);
-  const docEntry = zip.getEntry("word/document.xml");
-  if (docEntry) {
-    let xml = docEntry.getData().toString("utf8");
-    if (penguji1Nama) xml = injectHighlight(xml, penguji1Nama, "UTAMA");
-    if (penguji2Nama) xml = injectHighlight(xml, penguji2Nama, "KEDUA");
-    zip.updateFile("word/document.xml", Buffer.from(xml, "utf8"));
-  }
-  return zip.toBuffer();
-}
-
-async function buildLembarUsulanPengujiBufferFull({
-  prodi,
-  fakultas,
-  namaMahasiswa,
-  npm,
-  namaDospem1,
-  namaDospem2,
-  judul,
-  todayDate,
-  penguji1Nama,
-  penguji2Nama,
-  ttdMahasiswa,
-  namaKaprodi,
-  sidangDate,
-  sidangTime,
-  disposisiDate,
-  ttdKaprodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_usulan_penguji.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    prodi: textPatch(prodi),
-    fakultas: textPatch(fakultas),
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    nama_dospem1: textPatch(namaDospem1),
-    nama_dospem2: textPatch(namaDospem2),
-    judul: textPatch(judul),
-    today_date: textPatch(todayDate),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-    sidang_date: textPatch(sidangDate ?? ""),
-    sidang_time: textPatch(sidangTime ?? ""),
-    nama_penguji1: textPatch(penguji1Nama ?? ""),
-    nama_penguji2: textPatch(penguji2Nama ?? ""),
-    disposisi_date: textPatch(disposisiDate ?? ""),
-    nama_kaprodi: textPatch(namaKaprodi),
-    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
-  };
-  const patchedBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  const zip = new AdmZip(patchedBuffer);
-  const docEntry = zip.getEntry("word/document.xml");
-  if (docEntry) {
-    let xml = docEntry.getData().toString("utf8");
-    if (penguji1Nama) xml = injectHighlight(xml, penguji1Nama, "UTAMA");
-    if (penguji2Nama) xml = injectHighlight(xml, penguji2Nama, "KEDUA");
-    zip.updateFile("word/document.xml", Buffer.from(xml, "utf8"));
-  }
-  return zip.toBuffer();
-}
-
-async function buildSuratUndanganBuffer({
-  nomorSurat,
-  lampiran,
-  namaPembimbing1,
-  namaPembimbing2,
-  namaPenguji1,
-  namaPenguji2,
-  tanggal,
-  fakultas,
-  nomorSk,
-  tanggalSk,
-  namaMahasiswa,
-  npm,
-  prodi,
-  judulSkripsi,
-  sidangDate,
-  sidangTime,
-  tempatSidang,
-  ttdKaprodi,
-  namaKaprodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_surat_undangan_sidang.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    nomor_surat: textPatch(nomorSurat ?? ""),
-    lampiran: textPatch(lampiran ?? "-"),
-    nama_pembimbing1: textPatch(namaPembimbing1 ?? ""),
-    nama_pembimbing2: textPatch(namaPembimbing2 ?? ""),
-    nama_penguji1: textPatch(namaPenguji1 ?? ""),
-    nama_penguji2: textPatch(namaPenguji2 ?? ""),
-    tanggal: textPatch(tanggal ?? ""),
-    fakultas: textPatch(fakultas ?? ""),
-    nomor_sk: textPatch(nomorSk ?? ""),
-    tanggal_sk: textPatch(tanggalSk ?? ""),
-    nama_mahasiswa: textPatch(namaMahasiswa ?? ""),
-    npm: textPatch(npm ?? ""),
-    prodi: textPatch(prodi ?? ""),
-    judul_skripsi: textPatch(judulSkripsi ?? ""),
-    sidang_date: textPatch(sidangDate ?? ""),
-    sidang_time: textPatch(sidangTime ?? ""),
-    tempat_sidang: textPatch(tempatSidang ?? ""),
-    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
-    nama_kaprodi: textPatch(namaKaprodi ?? ""),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
 }
 
 const VALID_KAPRODI_STATUSES = [
@@ -731,7 +285,6 @@ const OPTIONAL_FILE_TYPES = [
 ];
 
 // Required only when pengajuan_disposisi_pembimbing.perlu_surat_pengantar = 1
-const CONDITIONALLY_REQUIRED_FILE_TYPES = ["SURAT_KETERANGAN"];
 
 const REQUIRED_FILE_TYPES = ALL_FILE_TYPES.filter(
   (t) => !OPTIONAL_FILE_TYPES.includes(t),
@@ -2493,30 +2046,6 @@ exports.submitKaprodi = async (req, res, next) => {
       },
     ]);
 
-    // DOCX generator (legacy)
-    // const lembarBuffer = await buildLembarPermohonanUjianBuffer({
-    //   todayDate,
-    //   fakultas: docData?.fakultas_nama ?? "",
-    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-    //   npm: docData?.npm ?? npm,
-    //   ttl,
-    //   prodi: docData?.prodi_nama ?? "",
-    //   tahunMasuk,
-    //   alamat: kaprodi.alamat ?? "",
-    //   noHp: kaprodi.no_hp ?? "",
-    //   noWa: kaprodi.no_wa ?? "",
-    //   statusPernikahan: kaprodi.status_pernikahan ?? "",
-    //   judulSkripsi: docData?.judul_skripsi ?? "",
-    //   ujianCount,
-    //   ujianCountString,
-    //   ipk: kaprodi.ipk,
-    //   sks: docData?.sks,
-    //   ttdKaprodi: docData?.kaprodi_sig ?? null,
-    //   namaKaprodi,
-    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    // });
-    // const lembarBase64 = lembarBuffer.toString("base64");
-
     const dataPermohonanUjianSkripsiFTI = {
       tanggal: todayDate,
       mahasiswa: {
@@ -2579,20 +2108,6 @@ exports.submitKaprodi = async (req, res, next) => {
     );
 
     // Generate SURAT_PERNYATAAN_PERBAIKAN
-    // DOCX generator (legacy)
-    // const perbaikanBuffer = await buildSuratPernyataanPerbaikanBuffer({
-    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-    //   npm: docData?.npm ?? npm,
-    //   alamat: kaprodi.alamat ?? "",
-    //   noHp: kaprodi.no_hp ?? "",
-    //   judulSkripsi: docData?.judul_skripsi ?? "",
-    //   fakultas: docData?.fakultas_nama ?? "",
-    //   ttdKaprodi: docData?.kaprodi_sig ?? null,
-    //   namaKaprodi,
-    //   prodi: docData?.prodi_nama ?? "",
-    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    // });
-    // const perbaikanBase64 = perbaikanBuffer.toString("base64");
 
     const dataPernyataanPerbaikanSkripsiFTI = {
       mahasiswa: {
@@ -2632,16 +2147,6 @@ exports.submitKaprodi = async (req, res, next) => {
     );
 
     // Generate SURAT_PERNYATAAN_KELENGKAPAN
-    // DOCX generator (legacy)
-    // const kelengkapanBuffer = await buildSuratPernyataanKelengkapanBuffer({
-    //   prodi: docData?.prodi_nama ?? "",
-    //   fakultas: docData?.fakultas_nama ?? "",
-    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-    //   npm: docData?.npm ?? npm,
-    //   todayDate,
-    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    // });
-    // const kelengkapanBase64 = kelengkapanBuffer.toString("base64");
 
     const dataPernyataanKelengkapanDanNilaiMatkulFTI = {
       mahasiswa: {
@@ -2684,22 +2189,6 @@ exports.submitKaprodi = async (req, res, next) => {
       `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
       [kaprodi.penguji2_nidn],
     );
-    // DOCX generator (legacy)
-    // const usulanBuffer = await buildLembarUsulanPengujiBuffer({
-    //   prodi: docData?.prodi_nama ?? "",
-    //   fakultas: docData?.fakultas_nama ?? "",
-    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-    //   npm: docData?.npm ?? npm,
-    //   namaDospem1: docData?.dospem1_nama ?? "",
-    //   namaDospem2: docData?.dospem2_nama ?? "",
-    //   judul: docData?.judul_skripsi ?? "",
-    //   todayDate,
-    //   penguji1Nama: pg1RowUsulan?.nama ?? null,
-    //   penguji2Nama: pg2RowUsulan?.nama ?? null,
-    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    //   namaKaprodi,
-    // });
-    // const usulanBase64 = usulanBuffer.toString("base64");
 
     const dataUsulanPengujiFTI = {
       tanggal: todayDate,
@@ -2757,20 +2246,6 @@ exports.submitKaprodi = async (req, res, next) => {
       [skripsiId],
     );
     if (skRow) {
-      // DOCX generator (legacy)
-      // const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
-      //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-      //   npm: docData?.npm ?? npm,
-      //   alamat: kaprodi.alamat ?? "",
-      //   noHp: kaprodi.no_hp ?? "",
-      //   judulSkripsi: docData?.judul_skripsi ?? "",
-      //   ttdKaprodi: docData?.kaprodi_sig ?? null,
-      //   namaKaprodi,
-      //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-      //   prodi: docData?.prodi_nama ?? "",
-      // });
-      // const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
-      // const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.docx`;
 
       const dataPernyataanPenyelesaianSkripsiFTI = {
         mahasiswa: {
@@ -3584,27 +3059,6 @@ exports.submitDisposisi = async (req, res, next) => {
       },
     ]);
 
-    // DOCX generator (legacy)
-    // const usulanBuffer = await buildLembarUsulanPengujiBufferFull({
-    //   prodi: docData?.prodi_nama ?? "",
-    //   fakultas: docData?.fakultas_nama ?? "",
-    //   namaMahasiswa: docData?.nama_mahasiswa ?? npm,
-    //   npm,
-    //   namaDospem1: docData?.dospem1_nama ?? "",
-    //   namaDospem2: docData?.dospem2_nama ?? "",
-    //   judul: docData?.judul_skripsi ?? "",
-    //   todayDate: formatTanggalIndonesia(new Date()),
-    //   penguji1Nama: pg1RowDisposisi?.nama ?? null,
-    //   penguji2Nama: pg2RowDisposisi?.nama ?? null,
-    //   ttdMahasiswa: docData?.mahasiswa_sig ?? null,
-    //   namaKaprodi: docData?.nama_kaprodi ?? "",
-    //   sidangDate: sidangDateFormatted,
-    //   sidangTime: waktuSidangFormatted,
-    //   disposisiDate: disposisiDateFormatted,
-    //   ttdKaprodi: docData?.kaprodi_sig ?? null,
-    // });
-    // const usulanBase64 = usulanBuffer.toString("base64");
-
     const dataUsulanPengujiFTI = {
       tanggal: formatTanggalIndonesia(new Date()),
       programStudi: docData?.prodi_nama ?? "",
@@ -3947,30 +3401,6 @@ exports.generateSuratUndangan = async (req, res, next) => {
     const sidangTime = dataRow?.waktu_sidang
       ? String(dataRow.waktu_sidang).substring(0, 5)
       : "";
-
-    // DOCX generator (legacy)
-    // const suratBuffer = await buildSuratUndanganBuffer({
-    //   nomorSurat: nomorSuratSidang,
-    //   lampiran: "-",
-    //   namaPembimbing1: dataRow?.pembimbing1_nama ?? "",
-    //   namaPembimbing2: dataRow?.pembimbing2_nama ?? "",
-    //   namaPenguji1: dataRow?.penguji1_nama ?? "",
-    //   namaPenguji2: dataRow?.penguji2_nama ?? "",
-    //   tanggal: today,
-    //   fakultas: dataRow?.fakultas_nama ?? "",
-    //   nomorSk: dataRow?.nomor_surat ?? "",
-    //   tanggalSk,
-    //   namaMahasiswa: dataRow?.nama_mahasiswa ?? "",
-    //   npm,
-    //   prodi: dataRow?.prodi_nama ?? "",
-    //   judulSkripsi: dataRow?.judul_skripsi ?? "",
-    //   sidangDate,
-    //   sidangTime,
-    //   tempatSidang: dataRow?.tempat_sidang ?? "",
-    //   ttdKaprodi: kaprodiUserRow?.signature_image ?? null,
-    //   namaKaprodi: kaprodiStaffRow?.nama ?? "",
-    // });
-    // const fileBase64 = suratBuffer.toString("base64");
 
     const dataSuratUndanganSidangFTI = {
       nomorSurat: nomorSuratSidang,

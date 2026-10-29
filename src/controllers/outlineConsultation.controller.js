@@ -2,8 +2,6 @@
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   generateKartuKonsultasiOutlineFTI,
 } = require("../services/generateKartuKonsultasiOutlineFTI.js");
@@ -191,13 +189,6 @@ function hasRole(req, role) {
   return typeof req.user?.hasRole === "function" && req.user.hasRole(role);
 }
 
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue === undefined || signatureValue === null) return null;
 
@@ -231,31 +222,6 @@ function decodeSignatureToBuffer(signatureValue) {
   }
 
   return null;
-}
-
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) {
-    return textPatch("");
-  }
-
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: {
-            width: 120,
-            height: 50,
-          },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
 }
 
 function hasSignature(signatureValue) {
@@ -312,54 +278,6 @@ function getDecisionLabel(status) {
     return "Diterima";
   }
   return status ?? "";
-}
-
-async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
-  const templatePath = path.join(
-    __dirname,
-    "..",
-    "templates",
-    "template_kartu_konsultasi_outline.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-
-  assertSignatures(
-    logs.map((log, idx) => ({
-      role: `Paraf ${idx + 1} (${getStageLabel(log.stage)})`,
-      nama: log.reviewer_nama,
-      signatureImage: log.reviewer_signature,
-    })),
-  );
-
-  const patches = {
-    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
-    npm: textPatch(kartu.npm),
-    program_studi: textPatch(kartu.program_studi_nama),
-    judul_skripsi: textPatch(kartu.judul_skripsi),
-    pembimbing1: textPatch(kartu.pembimbing1_nama),
-    pembimbing2: textPatch(kartu.pembimbing2_nama),
-    ttd_pembimbing1: signatureImagePatch(kartu.pembimbing1_signature),
-    ttd_pembimbing2: signatureImagePatch(kartu.pembimbing2_signature),
-  };
-
-  for (let i = 1; i <= 18; i += 1) {
-    const log = logs[i - 1];
-    const keterangan = log
-      ? `${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`
-      : "";
-
-    patches[`tanggal_${i}`] = textPatch(
-      log ? formatKartuDate(log.logged_at) : "",
-    );
-    patches[`keterangan_${i}`] = textPatch(keterangan);
-    patches[`paraf_${i}`] = signatureImagePatch(log?.reviewer_signature);
-  }
-
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
 }
 
 async function getKartuLogs(queryable, kartuId) {
@@ -441,14 +359,6 @@ async function generateAndStoreFinalKartuDocx(
 
   const logs = await getKartuLogs(queryable, kartu.id);
 
-  // DOCX generator (legacy)
-  // const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
-  //   kartu,
-  //   logs,
-  // );
-  // const mimeType =
-  //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
   const dataKartuKonsultasiOutlineFTI = {
     mahasiswa: {
       nama: kartu.nama_mahasiswa,
@@ -504,50 +414,6 @@ async function generateAndStoreFinalKartuDocx(
     fileName,
     mimeType,
   };
-}
-
-async function buildHalamanPersetujuanDocxBuffer({
-  kartu,
-  signatures,
-  programStudiNama,
-  namaKaprodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "..",
-    "templates",
-    "template_halaman_persetujuan_judul_desain_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-
-  const sigMap = {};
-  for (const s of signatures) {
-    sigMap[s.signer_role] = s.signature_image;
-  }
-
-  const programStudi = programStudiNama ?? kartu.program_studi_nama ?? "";
-
-  const patches = {
-    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
-    npm: textPatch(kartu.npm),
-    program_studi1: textPatch(programStudi),
-    program_studi2: textPatch(programStudi.toUpperCase()),
-    judul_skripsi: textPatch((kartu.judul_skripsi ?? "").toUpperCase()),
-    nama_pembimbing1: textPatch(kartu.pembimbing1_nama),
-    nama_pembimbing2: textPatch(kartu.pembimbing2_nama),
-    nama_kaprodi: textPatch(namaKaprodi ?? ""),
-    tahun: textPatch(String(new Date().getFullYear())),
-    ttd_mahasiswa: signatureImagePatch(sigMap["MAHASISWA"]),
-    ttd_pembimbing2: signatureImagePatch(sigMap["PEMBIMBING_2"]),
-    ttd_pembimbing1: signatureImagePatch(sigMap["PEMBIMBING_1"]),
-    ttd_kaprodi: signatureImagePatch(sigMap["KAPRODI"]),
-  };
-
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
 }
 
 async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
@@ -662,26 +528,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     ],
   );
 
-  // DOCX generator (legacy)
-  // const halamanSignatures = [
-  //   {
-  //     signer_role: "MAHASISWA",
-  //     signature_image: mahasiswaRow?.signature_image ?? null,
-  //   },
-  //   {
-  //     signer_role: "PEMBIMBING_2",
-  //     signature_image: p2Row?.signature_image ?? null,
-  //   },
-  //   {
-  //     signer_role: "PEMBIMBING_1",
-  //     signature_image: p1Row?.signature_image ?? null,
-  //   },
-  //   {
-  //     signer_role: "KAPRODI",
-  //     signature_image: kaprodiRow?.signature_image ?? null,
-  //   },
-  // ];
-
   assertSignatures([
     {
       role: "Mahasiswa",
@@ -743,29 +589,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     ),
     content: Buffer.from(halamanBuffer).toString("base64"),
   };
-
-  // const kartuForHalaman = {
-  //   ...kartu,
-  //   nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
-  //   judul_skripsi: psRow?.judul_skripsi ?? "",
-  //   pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
-  //   pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
-  // };
-  // const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-  //   kartu: kartuForHalaman,
-  //   signatures: halamanSignatures,
-  //   programStudiNama: psRow?.program_studi_nama ?? "",
-  //   namaKaprodi: psRow?.kaprodi_nama ?? "",
-  // });
-  // halamanFile = {
-  //   mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  //   name: buildKartuFileName(
-  //     kartu.npm,
-  //     psRow?.nama_mahasiswa,
-  //     "Halaman Persetujuan Judul",
-  //   ),
-  //   content: halamanBuffer.toString("base64"),
-  // };
 
   const [ins] = await conn.query(
     `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
@@ -1623,11 +1446,6 @@ exports.previewKartuDocx = async (req, res, next) => {
     const outputBuffer = await generateKartuKonsultasiOutlineFTI(
       dataKartuKonsultasiOutlineFTI,
     );
-
-    // const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
-    //   kartu,
-    //   logs,
-    // );
 
     const fileName = buildKartuPreviewFileName(kartu.npm, kartu.nama_mahasiswa);
 

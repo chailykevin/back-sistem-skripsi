@@ -1,7 +1,5 @@
 ﻿const db = require("../db");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const {
@@ -40,13 +38,6 @@ function formatTanggal(date) {
   return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (!signatureValue) return null;
   const base64 = signatureValue.includes(",")
@@ -57,17 +48,6 @@ function decodeSignatureToBuffer(signatureValue) {
   } catch {
     return null;
   }
-}
-
-function signaturePatch(signatureValue) {
-  const buf = decodeSignatureToBuffer(signatureValue);
-  if (!buf) return textPatch("");
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [
-      new ImageRun({ data: buf, transformation: { width: 100, height: 50 } }),
-    ],
-  };
 }
 
 async function getLecturerNidn(userId) {
@@ -102,15 +82,6 @@ async function getUserIdByNpm(conn, npm) {
     [npm],
   );
   return row?.id ?? null;
-}
-
-async function getSigByUserId(conn, userId) {
-  if (!userId) return null;
-  const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-    [userId],
-  );
-  return row?.signature_image ?? null;
 }
 
 async function getSigByNidn(conn, nidn) {
@@ -186,14 +157,6 @@ function getNidnForRole(sidangRow, role) {
   return null;
 }
 
-function getNamaForRole(sidangRow, role) {
-  if (role === "PENGUJI_2") return sidangRow.penguji2_nama;
-  if (role === "PENGUJI_1") return sidangRow.penguji1_nama;
-  if (role === "PEMBIMBING_2") return sidangRow.pembimbing2_nama;
-  if (role === "PEMBIMBING_1") return sidangRow.pembimbing1_nama;
-  return null;
-}
-
 function getRoleLabel(role) {
   if (role === "PENGUJI_2") return "Penguji 2";
   if (role === "PENGUJI_1") return "Penguji 1";
@@ -252,33 +215,6 @@ async function generateHalamanPengesahanMajelisDoc(conn, sidangRow) {
       signatureImage: sigPg2,
     },
   ]);
-
-  // DOCX generator (legacy)
-  // const templatePath = path.join(
-  //   __dirname,
-  //   "../templates/template_halaman_pengesahan_majelis_penguji.docx",
-  // );
-  // const templateBuffer = await readFile(templatePath);
-  // const outputBuffer = await patchDocument({
-  //   outputType: "nodebuffer",
-  //   data: templateBuffer,
-  //   patches: {
-  //     judul_skripsi: textPatch(sidangRow.judul_skripsi),
-  //     nama_mahasiswa: textPatch(sidangRow.nama_mahasiswa),
-  //     npm: textPatch(sidangRow.npm),
-  //     tanggal_sidang: textPatch(tanggalStr),
-  //     ttd_mahasiswa: signaturePatch(sigMhs),
-  //     nama_pembimbing1: textPatch(sidangRow.pembimbing1_nama),
-  //     ttd_pembimbing1: signaturePatch(sig1),
-  //     nama_pembimbing2: textPatch(sidangRow.pembimbing2_nama),
-  //     ttd_pembimbing2: signaturePatch(sig2),
-  //     nama_penguji1: textPatch(sidangRow.penguji1_nama),
-  //     ttd_penguji1: signaturePatch(sigPg1),
-  //     nama_penguji2: textPatch(sidangRow.penguji2_nama),
-  //     ttd_penguji2: signaturePatch(sigPg2),
-  //   },
-  // });
-  // return outputBuffer;
 
   return generateHalamanPengesahanMajelisPengujiFTI({
     mahasiswa: {
@@ -343,32 +279,6 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     },
     { role: "Dekan", nama: dekanNama, signatureImage: sigDekan },
   ]);
-
-  // DOCX generator (legacy)
-  // const templatePath = path.join(
-  //   __dirname,
-  //   "../templates/template_halaman_pengesahan_dekan.docx",
-  // );
-  // const templateBuffer = await readFile(templatePath);
-  // const outputBuffer = await patchDocument({
-  //   outputType: "nodebuffer",
-  //   data: templateBuffer,
-  //   patches: {
-  //     judul_skripsi: textPatch(sidangRow.judul_skripsi),
-  //     nama_mahasiswa: textPatch(sidangRow.nama_mahasiswa),
-  //     npm: textPatch(sidangRow.npm),
-  //     ttd_mahasiswa: signaturePatch(sigMhs),
-  //     nama_pembimbing1: textPatch(sidangRow.pembimbing1_nama),
-  //     ttd_pembimbing1: signaturePatch(sig1),
-  //     nama_pembimbing2: textPatch(sidangRow.pembimbing2_nama),
-  //     ttd_pembimbing2: signaturePatch(sig2),
-  //     nama_dekan: textPatch(dekanNama),
-  //     ttd_dekan: signaturePatch(sigDekan),
-  //     prodi: textPatch((sidangRow.program_studi_nama ?? "").toUpperCase()),
-  //     tahun_penulisan: textPatch(String(tahun)),
-  //   },
-  // });
-  // return outputBuffer;
 
   return generateHalamanPengesahanDekanFTI({
     mahasiswa: {

@@ -2,8 +2,6 @@
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   getOpenPeriod: getSidangOpenPeriod,
 } = require("../services/sidangSubmissionPeriod.service");
@@ -70,13 +68,6 @@ function hasRole(req, role) {
   return typeof req.user?.hasRole === "function" && req.user.hasRole(role);
 }
 
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue === undefined || signatureValue === null) return null;
   const raw = String(signatureValue).trim();
@@ -106,25 +97,6 @@ function decodeSignatureToBuffer(signatureValue) {
     }
   }
   return null;
-}
-
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) return textPatch("");
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: { width: 120, height: 50 },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
 }
 
 function hasSignature(signatureValue) {
@@ -254,61 +226,6 @@ async function getKartuLogs(queryable, kartuId) {
     [kartuId],
   );
   return logs;
-}
-
-async function buildKartuKonsultasiSkripsiDocxBuffer(kartu, logs, extra = {}) {
-  const templatePath = path.join(
-    __dirname,
-    "..",
-    "templates",
-    "template_kartu_penulisan_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-
-  assertSignatures(
-    logs.map((log, idx) => ({
-      role: `Paraf ${idx + 1} (${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)})`,
-      nama: log.reviewer_nama,
-      signatureImage: log.reviewer_signature,
-    })),
-  );
-
-  const patches = {
-    fakultas: textPatch((extra.fakultasNama ?? "").toUpperCase()),
-    nomor_sk: textPatch(extra.nomorSk ?? ""),
-    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
-    npm: textPatch(kartu.npm),
-    prodi: textPatch(kartu.program_studi_nama),
-    judul_skripsi: textPatch(kartu.judul_skripsi),
-    pembimbing1_name: textPatch(kartu.pembimbing1_nama),
-    pembimbing2_name: textPatch(kartu.pembimbing2_nama),
-    pembimbing1_signature: signatureImagePatch(kartu.pembimbing1_signature),
-    pembimbing2_signature: signatureImagePatch(kartu.pembimbing2_signature),
-    kaprodi_signature: signatureImagePatch(extra.kaprodiSignature ?? null),
-    tanggal_mulai: textPatch(extra.tanggalMulai ?? ""),
-    tanggal_selesai: textPatch(
-      kartu.completed_at ? formatKartuDate(kartu.completed_at) : "",
-    ),
-    kaprodi_name: textPatch(extra.kaprodiNama ?? ""),
-  };
-
-  for (let i = 1; i <= 53; i += 1) {
-    const log = logs[i - 1];
-    const keterangan = log
-      ? `${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`
-      : "";
-    patches[`tanggal_${i}`] = textPatch(
-      log ? formatKartuDate(log.logged_at) : "",
-    );
-    patches[`keterangan_${i}`] = textPatch(keterangan);
-    patches[`paraf_${i}`] = signatureImagePatch(log?.reviewer_signature);
-  }
-
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
 }
 
 function assertKartuKonsultasiSkripsiLogSignatures(logs) {
@@ -458,13 +375,6 @@ async function generateAndStoreFinalKartuDocx(
   ]);
 
   assertKartuKonsultasiSkripsiLogSignatures(logs);
-
-  // DOCX generator (legacy)
-  // const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
-  //   kartuFull,
-  //   logs,
-  //   extra,
-  // );
 
   const outputBuffer = await generateKartuPenulisanSkripsiFTI(
     buildKartuKonsultasiSkripsiPdfData(kartuFull, logs, extra),
@@ -1954,13 +1864,6 @@ exports.previewKartuDocx = async (req, res, next) => {
     const extra = await fetchKartuExtra(db, kartu.id, kartu.skripsi_id);
     const kartuFull = await fetchKartuDenorm(db, kartu);
     assertKartuKonsultasiSkripsiLogSignatures(logs);
-
-    // DOCX generator (legacy)
-    // const outputBuffer = await buildKartuKonsultasiSkripsiDocxBuffer(
-    //   kartuFull,
-    //   logs,
-    //   extra,
-    // );
 
     const outputBuffer = await generateKartuPenulisanSkripsiFTI(
       buildKartuKonsultasiSkripsiPdfData(kartuFull, logs, extra),

@@ -1,8 +1,6 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   generateHalamanPersetujuanJudulDesainSkripsiFTI,
 } = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
@@ -56,13 +54,6 @@ function buildKartuFileName(npm, namaMahasiswa, suffix) {
   return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
 function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue === undefined || signatureValue === null) return null;
   const raw = String(signatureValue).trim();
@@ -92,25 +83,6 @@ function decodeSignatureToBuffer(signatureValue) {
     }
   }
   return null;
-}
-
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) return textPatch("");
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: { width: 120, height: 50 },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
 }
 
 function hasSignature(signatureValue) {
@@ -166,147 +138,6 @@ const BULAN_ROMAWI = [
 
 function formatTanggalIndonesia(date) {
   return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
-}
-
-async function buildSkDocxBuffer({
-  nomorSurat,
-  prodi,
-  namaMahasiswa,
-  npm,
-  dospem1Nama,
-  dospem2Nama,
-  judulSkripsi,
-  tanggal,
-  dekanSignature,
-  namaDekan,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_SK_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    nomor_surat: textPatch(nomorSurat),
-    prodi: textPatch(prodi),
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    dospem1_nama: textPatch(dospem1Nama),
-    dospem2_nama: textPatch(dospem2Nama),
-    judul_skripsi: textPatch(judulSkripsi),
-    tanggal: textPatch(tanggal),
-    dekan_signature: signatureImagePatch(dekanSignature),
-    nama_dekan: textPatch(namaDekan),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
-}
-
-async function buildSuratPenyelesaianDocxBuffer({
-  namaMahasiswa,
-  npm,
-  alamat,
-  noHp,
-  judulSkripsi,
-  ttdKaprodi,
-  namaKaprodi,
-  ttdMahasiswa,
-  prodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_penyelesaian_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    alamat: textPatch(alamat),
-    no_hp: textPatch(noHp),
-    judul_skripsi: textPatch(judulSkripsi),
-    ttd_kaprodi: signatureImagePatch(ttdKaprodi),
-    nama_kaprodi: textPatch(namaKaprodi),
-    ttd_mahasiswa: signatureImagePatch(ttdMahasiswa),
-    prodi: textPatch(prodi),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
-}
-
-async function buildSuratKeteranganDocxBuffer({
-  namaMahasiswa,
-  npm,
-  programStudi,
-  lokasi,
-  judul,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_surat_keterangan.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-  const patches = {
-    nama_mahasiswa: textPatch(namaMahasiswa),
-    npm: textPatch(npm),
-    program_studi: textPatch(programStudi),
-    lokasi: textPatch(lokasi),
-    judul: textPatch(judul),
-  };
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer;
-}
-
-async function buildHalamanPersetujuanDocxBuffer({
-  kartu,
-  signatures,
-  programStudiNama,
-  namaKaprodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "../templates/template_halaman_persetujuan_judul_desain_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-
-  const sigMap = {};
-  for (const s of signatures) {
-    sigMap[s.signer_role] = s.signature_image;
-  }
-
-  const programStudi = programStudiNama ?? kartu.program_studi_nama ?? "";
-
-  const patches = {
-    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
-    npm: textPatch(kartu.npm),
-    program_studi1: textPatch(programStudi),
-    program_studi2: textPatch(programStudi.toUpperCase()),
-    judul_skripsi: textPatch((kartu.judul_skripsi ?? "").toUpperCase()),
-    nama_pembimbing1: textPatch(kartu.pembimbing1_nama),
-    nama_pembimbing2: textPatch(kartu.pembimbing2_nama),
-    nama_kaprodi: textPatch(namaKaprodi ?? ""),
-    tahun: textPatch(String(new Date().getFullYear())),
-    ttd_mahasiswa: signatureImagePatch(sigMap["MAHASISWA"]),
-    ttd_pembimbing2: signatureImagePatch(sigMap["PEMBIMBING_2"]),
-    ttd_pembimbing1: signatureImagePatch(sigMap["PEMBIMBING_1"]),
-    ttd_kaprodi: signatureImagePatch(sigMap["KAPRODI"]),
-  };
-
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
 }
 
 async function generateSkDocuments(conn, sk, outlineId) {
@@ -378,19 +209,6 @@ async function generateSkDocuments(conn, sk, outlineId) {
     [ps.dekan_nidn],
   );
 
-  // const [[dekan]] = await conn.query(
-  //   `SELECT md.dsnTtd AS signature_image, d.nama AS nama_dekan
-  //    FROM users u
-  //    JOIN user_roles ur ON ur.user_id = u.id
-  //    JOIN roles r ON r.id = ur.role_id
-  //    JOIN dosen d ON d.nidn = u.nidn
-  //    JOIN widya_miko.c_useradm cua ON cua.usrId = COALESCE(u.staff_usr_id, u.nidn)
-  //    JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-  //    WHERE r.code = 'DEKAN' AND u.nidn = ?
-  //    LIMIT 1`,
-  //   [ps.dekan_nidn],
-  // );
-
   if (!dekan)
     throw Object.assign(new Error("Dekan belum dikonfigurasi"), {
       statusCode: 400,
@@ -454,23 +272,6 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   const tanggal = formatTanggalIndonesia(now);
 
-  // DOCX generator (legacy)
-  // const skBuffer = await buildSkDocxBuffer({
-  //   nomorSurat,
-  //   prodi: kartu.program_studi_nama,
-  //   namaMahasiswa: kartu.nama_mahasiswa,
-  //   npm: kartu.npm,
-  //   dospem1Nama: kartu.pembimbing1_nama,
-  //   dospem2Nama: kartu.pembimbing2_nama,
-  //   judulSkripsi: kartu.judul_skripsi,
-  //   tanggal,
-  //   dekanSignature: dekan.signature_image,
-  //   namaDekan: dekan.nama_dekan,
-  // });
-  // const skBase64 = skBuffer.toString("base64");
-  // const mimeDocx =
-  //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
   const dataSuratKeputusanSkripsiFTI = {
     nomorSurat,
     programStudi: kartu.program_studi_nama,
@@ -518,19 +319,6 @@ async function generateSkDocuments(conn, sk, outlineId) {
   );
 
   // Generate SURAT_PENYELESAIAN_SKRIPSI (always)
-  // DOCX generator (legacy)
-  // const penyelesaianBuffer = await buildSuratPenyelesaianDocxBuffer({
-  //   namaMahasiswa: kartu.nama_mahasiswa,
-  //   npm: kartu.npm,
-  //   alamat: "",
-  //   noHp: "",
-  //   judulSkripsi: kartu.judul_skripsi,
-  //   ttdKaprodi: kaprodi?.signature_image ?? null,
-  //   namaKaprodi: kaprodi?.nama_kaprodi ?? "",
-  //   ttdMahasiswa: mahasiswaUser?.signature_image ?? null,
-  //   prodi: kartu.program_studi_nama,
-  // });
-  // const penyelesaianBase64 = penyelesaianBuffer.toString("base64");
 
   const dataPernyataanPenyelesaianSkripsiFTI = {
     mahasiswa: {
@@ -575,15 +363,6 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   // Generate SURAT_KETERANGAN if needed
   if (pj.perlu_surat_pengantar) {
-    // DOCX generator (legacy)
-    // const suratBuffer = await buildSuratKeteranganDocxBuffer({
-    //   namaMahasiswa: kartu.nama_mahasiswa,
-    //   npm: kartu.npm,
-    //   programStudi: kartu.program_studi_nama,
-    //   lokasi: pj.nama_perusahaan ?? "",
-    //   judul: kartu.judul_skripsi,
-    // });
-    // const suratBase64 = suratBuffer.toString("base64");
 
     const dataSuratKeteranganFTI = {
       mahasiswa: {
@@ -871,38 +650,6 @@ exports.initSkPenelitian = async (req, res, next) => {
         Buffer.from(halamanBuffer).toString("base64"),
       ],
     );
-
-    // DOCX generator (legacy)
-    // const kartuForHalaman = {
-    //   ...kartu,
-    //   nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
-    //   pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
-    //   pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
-    // };
-    // const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-    //   kartu: kartuForHalaman,
-    //   signatures: [
-    //     { signer_role: "MAHASISWA", signature_image: mahasiswaRow?.signature_image ?? null },
-    //     { signer_role: "PEMBIMBING_2", signature_image: p2Row?.signature_image ?? null },
-    //     { signer_role: "PEMBIMBING_1", signature_image: p1Row?.signature_image ?? null },
-    //     { signer_role: "KAPRODI", signature_image: kaprodiRow?.signature_image ?? null },
-    //   ],
-    //   programStudiNama: psRow?.program_studi_nama ?? "",
-    //   namaKaprodi: psRow?.kaprodi_nama ?? "",
-    // });
-    // const mimeDocx =
-    //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    // const halamanFileName = buildKartuFileName(
-    //   kartu.npm,
-    //   kartuForHalaman.nama_mahasiswa,
-    //   "Halaman Persetujuan Judul",
-    // );
-    // await conn.query(
-    //   `INSERT INTO pengajuan_sk_penelitian_files
-    //      (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-    //    VALUES (?, 'HALAMAN_PERSETUJUAN', ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
-    //   [skId, halamanFileName, mimeDocx, halamanBuffer.toString("base64")],
-    // );
 
     await conn.commit();
     txStarted = false;
