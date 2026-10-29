@@ -10,6 +10,9 @@ const {
 const {
   generateHalamanPengesahanDekanFTI,
 } = require("../services/generateHalamanPengesahanDekanFTI");
+const {
+  generateNotulenPengujiFTI,
+} = require("../services/generateNotulenPengujiFTI");
 
 const BULAN_ID = [
   "Januari",
@@ -855,47 +858,43 @@ exports.reviewRevisi = async (req, res, next) => {
             },
           ]);
           try {
-            const templateBuffer = await readFile(
-              path.join(
-                __dirname,
-                "../templates/template_notulen_penguji.docx",
-              ),
-            );
-            const outputBuffer = await patchDocument({
-              outputType: "nodebuffer",
-              data: templateBuffer,
-              patches: {
-                npm: textPatch(notulenRow.npm),
-                nama_mahasiswa: textPatch(notulenRow.nama_mahasiswa),
-                prodi: textPatch(notulenRow.program_studi_nama),
-                judul_skripsi: textPatch(notulenRow.judul_skripsi),
-                nama_pembimbing1: textPatch(notulenRow.pembimbing1_nama),
-                nama_pembimbing2: textPatch(notulenRow.pembimbing2_nama),
-                tanggal_sidang: textPatch(
-                  notulenRow.tanggal_sidang
-                    ? formatTanggal(new Date(notulenRow.tanggal_sidang))
-                    : "",
-                ),
-                hasil_sidang: textPatch(notulenRow.hasil_sidang),
-                role: textPatch(NOTULEN_ROLE_LABEL[activeStage.signer_role]),
-                note: textPatch(notulenRow.note),
-                nama_penguji: textPatch(
+            const outputBuffer = await generateNotulenPengujiFTI({
+              mahasiswa: {
+                npm: notulenRow.npm,
+                nama: notulenRow.nama_mahasiswa,
+                programStudi: notulenRow.program_studi_nama,
+                judulSkripsi: notulenRow.judul_skripsi,
+              },
+              pembimbing: {
+                pertama: notulenRow.pembimbing1_nama,
+                kedua: notulenRow.pembimbing2_nama,
+              },
+              tanggalSidang: notulenRow.tanggal_sidang
+                ? formatTanggal(new Date(notulenRow.tanggal_sidang))
+                : "",
+              hasilSidang:
+                notulenRow.hasil_sidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+              penguji: {
+                role: NOTULEN_ROLE_LABEL[activeStage.signer_role],
+                nama:
                   activeStage.signer_role === "PENGUJI_1"
                     ? notulenRow.penguji1_nama
                     : notulenRow.penguji2_nama,
-                ),
-                ttd_penguji: signaturePatch(sigImage),
+                signatureBase64: sigImage,
               },
+              note: notulenRow.note,
             });
             await conn.query(
-              `UPDATE sidang_notulen SET file_content = ?, updated_at = NOW() WHERE sidang_id = ? AND role = ?`,
+              `UPDATE sidang_notulen SET file_content = ?, file_name = ?, updated_at = NOW() WHERE sidang_id = ? AND role = ?`,
               [
-                outputBuffer.toString("base64"),
+                Buffer.from(outputBuffer).toString("base64"),
+                `Notulen_${activeStage.signer_role}_${notulenRow.npm}.pdf`,
                 revisi.sidang_id,
                 activeStage.signer_role,
               ],
             );
-          } catch (_) {
+          } catch (err) {
+            console.error("revisi notulen regeneration error (non-fatal):", err);
             // non-fatal: notulen regeneration failure (unrelated to missing signatures) must not block revisi approval
           }
         }

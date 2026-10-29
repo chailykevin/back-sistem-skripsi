@@ -17,8 +17,7 @@ const {
   generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI,
 } = require("../services/generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI");
 
-const MIME_DOCX =
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const MIME_PDF = "application/pdf";
 
 const BULAN_ID = [
   "Januari",
@@ -1270,23 +1269,8 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
       ? formatTanggal(new Date(sidang.tanggal_sidang))
       : "";
 
-    async function getLecturerSignature(nidn) {
-      if (!nidn) return null;
-      const [[row]] = await conn.query(
-        `SELECT dsnTtd AS signature_image
-         FROM widya_miko.m_dosen
-         WHERE dsnId = ?
-         LIMIT 1`,
-        [nidn],
-      );
-      return row?.signature_image ?? null;
-    }
-
     for (const row of notulenRows) {
       const role = row.role;
-      const pengujiSignature = await getLecturerSignature(
-        role === "PENGUJI_1" ? sidang.penguji1_nidn : sidang.penguji2_nidn,
-      );
 
       // DOCX generator (legacy)
       // const templatePath = path.join(
@@ -1333,7 +1317,8 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
           role: NOTULEN_ROLE_LABEL[role],
           nama:
             role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-          signatureBase64: pengujiSignature,
+          // Signed only when the penguji approves the student's revision (revisiPascaSidang.reviewRevisi)
+          signatureBase64: null,
         },
         note: row.note,
       });
@@ -1689,9 +1674,9 @@ async function resolveSidangFileAccess(req, sidang) {
   return nidn ? resolveSidangRole(sidang, nidn) !== null : false;
 }
 
-function sendDocx(res, fileRow, downloadFileName) {
+function sendPdf(res, fileRow, downloadFileName) {
   const buffer = Buffer.from(fileRow.file_content, "base64");
-  res.setHeader("Content-Type", MIME_DOCX);
+  res.setHeader("Content-Type", MIME_PDF);
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="${downloadFileName ?? fileRow.file_name}"`,
@@ -1747,7 +1732,7 @@ exports.getBeritaAcara = async (req, res, next) => {
         .json({ ok: false, message: "Berita acara belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
@@ -1805,7 +1790,7 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
         .json({ ok: false, message: "Hasil penilaian belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
@@ -1885,7 +1870,7 @@ exports.getPenilaianFile = async (req, res, next) => {
         .json({ ok: false, message: "Formulir penilaian belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
@@ -1947,7 +1932,7 @@ exports.getNotulenFile = async (req, res, next) => {
         .json({ ok: false, message: "Notulen belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
