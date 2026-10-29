@@ -319,17 +319,12 @@ async function generateAndStoreFinalKartuDocx(
 }
 
 async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
-  console.log("[autoSubmitSkPenelitian] start", { outlineId, kartuId });
 
   const [existingRows] = await conn.query(
     `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
     [outlineId],
   );
   if (existingRows.length > 0) {
-    console.log(
-      "[autoSubmitSkPenelitian] skip: already_exists",
-      existingRows[0].id,
-    );
     return { skippedReason: "already_exists" };
   }
 
@@ -356,12 +351,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     [kartuId],
   );
 
-  console.log("[autoSubmitSkPenelitian] files found", {
-    formulir: formulirRows.length > 0,
-    transkrip: transkripRows.length > 0,
-    kartu: kartuFileRows.length > 0,
-    outline: outlineRows.length > 0,
-  });
 
   const missingFiles = [];
   if (formulirRows.length === 0)
@@ -370,7 +359,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
   if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
   if (missingFiles.length > 0) {
-    console.log("[autoSubmitSkPenelitian] skip: missing_files", missingFiles);
     return { skippedReason: "missing_files", missingFiles };
   }
 
@@ -549,7 +537,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     );
   }
 
-  console.log("[autoSubmitSkPenelitian] done", { skId });
   return { skippedReason: null, skId };
 }
 

@@ -346,7 +346,6 @@ async function getStaffFromSimiko(conn, programRows) {
      WHERE userAdm.del = 0 AND groupAdm.del = 0`,
   );
 
-  console.log(sourceUsers);
 
   const prodiByName = new Map(
     programRows.map((programStudi) => [
@@ -690,7 +689,6 @@ exports.seedDosenDummy = async (req, res, next) => {
         !dosen.hasKnownPlacement ||
         (dosen.programStudiName && !dosen.programStudiId)
       ) {
-        // console.log(dosen);
 
         await conn.rollback();
         txStarted = false;
@@ -701,7 +699,6 @@ exports.seedDosenDummy = async (req, res, next) => {
       }
     }
 
-    // console.log(input);
 
     const assignedByUserId = Number(req.user?.id) || null;
     const result = [];
@@ -797,7 +794,6 @@ exports.seedStafDummy = async (req, res, next) => {
     const input = await getStaffFromSimiko(conn, programRows);
     const assignedByUserId = Number(req.user?.id) || null;
 
-    // console.log(input);
 
     for (const staff of input) {
       const roleId = rolesMap.get(staff.roleCode);
@@ -942,19 +938,6 @@ exports.testEmail = async (req, res, next) => {
     });
 
     return res.json({ ok: true, message: `Test email sent to ${to}` });
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.testing = async (req, res, next) => {
-  try {
-    const mahasiswa = await getMahasiswaFromSimiko(db);
-    return res.json({
-      ok: true,
-      message: "Testing endpoint is working",
-      data: mahasiswa,
-    });
   } catch (err) {
     next(err);
   }

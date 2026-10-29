@@ -157,18 +157,30 @@ exports.getSidang = async (req, res, next) => {
       }
     }
 
+    // file_content (the generated PDFs) is deliberately not selected: downloads go through /files/*.
     const [penilaianRows] = await db.query(
-      `SELECT * FROM sidang_penilaian WHERE sidang_id = ? ORDER BY FIELD(role,'PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')`,
+      `SELECT id, sidang_id, user_id, role,
+              nilai_isi, keterangan_isi, nilai_bahasa, keterangan_bahasa,
+              nilai_tsp, keterangan_tsp, nilai_penguasaan, keterangan_penguasaan,
+              nilai_penunjang, keterangan_penunjang, total_nilai,
+              file_name, submitted_at, created_at, updated_at
+       FROM sidang_penilaian WHERE sidang_id = ? ORDER BY FIELD(role,'PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')`,
       [sidang.id],
     );
 
     const [notulenRows] = await db.query(
-      `SELECT * FROM sidang_notulen WHERE sidang_id = ? ORDER BY FIELD(role,'PENGUJI_1','PENGUJI_2')`,
+      `SELECT id, sidang_id, user_id, role, note, hasil_sidang,
+              file_name, submitted_at, created_at, updated_at
+       FROM sidang_notulen WHERE sidang_id = ? ORDER BY FIELD(role,'PENGUJI_1','PENGUJI_2')`,
       [sidang.id],
     );
 
     const [[hasilPenilaian]] = await db.query(
-      `SELECT * FROM sidang_hasil_penilaian WHERE sidang_id = ? LIMIT 1`,
+      `SELECT id, sidang_id, nilai_pembimbing1, nilai_pembimbing2,
+              nilai_penguji1, nilai_penguji2, total_nilai, rata, grade,
+              hasil_sidang, catatan_penguji,
+              file_name, submitted_at, created_at, updated_at
+       FROM sidang_hasil_penilaian WHERE sidang_id = ? LIMIT 1`,
       [sidang.id],
     );
 

@@ -88,7 +88,6 @@ async function generateSkDocuments(conn, sk, outlineId) {
     );
   }
 
-  console.log(ps.dekan_nidn);
 
   const [[dekan]] = await conn.query(
     `SELECT md.dsnTtd AS signature_image, s.nama AS nama_dekan 
