@@ -182,26 +182,22 @@ exports.listForKaprodi = async (req, res, next) => {
 
     if (rows.length > 0) {
       const ids = rows.map((row) => row.id);
+      // Only presence + name: the PDF itself is fetched on download via GET /:id,
+      // so a list page doesn't ship every row's base64 file.
       const [fileRows] = await db.query(
-        `SELECT pengajuan_disposisi_pembimbing_id, file_content, file_name
+        `SELECT pengajuan_disposisi_pembimbing_id, file_name
          FROM pengajuan_disposisi_pembimbing_file
          WHERE file_type = 'PENGAJUAN_DISPOSISI_PEMBIMBING'
+           AND file_content IS NOT NULL
            AND pengajuan_disposisi_pembimbing_id IN (?)`,
         [ids],
       );
-      const fileMap = new Map();
-      for (const fr of fileRows) {
-        fileMap.set(fr.pengajuan_disposisi_pembimbing_id, {
-          file_pengajuan_disposisi_pembimbing: fr.file_content ?? null,
-          file_pengajuan_disposisi_pembimbing_name: fr.file_name ?? null,
-        });
-      }
+      const fileNames = new Map(
+        fileRows.map((fr) => [fr.pengajuan_disposisi_pembimbing_id, fr.file_name]),
+      );
       for (const row of rows) {
-        const fileData = fileMap.get(row.id) || {};
-        row.file_pengajuan_disposisi_pembimbing =
-          fileData.file_pengajuan_disposisi_pembimbing ?? null;
-        row.file_pengajuan_disposisi_pembimbing_name =
-          fileData.file_pengajuan_disposisi_pembimbing_name ?? null;
+        row.has_file_pengajuan_disposisi_pembimbing = fileNames.has(row.id);
+        row.file_pengajuan_disposisi_pembimbing_name = fileNames.get(row.id) ?? null;
       }
     }
 
