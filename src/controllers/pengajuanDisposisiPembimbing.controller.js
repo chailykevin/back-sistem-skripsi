@@ -5,6 +5,7 @@ const path = require("path");
 const { getStudentNpm } = require("../utils/identity");
 const { assertSignatures } = require("../utils/signature");
 const { BULAN_ROMAWI } = require("../utils/dates");
+const { mimeFromFileName } = require("../utils/mime");
 
 // Next sequence is MAX of the existing numbers for this prodi/month/year rather than a
 // COUNT by submitted_at: resubmit resets submitted_at, and toggling perlu_surat_pengantar
@@ -644,6 +645,72 @@ exports.getById = async (req, res, next) => {
     }
 
     return res.status(403).json({ ok: false, message: "Forbidden" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const DOWNLOADABLE_FILE_TYPES = new Set(["PENGAJUAN_DISPOSISI_PEMBIMBING", "TRANSKRIP"]);
+
+// GET /:id/files/:fileType — one file instead of getById's every file, for download buttons.
+// Same visibility as getById: the student who owns it, or the Kaprodi of its prodi.
+exports.getFile = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid id" });
+    }
+    const fileType = String(req.params.fileType ?? "").toUpperCase();
+    if (!DOWNLOADABLE_FILE_TYPES.has(fileType)) {
+      return res.status(400).json({ ok: false, message: "Invalid fileType" });
+    }
+
+    let scopeSql;
+    let scopeParam;
+    if (req.user.hasRole("STUDENT")) {
+      scopeParam = await getStudentNpm(req.user.id);
+      if (!scopeParam) {
+        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      }
+      scopeSql = "pj.npm = ?";
+    } else if (req.user.hasRole("LECTURER", "KAPRODI")) {
+      const [urows] = await db.query(
+        `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [req.user.id],
+      );
+      scopeParam = urows[0]?.nidn;
+      if (!scopeParam) {
+        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+      }
+      scopeSql = "COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?";
+    } else {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT f.file_content, f.file_name
+       FROM pengajuan_disposisi_pembimbing pj
+       INNER JOIN mahasiswa m ON m.npm = pj.npm
+       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       INNER JOIN pengajuan_disposisi_pembimbing_file f
+         ON f.pengajuan_disposisi_pembimbing_id = pj.id AND f.file_type = ?
+       WHERE pj.id = ? AND ${scopeSql}
+       LIMIT 1`,
+      [fileType, id, scopeParam],
+    );
+    const file = rows[0];
+    if (!file?.file_content) {
+      return res.status(404).json({ ok: false, message: "File tidak ditemukan" });
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        file_name: file.file_name,
+        mime_type: mimeFromFileName(file.file_name),
+        file_content: file.file_content,
+      },
+    });
   } catch (err) {
     next(err);
   }

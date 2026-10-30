@@ -14,6 +14,7 @@ const {
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { assertSignatures } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
+const { mimeFromFileName } = require("../utils/mime");
 
 const STAGE_ORDER = ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"];
 
@@ -1257,21 +1258,6 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     next(err);
   }
 };
-
-const MIME_BY_EXT = {
-  ".docx":
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  ".doc": "application/msword",
-  ".pdf": "application/pdf",
-  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-};
-
-function mimeFromFileName(fileName) {
-  const ext = fileName
-    ? fileName.slice(fileName.lastIndexOf(".")).toLowerCase()
-    : "";
-  return MIME_BY_EXT[ext] ?? "application/octet-stream";
-}
 
 function sendDocx(res, fileRow) {
   return res.json({
