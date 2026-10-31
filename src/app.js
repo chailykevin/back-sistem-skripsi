@@ -83,6 +83,9 @@ app.use("/", kaprodiPendingActionsRoutes);
 const kaprodiReportRoutes = require("./routes/kaprodiReport.routes");
 app.use("/", kaprodiReportRoutes);
 
+const kaprodiDashboardRoutes = require("./routes/kaprodiDashboard.routes");
+app.use("/", kaprodiDashboardRoutes);
+
 const lecturerPendingActionsRoutes = require("./routes/lecturerPendingActions.routes");
 app.use("/", lecturerPendingActionsRoutes);
 
