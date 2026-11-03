@@ -1,8 +1,9 @@
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const app = express();
 
@@ -30,6 +31,12 @@ app.use("/dosen", dosenRoutes);
 
 const programStudiRoutes = require("./routes/programStudi.routes");
 app.use("/program-studi", programStudiRoutes);
+
+const dosenBimbingProdiRoutes = require("./routes/dosenBimbingProdi.routes");
+app.use("/dosen-bimbing-prodi", dosenBimbingProdiRoutes);
+
+const dosenUjiSidangSkripsiProdiRoutes = require("./routes/dosenUjiSidangSkripsiProdi.routes");
+app.use("/dosen-uji-sidang-skripsi-prodi", dosenUjiSidangSkripsiProdiRoutes);
 
 const usersRoutes = require("./routes/users.routes");
 app.use("/users", usersRoutes);
@@ -75,6 +82,9 @@ app.use("/", kaprodiPendingActionsRoutes);
 
 const kaprodiReportRoutes = require("./routes/kaprodiReport.routes");
 app.use("/", kaprodiReportRoutes);
+
+const kaprodiDashboardRoutes = require("./routes/kaprodiDashboard.routes");
+app.use("/", kaprodiDashboardRoutes);
 
 const lecturerPendingActionsRoutes = require("./routes/lecturerPendingActions.routes");
 app.use("/", lecturerPendingActionsRoutes);

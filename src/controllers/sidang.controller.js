@@ -1,7 +1,5 @@
 ﻿const db = require("../db");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const {
@@ -16,24 +14,12 @@ const {
 const {
   generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI,
 } = require("../services/generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI");
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { formatTanggal } = require("../utils/dates");
 
-const MIME_DOCX =
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const MIME_PDF = "application/pdf";
 
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
 const HARI_ID = [
   "Minggu",
   "Senin",
@@ -44,91 +30,21 @@ const HARI_ID = [
   "Sabtu",
 ];
 
-function formatTanggal(date) {
-  return `${date.getDate()} ${BULAN_ID[date.getMonth()]} ${date.getFullYear()}`;
-}
-
 function formatHari(date) {
   return HARI_ID[date.getDay()];
-}
-
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (!signatureValue) return null;
-  const base64 = signatureValue.includes(",")
-    ? signatureValue.split(",")[1]
-    : signatureValue;
-  try {
-    return Buffer.from(base64, "base64");
-  } catch {
-    return null;
-  }
-}
-
-function signaturePatch(signatureValue) {
-  const buf = decodeSignatureToBuffer(signatureValue);
-  if (!buf) return textPatch("");
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [
-      new ImageRun({ data: buf, transformation: { width: 100, height: 50 } }),
-    ],
-  };
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
 }
 
 async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+    `SELECT id FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
     [nidn],
   );
   return row?.id ?? null;
 }
 
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
 function resolveSidangRole(sidangRow, nidn) {
+  if (!nidn) return null;
   if (sidangRow.pembimbing1_nidn === nidn) return "PEMBIMBING_1";
   if (sidangRow.pembimbing2_nidn === nidn) return "PEMBIMBING_2";
   if (sidangRow.penguji1_nidn === nidn) return "PENGUJI_1";
@@ -241,18 +157,30 @@ exports.getSidang = async (req, res, next) => {
       }
     }
 
+    // file_content (the generated PDFs) is deliberately not selected: downloads go through /files/*.
     const [penilaianRows] = await db.query(
-      `SELECT * FROM sidang_penilaian WHERE sidang_id = ? ORDER BY FIELD(role,'PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')`,
+      `SELECT id, sidang_id, user_id, role,
+              nilai_isi, keterangan_isi, nilai_bahasa, keterangan_bahasa,
+              nilai_tsp, keterangan_tsp, nilai_penguasaan, keterangan_penguasaan,
+              nilai_penunjang, keterangan_penunjang, total_nilai,
+              file_name, submitted_at, created_at, updated_at
+       FROM sidang_penilaian WHERE sidang_id = ? ORDER BY FIELD(role,'PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')`,
       [sidang.id],
     );
 
     const [notulenRows] = await db.query(
-      `SELECT * FROM sidang_notulen WHERE sidang_id = ? ORDER BY FIELD(role,'PENGUJI_1','PENGUJI_2')`,
+      `SELECT id, sidang_id, user_id, role, note, hasil_sidang,
+              file_name, submitted_at, created_at, updated_at
+       FROM sidang_notulen WHERE sidang_id = ? ORDER BY FIELD(role,'PENGUJI_1','PENGUJI_2')`,
       [sidang.id],
     );
 
     const [[hasilPenilaian]] = await db.query(
-      `SELECT * FROM sidang_hasil_penilaian WHERE sidang_id = ? LIMIT 1`,
+      `SELECT id, sidang_id, nilai_pembimbing1, nilai_pembimbing2,
+              nilai_penguji1, nilai_penguji2, total_nilai, rata, grade,
+              hasil_sidang, catatan_penguji,
+              file_name, submitted_at, created_at, updated_at
+       FROM sidang_hasil_penilaian WHERE sidang_id = ? LIMIT 1`,
       [sidang.id],
     );
 
@@ -653,8 +581,11 @@ exports.submitPenilaian = async (req, res, next) => {
     }
 
     const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
+      [nidn],
     );
 
     assertSignatures([
@@ -699,46 +630,6 @@ exports.submitPenilaian = async (req, res, next) => {
           : role === "PENGUJI_1"
             ? sidang.penguji1_nama
             : sidang.penguji2_nama;
-
-    // DOCX generator (legacy)
-    // const templatePath = path.join(
-    //   __dirname,
-    //   "../templates/template_komponen_penilaian.docx",
-    // );
-    // const templateBuffer = await readFile(templatePath);
-    // const outputBuffer = await patchDocument({
-    //   outputType: "nodebuffer",
-    //   data: templateBuffer,
-    //   patches: {
-    //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-    //     npm: textPatch(sidang.npm),
-    //     prodi: textPatch(sidang.program_studi_nama),
-    //     ujian_ke: textPatch(ujianKeStr),
-    //     tanggal_sidang: textPatch(tanggalFormatted),
-    //     judul_skripsi: textPatch(sidang.judul_skripsi),
-    //     bobot_isi: textPatch(`${BOBOT.isi * 100}%`),
-    //     bobot_bahasa: textPatch(`${BOBOT.bahasa * 100}%`),
-    //     bobot_tsp: textPatch(`${BOBOT.tsp * 100}%`),
-    //     bobot_penguasaan: textPatch(`${BOBOT.penguasaan * 100}%`),
-    //     bobot_penunjang: textPatch(`${BOBOT.penunjang * 100}%`),
-    //     nilai_isi: textPatch(nIsi),
-    //     keterangan_isi: textPatch(keteranganIsi ?? ""),
-    //     nilai_bahasa: textPatch(nBahasa),
-    //     keterangan_bahasa: textPatch(keteranganBahasa ?? ""),
-    //     nilai_tsp: textPatch(nTsp),
-    //     keterangan_tsp: textPatch(keteranganTsp ?? ""),
-    //     nilai_penguasaan: textPatch(nPenguasaan),
-    //     keterangan_penguasaan: textPatch(keteranganPenguasaan ?? ""),
-    //     nilai_penunjang: textPatch(nPenunjang),
-    //     keterangan_penunjang: textPatch(keteranganPenunjang ?? ""),
-    //     total_nilai: textPatch(totalNilai.toFixed(2)),
-    //     role: textPatch(ROLE_LABEL[role]),
-    //     ttd_penguji_or_pembimbing: signaturePatch(sigRow?.signature_image),
-    //     nama_penguji_or_pembimbing: textPatch(participantNama),
-    //   },
-    // });
-    // const fileBase64 = outputBuffer.toString("base64");
-    // const fileName = `Penilaian_${role}_${sidang.npm}.docx`;
 
     const outputBuffer =
       await generateKomponenPenilaianUjianSkripsiKomprehensifFTI({
@@ -973,7 +864,10 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     // Hasil Penilaian Akhir DOCX is always signed by Pembimbing 1, regardless of
     // which pembimbing (P1 or P2) actually submits this form.
     const [[sigRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
       [sidang.pembimbing1_nidn],
     );
 
@@ -999,38 +893,6 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       "Kelima",
     ];
     const ujianKeStr = `${ujianKeNum} (${UJIAN_KE_LABEL[ujianKeNum] ?? ujianKeNum})`;
-
-    // DOCX generator (legacy)
-    // const hasilTemplatePath = path.join(
-    //   __dirname,
-    //   "../templates/template_hasil_penilaian_akhir_ujian_skripsi.docx",
-    // );
-    // const hasilTemplateBuffer = await readFile(hasilTemplatePath);
-    // const hasilBuffer = await patchDocument({
-    //   outputType: "nodebuffer",
-    //   data: hasilTemplateBuffer,
-    //   patches: {
-    //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-    //     npm: textPatch(sidang.npm),
-    //     prodi: textPatch(sidang.program_studi_nama),
-    //     judul_skripsi: textPatch(sidang.judul_skripsi),
-    //     ujian_ke: textPatch(ujianKeStr),
-    //     nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-    //     nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-    //     nama_penguji1: textPatch(sidang.penguji1_nama),
-    //     nama_penguji2: textPatch(sidang.penguji2_nama),
-    //     nilai_pembimbing1: textPatch(nilaiP1.toFixed(2)),
-    //     nilai_pembimbing2: textPatch(nilaiP2.toFixed(2)),
-    //     nilai_penguji1: textPatch(nilaiPg1.toFixed(2)),
-    //     nilai_penguji2: textPatch(nilaiPg2.toFixed(2)),
-    //     total_nilai: textPatch(totalNilai.toFixed(2)),
-    //     rata: textPatch(rata.toFixed(2)),
-    //     grade: textPatch(grade),
-    //     tanggal: textPatch(tanggalFormatted),
-    //     ttd_pembimbing1: signaturePatch(sigRow?.signature_image),
-    //   },
-    // });
-    // const hasilBase64 = hasilBuffer.toString("base64");
 
     const hasilBuffer = await generateHasilPenilaianAkhirUjianSkripsiFTI({
       mahasiswa: {
@@ -1267,34 +1129,6 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
     for (const row of notulenRows) {
       const role = row.role;
 
-      // DOCX generator (legacy)
-      // const templatePath = path.join(
-      //   __dirname,
-      //   "../templates/template_notulen_penguji.docx",
-      // );
-      // const templateBuffer = await readFile(templatePath);
-      // const outputBuffer = await patchDocument({
-      //   outputType: "nodebuffer",
-      //   data: templateBuffer,
-      //   patches: {
-      //     npm: textPatch(sidang.npm),
-      //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-      //     prodi: textPatch(sidang.program_studi_nama),
-      //     judul_skripsi: textPatch(sidang.judul_skripsi),
-      //     nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-      //     nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-      //     tanggal_sidang: textPatch(tanggalFormatted),
-      //     hasil_sidang: textPatch(hasilSidang),
-      //     role: textPatch(NOTULEN_ROLE_LABEL[role]),
-      //     note: textPatch(row.note),
-      //     nama_penguji: textPatch(
-      //       role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-      //     ),
-      //     ttd_penguji: signaturePatch(null),
-      //   },
-      // });
-      // const fileBase64 = outputBuffer.toString("base64");
-
       const outputBuffer = await generateNotulenPengujiFTI({
         mahasiswa: {
           npm: sidang.npm,
@@ -1312,6 +1146,7 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
           role: NOTULEN_ROLE_LABEL[role],
           nama:
             role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
+          // Signed only when the penguji approves the student's revision (revisiPascaSidang.reviewRevisi)
           signatureBase64: null,
         },
         note: row.note,
@@ -1360,11 +1195,14 @@ async function generateAndStoreBeritaAcara(
   ];
   const ujianKeStr = `${ujianKeNum} (${UJIAN_KE_LABEL[ujianKeNum] ?? ujianKeNum})`;
 
-  // Get signatures for all 4 participants via nidn lookup
+  // Get signatures for all four lecturer participants from SIMIKO.
   async function getSig(nidn) {
     if (!nidn) return null;
     const [[row]] = await conn.query(
-      `SELECT signature_image FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+      `SELECT dsnTtd AS signature_image
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
       [nidn],
     );
     return row?.signature_image ?? null;
@@ -1391,40 +1229,6 @@ async function generateAndStoreBeritaAcara(
     { role: "Penguji 1", nama: sidang.penguji1_nama, signatureImage: sigPg1 },
     { role: "Penguji 2", nama: sidang.penguji2_nama, signatureImage: sigPg2 },
   ]);
-
-  // DOCX generator (legacy)
-  // const templatePath = path.join(
-  //   __dirname,
-  //   "../templates/template_berita_acara_hasil_ujian.docx",
-  // );
-  // const templateBuffer = await readFile(templatePath);
-  // const outputBuffer = await patchDocument({
-  //   outputType: "nodebuffer",
-  //   data: templateBuffer,
-  //   patches: {
-  //     hari: textPatch(hariStr),
-  //     tanggal: textPatch(tanggalStr),
-  //     waktu: textPatch(waktuStr),
-  //     nama_mahasiswa: textPatch(sidang.nama_mahasiswa),
-  //     npm: textPatch(sidang.npm),
-  //     prodi: textPatch(sidang.program_studi_nama),
-  //     judul_skripsi: textPatch(sidang.judul_skripsi),
-  //     ujian_ke: textPatch(ujianKeStr),
-  //     nilai_ujian: textPatch(Number(nilaiUjian).toFixed(2)),
-  //     status_sidang: textPatch(hasilSidang),
-  //     catatan_penguji: textPatch(catatanPenguji ?? ""),
-  //     nama_pembimbing1: textPatch(sidang.pembimbing1_nama),
-  //     nama_pembimbing2: textPatch(sidang.pembimbing2_nama),
-  //     nama_penguji1: textPatch(sidang.penguji1_nama),
-  //     nama_penguji2: textPatch(sidang.penguji2_nama),
-  //     ttd_pembimbing1: signaturePatch(sig1),
-  //     ttd_pembimbing2: signaturePatch(sig2),
-  //     ttd_penguji1: signaturePatch(sigPg1),
-  //     ttd_penguji2: signaturePatch(sigPg2),
-  //   },
-  // });
-  // const fileBase64 = outputBuffer.toString("base64");
-  // const fileName = `Berita_Acara_${sidang.npm}.docx`;
 
   const outputBuffer =
     await generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI({
@@ -1544,16 +1348,6 @@ exports.getLecturerSidang = async (req, res, next) => {
   }
 };
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
 exports.getKaprodiSidang = async (req, res, next) => {
   try {
     if (!req.user.hasRole("KAPRODI")) {
@@ -1570,9 +1364,9 @@ exports.getKaprodiSidang = async (req, res, next) => {
       });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn
-      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    const programStudiIds = staffUsrId
+      ? await getKaprodiProgramStudiIds(staffUsrId)
       : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });
@@ -1665,9 +1459,9 @@ async function resolveSidangFileAccess(req, sidang) {
   return nidn ? resolveSidangRole(sidang, nidn) !== null : false;
 }
 
-function sendDocx(res, fileRow, downloadFileName) {
+function sendPdf(res, fileRow, downloadFileName) {
   const buffer = Buffer.from(fileRow.file_content, "base64");
-  res.setHeader("Content-Type", MIME_DOCX);
+  res.setHeader("Content-Type", MIME_PDF);
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="${downloadFileName ?? fileRow.file_name}"`,
@@ -1723,7 +1517,7 @@ exports.getBeritaAcara = async (req, res, next) => {
         .json({ ok: false, message: "Berita acara belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
@@ -1781,7 +1575,7 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
         .json({ ok: false, message: "Hasil penilaian belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
@@ -1861,7 +1655,7 @@ exports.getPenilaianFile = async (req, res, next) => {
         .json({ ok: false, message: "Formulir penilaian belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(
@@ -1923,7 +1717,7 @@ exports.getNotulenFile = async (req, res, next) => {
         .json({ ok: false, message: "Notulen belum tersedia" });
     }
 
-    return sendDocx(
+    return sendPdf(
       res,
       fileRow,
       buildSidangDownloadFileName(

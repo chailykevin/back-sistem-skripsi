@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 const db = require("../db"); // mysql2 pool
 const { sendPasswordResetEmail } = require("../utils/email");
 const { generateToken, hashToken } = require("../utils/token");
@@ -18,6 +19,80 @@ function deriveLegacyUserType(roles = []) {
   return roles[0] ?? null;
 }
 
+async function compareBcrypt(plainPassword, hashedPassword) {
+  const cleanPlain = String(plainPassword ?? "").trim();
+  const cleanHash = Buffer.isBuffer(hashedPassword)
+    ? hashedPassword.toString("utf8")
+    : String(hashedPassword ?? "");
+
+  if (!cleanHash) return false;
+
+  // PHP commonly emits $2y$ bcrypt hashes; Node bcrypt accepts the equivalent
+  // $2b$ variant with the same cost, salt, and checksum.
+  const compatibleHash = cleanHash.startsWith("$2y$")
+    ? `$2b$${cleanHash.slice(4)}`
+    : cleanHash;
+
+  return bcrypt.compare(cleanPlain, compatibleHash);
+}
+
+async function compareSha1(plainPassword, hashedPasswordHex) {
+  const cleanPlain = String(plainPassword ?? "").trim();
+  const cleanHash = Buffer.isBuffer(hashedPasswordHex)
+    ? hashedPasswordHex.toString("utf8")
+    : String(hashedPasswordHex ?? "").trim();
+
+  if (!cleanHash) return false;
+
+  const hashedHex = crypto.createHash("sha1").update(cleanPlain).digest("hex");
+  return hashedHex.toLowerCase() === cleanHash.toLowerCase();
+}
+
+async function verifyMahasiswaPassword(username, password) {
+  const [sourceUsers] = await db.query(
+    `SELECT mhsPwd
+     FROM widya_miko.m_usermhs
+     WHERE mhsUName = ?
+     LIMIT 1`,
+    [username],
+  );
+
+  const passwordHash = sourceUsers[0]?.mhsPwd;
+  return compareBcrypt(password, passwordHash);
+}
+
+async function verifyDosenPassword(username, password) {
+  const [sourceUsers] = await db.query(
+    `SELECT dsnPwd, DATE_FORMAT(dsnTglLahir, '%d%m%Y') AS fallbackPassword
+     FROM widya_miko.m_dosen
+     WHERE dsnEmail = ? AND del = '0'
+     LIMIT 1`,
+    [username],
+  );
+  const sourceUser = sourceUsers[0];
+  if (!sourceUser) return null;
+
+  if (sourceUser.dsnPwd) {
+    return compareBcrypt(password, sourceUser.dsnPwd);
+  }
+
+  return String(password ?? "").trim() === sourceUser.fallbackPassword;
+}
+
+async function verifyStafPassword(username, password) {
+  const [sourceUsers] = await db.query(
+    `SELECT usrPwd
+     FROM widya_miko.c_useradm
+     WHERE usrUName = ? AND del = 0
+     LIMIT 1`,
+    [username],
+  );
+  const sourceUser = sourceUsers[0];
+  if (!sourceUser) return null;
+
+  return compareSha1(password, sourceUser.usrPwd);
+}
+
 async function login(username, password) {
   const [users] = await db.query(
     `SELECT * FROM users WHERE username = ? AND is_active = 1 LIMIT 1`,
@@ -33,7 +108,21 @@ async function login(username, password) {
 
   const user = users[0];
 
-  const isMatch = await bcrypt.compare(password, user.password_hash);
+  // Mahasiswa authenticate exclusively against SIMIKO. Do not fall back to
+  // users.password_hash if the source account is absent or its password fails.
+  let isMatch;
+  if (user.npm) {
+    isMatch = await verifyMahasiswaPassword(username, password);
+  } else if (user.nidn) {
+    const dosenMatch = await verifyDosenPassword(username, password);
+    // Legacy special-role accounts are not SIMIKO source accounts, so preserve
+    // their local authentication while imported dosen remain source-only.
+    isMatch = dosenMatch ?? (await compareBcrypt(password, user.password_hash));
+  } else if (user.staff_usr_id) {
+    isMatch = await verifyStafPassword(username, password);
+  } else {
+    isMatch = await compareBcrypt(password, user.password_hash);
+  }
   if (!isMatch) {
     throw new CustomError(401, {
       ok: false,
@@ -63,6 +152,14 @@ async function login(username, password) {
     profile = rows[0] || null;
   }
 
+  if (!profile && user.staff_usr_id) {
+    const [rows] = await db.query(
+      `SELECT usr_id, nama FROM staf WHERE usr_id = ? LIMIT 1`,
+      [user.staff_usr_id],
+    );
+    profile = rows[0] || null;
+  }
+
   const token = jwt.sign(
     {
       sub: String(user.id),
@@ -87,7 +184,7 @@ async function login(username, password) {
 
 async function getUserInformation(userId) {
   const [rows] = await db.query(
-    `SELECT id, username, npm, nidn, is_active
+    `SELECT id, username, npm, nidn, staff_usr_id, is_active
            FROM users
            WHERE id = ? AND is_active = 1
            LIMIT 1`,
@@ -126,6 +223,14 @@ async function getUserInformation(userId) {
     const [p] = await db.query(
       `SELECT nidn, nama FROM dosen WHERE nidn = ? LIMIT 1`,
       [user.nidn],
+    );
+    profile = p[0] || null;
+  }
+
+  if (!profile && user.staff_usr_id) {
+    const [p] = await db.query(
+      `SELECT usr_id, nama FROM staf WHERE usr_id = ? LIMIT 1`,
+      [user.staff_usr_id],
     );
     profile = p[0] || null;
   }

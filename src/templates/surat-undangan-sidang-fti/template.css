@@ -11,3 +11,29 @@ p { margin: 0.1in 0; line-height: 1.18; text-align: justify; }
 .details > div { display: grid; grid-template-columns: 1.55in 0.18in 1fr; min-height: 0.25in; line-height: 1.15; }.details .title-row { min-height: 0.42in; }.exam-details { margin-top: -0.03in; }
 .signing { width: 2.6in; margin: 0.12in 0 0 auto; line-height: 1.15; }.signature-space { display: flex; align-items: center; justify-content: center; width: 2in; height: 0.6in; }.signature-image { max-width: 1.8in; max-height: 0.55in; object-fit: contain; }.signing strong { display: block; text-decoration: underline; }
 footer { margin-top: 0.12in; font-size: 10pt; line-height: 1.15; }.copy-heading { font-weight: bold; text-decoration: underline; }.dress-code { margin-top: 0.1in; }
+
+/* Normalized signatures: 40mm wide, name overlap, and a 2mm upward shift. */
+.signature-space {
+  position: relative;
+  width: 100%;
+  height: 12mm;
+  margin: 0 auto;
+}
+.signature-space > .signature-image {
+  position: absolute;
+  bottom: -2mm;
+  left: 50%;
+  transform: translate(-50%, -2mm);
+  width: 40mm;
+  max-width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  object-position: center bottom;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.signature-space + * {
+  display: block;
+  transform: translateY(-2mm);
+}

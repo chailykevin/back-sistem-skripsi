@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(
@@ -11,13 +11,6 @@ const cssPath = path.join(
   __dirname,
   "../templates/kartu-konsultasi-outline-fti/template.css",
 );
-const projectRootUrl = path.join(__dirname, "../");
-
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
 
 async function renderConsultationRows(rows) {
   const rowsToRender =
@@ -25,7 +18,7 @@ async function renderConsultationRows(rows) {
   const renderedRows = await Promise.all(
     rowsToRender.map(
       async ({ tanggal, keterangan, signatureBase64 }) => {
-        const signature = await renderSignature(
+        const signature = await renderNormalizedSignature(
           signatureBase64,
           "Paraf reviewer konsultasi",
           "consultation-signature",
@@ -48,11 +41,11 @@ async function renderTemplate(template, data) {
   const [crestImage, firstSignature, secondSignature, consultationRows] =
     await Promise.all([
       imageToDataUrl("assets/logo-UWDP.png"),
-      renderSignature(
+      renderNormalizedSignature(
         pembimbing.pertama.signatureBase64,
         "Tanda tangan pembimbing pertama",
       ),
-      renderSignature(
+      renderNormalizedSignature(
         pembimbing.kedua.signatureBase64,
         "Tanda tangan pembimbing kedua",
       ),

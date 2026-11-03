@@ -1,16 +1,10 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/pernyataan-perbaikan-skripsi-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/pernyataan-perbaikan-skripsi-fti/template.css");
-const projectRootUrl = path.join(__dirname, "../");
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
 
 function toTitleCase(value) {
   return String(value)
@@ -23,11 +17,11 @@ function toTitleCase(value) {
 
 async function renderTemplate(template, data) {
   const [signatureKetuaProgramStudi, signatureMahasiswa] = await Promise.all([
-    renderSignature(
+    renderNormalizedSignature(
       data.ketuaProgramStudi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
-    renderSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
+    renderNormalizedSignature(data.mahasiswa.signatureBase64, "Tanda tangan mahasiswa"),
   ]);
   const values = {
     "{{namaMahasiswa}}": data.mahasiswa.nama,

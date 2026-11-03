@@ -11,6 +11,7 @@ router.get("/latest", auth, c.getLatestMine);
 router.patch("/:id/resubmit", auth, ensureOutlineSubmissionPeriodOpen, c.resubmit);
 router.get("/", auth, kaprodi.listForKaprodi);
 router.patch("/:id/review", auth, kaprodi.review);
+router.get("/:id/files/:fileType", auth, c.getFile);
 router.get("/:id", auth, c.getById);
 
 module.exports = router;

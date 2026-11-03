@@ -17,3 +17,29 @@ h1 { margin: 0.36in 0 0.28in; text-align: center; font-size: 14pt; font-weight: 
 .signature-space { display: flex; align-items: center; justify-content: center; width: 1.8in; height: 0.8in; border-bottom: 0.75pt solid #000; }
 .signature-image { max-width: 1.6in; max-height: 0.72in; object-fit: contain; }
 .signing strong { display: block; }
+
+/* Normalized signatures: 40mm wide, name overlap, and a 2mm upward shift. */
+.signature-space {
+  position: relative;
+  width: 100%;
+  height: 12mm;
+  margin: 0 auto;
+}
+.signature-space > .signature-image {
+  position: absolute;
+  bottom: calc(-2mm - 0.75pt);
+  left: 50%;
+  transform: translate(-50%, -2mm);
+  width: 40mm;
+  max-width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  object-position: center bottom;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.signature-space + * {
+  display: block;
+  transform: translateY(-2mm);
+}

@@ -1,207 +1,43 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
+const { getStudentNpm } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { BULAN_ROMAWI } = require("../utils/dates");
+const { mimeFromFileName } = require("../utils/mime");
 
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
-
-function formatDateId(date) {
-  const d = date instanceof Date ? date : new Date(date);
-  return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-function checkbox(value) {
-  return value ? "☑" : "☐";
-}
-
-function buildFormulirFileName(npm, namaMahasiswa) {
-  const safeNpm = String(npm ?? "")
-    .trim()
-    .replace(/[^\w.-]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "")
-    .trim()
-    .replace(/[^\w\s.-]+/g, "")
-    .replace(/\s+/g, " ");
-  return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.docx`;
-}
-
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (signatureValue == null) return null;
-  const raw = String(signatureValue).trim();
-  if (!raw) return null;
-  const dataUrlMatch = raw.match(
-    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
-  );
-  if (dataUrlMatch) {
-    try {
-      const mimeType = dataUrlMatch[1].toLowerCase();
-      const type = mimeType === "jpeg" ? "jpg" : mimeType;
-      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) {
-      return null;
-    }
-  }
-  const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 =
-    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
-  if (looksLikeBase64) {
-    try {
-      const buffer = Buffer.from(normalized, "base64");
-      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
-      return { buffer, type };
-    } catch (_) {
-      return null;
-    }
-  }
-  return null;
-}
-
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) return textPatch("");
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: { width: 160, height: 60 },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
-}
-
-async function generateFormulirDoc(data) {
-  const {
-    npm,
-    namaMahasiswa,
-    programStudiNama,
-    noHp,
-    sks,
-    judulSkripsi,
-    pembimbing1Nama,
-    pembimbing2Nama,
-    perluSuratPengantar,
-    namaPerusahaan,
-    studentSignature,
-    submittedAt,
-    // kaprodi review fields (optional)
-    programStudiNamaUpper,
-    disposisiDate,
-    keputusan,
-    dosenPembimbing1,
-    dosenPembimbing2,
-    catatan,
-    syaratTranskrip,
-    syaratKrs,
-    syaratMetodologi,
-    namaKaprodi,
-    kaprodiSignature,
-  } = data;
-
-  const templateBuffer = await readFile(
-    path.join(
-      __dirname,
-      "../templates/template_formulir_pengajuan_disposisi_pembimbing_skripsi.docx",
-    ),
-  );
-
-  const patches = {
-    npm: textPatch(npm ?? ""),
-    nama_mahasiswa: textPatch(namaMahasiswa ?? ""),
-    nama: textPatch(namaMahasiswa ?? ""),
-    program_studi: textPatch(programStudiNama ?? ""),
-    no_hp: textPatch(noHp ?? ""),
-    sks: textPatch(String(sks ?? "")),
-    judul: textPatch(judulSkripsi ?? ""),
-    calon_dosen_pembimbing_1: textPatch(pembimbing1Nama ?? ""),
-    calon_dosen_pembimbing_2: textPatch(pembimbing2Nama ?? ""),
-    perlu_surat_pengantar: textPatch(
-      perluSuratPengantar ? "☑ Ya    ☐ Tidak" : "☐ Ya    ☑ Tidak",
-    ),
-    nama_perusahaan: textPatch(namaPerusahaan || "-"),
-    today_date: textPatch(formatDateId(submittedAt ?? new Date())),
-    signature: signatureImagePatch(studentSignature),
-    // kaprodi section
-    nama_program_studi: textPatch(
-      programStudiNamaUpper ??
-        (programStudiNama ? String(programStudiNama).toUpperCase() : ""),
-    ),
-    disposisi_date: textPatch(disposisiDate ? formatDateId(disposisiDate) : ""),
-    keputusan: textPatch(keputusan ?? ""),
-    dosen_pembimbing_1: textPatch(dosenPembimbing1 ?? ""),
-    dosen_pembimbing_2: textPatch(dosenPembimbing2 ?? ""),
-    catatan: textPatch(catatan || "-"),
-    syarat_transkrip: textPatch(checkbox(syaratTranskrip)),
-    syarat_krs: textPatch(checkbox(syaratKrs)),
-    syarat_metodologi: textPatch(checkbox(syaratMetodologi)),
-    nama_kaprodi: textPatch(namaKaprodi ?? ""),
-    kaprodi_signature: signatureImagePatch(kaprodiSignature),
-  };
-
-  const outputBuffer = await patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-  return outputBuffer.toString("base64");
-}
-
-async function getStudentNpm(userId) {
-  const [urows] = await db.query(
-    `SELECT npm
-     FROM users
-     WHERE id = ? AND is_active = 1
+// Next sequence is MAX of the existing numbers for this prodi/month/year rather than a
+// COUNT by submitted_at: resubmit resets submitted_at, and toggling perlu_surat_pengantar
+// off clears a number, both of which made COUNT-based sequences collide.
+async function generateNomorSkSuratPengantar(conn, programStudiId) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const [[programStudi]] = await conn.query(
+    `SELECT ps.kode AS ps_kode, f.kode AS f_kode
+     FROM program_studi ps
+     JOIN fakultas f ON f.id = ps.fakultas_id
+     WHERE ps.id = ?
      LIMIT 1`,
-    [userId],
+    [programStudiId],
   );
-  return urows[0]?.npm ?? null;
+  if (!programStudi?.ps_kode || !programStudi?.f_kode) {
+    throw Object.assign(
+      new Error("Kode program studi atau fakultas belum dikonfigurasi"),
+      { statusCode: 400 },
+    );
+  }
+
+  const suffix = `/${programStudi.f_kode}/${programStudi.ps_kode}/SIM/${BULAN_ROMAWI[month - 1]}/${year}`;
+  const [[{ maxSeq }]] = await conn.query(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(nomor_sk_surat_pengantar, '/', 1) AS UNSIGNED)), 0) AS maxSeq
+     FROM pengajuan_disposisi_pembimbing
+     WHERE program_studi_id = ?
+       AND nomor_sk_surat_pengantar LIKE ?`,
+    [programStudiId, `%${suffix}`],
+  );
+  return `${String(Number(maxSeq) + 1).padStart(3, "0")}${suffix}`;
 }
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
@@ -212,10 +48,6 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
     file_pengajuan_disposisi_pembimbing_name: null,
     file_transkrip: null,
     file_transkrip_name: null,
-    file_krs: null,
-    file_krs_name: null,
-    file_metodologi: null,
-    file_metodologi_name: null,
   };
 
   const byType = {
@@ -224,8 +56,6 @@ function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
       "file_pengajuan_disposisi_pembimbing_name",
     ],
     TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
-    KRS: ["file_krs", "file_krs_name"],
-    METODOLOGI: ["file_metodologi", "file_metodologi_name"],
   };
 
   for (const row of fileRows) {
@@ -344,15 +174,10 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
+      alamatPerusahaan,
       syaratTranskrip,
-      syaratKrs,
-      syaratMetodologi,
       fileTranskrip,
       fileTranskripName,
-      fileKrs,
-      fileKrsName,
-      fileMetodologi,
-      fileMetodologiName,
     } = req.body || {};
 
     const noHpVal = noHp != null ? String(noHp).trim() : "";
@@ -398,6 +223,19 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       });
     }
 
+    if (
+      !(await dosenBimbingProdiService.areEligible(programStudiId, [
+        pembimbing1Val,
+        pembimbing2Val,
+      ]))
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
+      });
+    }
+
     const namaPerusahaanVal =
       namaPerusahaan != null ? String(namaPerusahaan).trim() : "";
     if (perluSuratPengantar && !namaPerusahaanVal) {
@@ -414,17 +252,38 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       });
     }
 
+    const alamatPerusahaanVal =
+      alamatPerusahaan != null ? String(alamatPerusahaan).trim() : "";
+    if (perluSuratPengantar && !alamatPerusahaanVal) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "alamatPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    if (perluSuratPengantar && alamatPerusahaanVal.length < 2) {
+      return res.status(400).json({
+        ok: false,
+        message: "Alamat perusahaan minimal 2 karakter",
+      });
+    }
+
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
+
+    const nomorSkSuratPengantar = perluSuratPengantar
+      ? await generateNomorSkSuratPengantar(conn, programStudiId)
+      : null;
 
     const [result] = await conn.query(
       `INSERT INTO pengajuan_disposisi_pembimbing (
          outline_id, npm, program_studi_id,
          no_hp,
          pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
-         perlu_surat_pengantar, nama_perusahaan,
-         syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c,
+         perlu_surat_pengantar, nomor_sk_surat_pengantar, nama_perusahaan, alamat_perusahaan,
+         syarat_transkrip,
          status, submitted_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
       [
@@ -435,10 +294,10 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         pembimbing1Val,
         pembimbing2Val,
         perluSuratPengantar ? 1 : 0,
+        nomorSkSuratPengantar,
         namaPerusahaanVal || null,
+        alamatPerusahaanVal || null,
         toBit(syaratTranskrip, 0),
-        toBit(syaratKrs, 0),
-        toBit(syaratMetodologi, 0),
       ],
     );
 
@@ -473,28 +332,6 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       },
     ]);
 
-    // const formulirBase64 = await generateFormulirDoc({
-    //   npm,
-    //   namaMahasiswa: docData.nama_mahasiswa,
-    //   programStudiNama: docData.program_studi_nama,
-    //   noHp: noHpVal,
-    //   sks: docData.sks,
-    //   judulSkripsi: docData.judul_skripsi,
-    //   pembimbing1Nama: docData.pembimbing1_nama ?? pembimbing1Val,
-    //   pembimbing2Nama: docData.pembimbing2_nama ?? pembimbing2Val,
-    //   perluSuratPengantar: Boolean(perluSuratPengantar),
-    //   namaPerusahaan: namaPerusahaanVal || null,
-    //   studentSignature: docData.signature_image,
-    //   submittedAt: new Date(),
-    // });
-    // await upsertFileByType(
-    //   conn,
-    //   pengajuanDisposisiPembimbingId,
-    //   "PENGAJUAN_DISPOSISI_PEMBIMBING",
-    //   formulirBase64,
-    //   buildFormulirFileName(npm, docData.nama_mahasiswa),
-    // );
-
     if (fileTranskrip !== undefined && fileTranskrip !== null) {
       await upsertFileByType(
         conn,
@@ -503,28 +340,6 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         String(fileTranskrip),
         fileTranskripName !== undefined && fileTranskripName !== null
           ? String(fileTranskripName).trim()
-          : null,
-      );
-    }
-    if (fileKrs !== undefined && fileKrs !== null) {
-      await upsertFileByType(
-        conn,
-        pengajuanDisposisiPembimbingId,
-        "KRS",
-        String(fileKrs),
-        fileKrsName !== undefined && fileKrsName !== null
-          ? String(fileKrsName).trim()
-          : null,
-      );
-    }
-    if (fileMetodologi !== undefined && fileMetodologi !== null) {
-      await upsertFileByType(
-        conn,
-        pengajuanDisposisiPembimbingId,
-        "METODOLOGI",
-        String(fileMetodologi),
-        fileMetodologiName !== undefined && fileMetodologiName !== null
-          ? String(fileMetodologiName).trim()
           : null,
       );
     }
@@ -539,7 +354,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       `SELECT u.id FROM users u
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
-       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+       JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
        WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
        LIMIT 1`,
       [programStudiId],
@@ -701,6 +516,7 @@ exports.getById = async (req, res, next) => {
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
+          pj.alamat_perusahaan,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -728,7 +544,7 @@ exports.getById = async (req, res, next) => {
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
+        LEFT JOIN staf dkap ON dkap.usr_id = ps.kaprodi_staff_usr_id
 
         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
@@ -754,7 +570,7 @@ exports.getById = async (req, res, next) => {
     // LECTURER (Kaprodi): hanya boleh pengajuan dari prodinya
     if (req.user.hasRole("LECTURER", "KAPRODI")) {
       const [urows] = await db.query(
-        `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
         [req.user.id],
       );
       const nidn = urows[0]?.nidn;
@@ -775,9 +591,8 @@ exports.getById = async (req, res, next) => {
           pj.pembimbing2_diajukan_nidn,
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
+          pj.alamat_perusahaan,
           pj.syarat_transkrip,
-          pj.syarat_krs,
-          pj.syarat_metodologi_nilai_min_c,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -805,7 +620,7 @@ exports.getById = async (req, res, next) => {
         INNER JOIN outline o ON o.id = pj.outline_id
         INNER JOIN mahasiswa m ON m.npm = pj.npm
         INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-        LEFT JOIN dosen dkap ON dkap.nidn = ps.kaprodi_nidn
+        LEFT JOIN staf dkap ON dkap.usr_id = ps.kaprodi_staff_usr_id
 
         LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
         LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
@@ -813,7 +628,7 @@ exports.getById = async (req, res, next) => {
         LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
 
         WHERE pj.id = ?
-          AND ps.kaprodi_nidn = ?
+          AND COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?
         LIMIT 1
         `,
         [id, nidn],
@@ -830,6 +645,72 @@ exports.getById = async (req, res, next) => {
     }
 
     return res.status(403).json({ ok: false, message: "Forbidden" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const DOWNLOADABLE_FILE_TYPES = new Set(["PENGAJUAN_DISPOSISI_PEMBIMBING", "TRANSKRIP"]);
+
+// GET /:id/files/:fileType — one file instead of getById's every file, for download buttons.
+// Same visibility as getById: the student who owns it, or the Kaprodi of its prodi.
+exports.getFile = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: "Invalid id" });
+    }
+    const fileType = String(req.params.fileType ?? "").toUpperCase();
+    if (!DOWNLOADABLE_FILE_TYPES.has(fileType)) {
+      return res.status(400).json({ ok: false, message: "Invalid fileType" });
+    }
+
+    let scopeSql;
+    let scopeParam;
+    if (req.user.hasRole("STUDENT")) {
+      scopeParam = await getStudentNpm(req.user.id);
+      if (!scopeParam) {
+        return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
+      }
+      scopeSql = "pj.npm = ?";
+    } else if (req.user.hasRole("LECTURER", "KAPRODI")) {
+      const [urows] = await db.query(
+        `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+        [req.user.id],
+      );
+      scopeParam = urows[0]?.nidn;
+      if (!scopeParam) {
+        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+      }
+      scopeSql = "COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?";
+    } else {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
+    const [rows] = await db.query(
+      `SELECT f.file_content, f.file_name
+       FROM pengajuan_disposisi_pembimbing pj
+       INNER JOIN mahasiswa m ON m.npm = pj.npm
+       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
+       INNER JOIN pengajuan_disposisi_pembimbing_file f
+         ON f.pengajuan_disposisi_pembimbing_id = pj.id AND f.file_type = ?
+       WHERE pj.id = ? AND ${scopeSql}
+       LIMIT 1`,
+      [fileType, id, scopeParam],
+    );
+    const file = rows[0];
+    if (!file?.file_content) {
+      return res.status(404).json({ ok: false, message: "File tidak ditemukan" });
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        file_name: file.file_name,
+        mime_type: mimeFromFileName(file.file_name),
+        file_content: file.file_content,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -860,15 +741,10 @@ exports.resubmit = async (req, res, next) => {
       pembimbing2DiajukanNidn,
       perluSuratPengantar,
       namaPerusahaan,
+      alamatPerusahaan,
       syaratTranskrip,
-      syaratKrs,
-      syaratMetodologi,
       fileTranskrip,
       fileTranskripName,
-      fileKrs,
-      fileKrsName,
-      fileMetodologi,
-      fileMetodologiName,
     } = req.body || {};
 
     const noHpVal =
@@ -896,6 +772,10 @@ exports.resubmit = async (req, res, next) => {
       namaPerusahaan !== undefined && namaPerusahaan !== null
         ? String(namaPerusahaan).trim()
         : null;
+    const alamatPerusahaanVal =
+      alamatPerusahaan !== undefined && alamatPerusahaan !== null
+        ? String(alamatPerusahaan).trim()
+        : null;
     const fileTranskripVal =
       fileTranskrip !== undefined && fileTranskrip !== null
         ? String(fileTranskrip)
@@ -904,20 +784,6 @@ exports.resubmit = async (req, res, next) => {
       fileTranskripName !== undefined && fileTranskripName !== null
         ? String(fileTranskripName).trim()
         : null;
-    const fileKrsVal =
-      fileKrs !== undefined && fileKrs !== null ? String(fileKrs) : null;
-    const fileKrsNameVal =
-      fileKrsName !== undefined && fileKrsName !== null
-        ? String(fileKrsName).trim()
-        : null;
-    const fileMetodologiVal =
-      fileMetodologi !== undefined && fileMetodologi !== null
-        ? String(fileMetodologi)
-        : null;
-    const fileMetodologiNameVal =
-      fileMetodologiName !== undefined && fileMetodologiName !== null
-        ? String(fileMetodologiName).trim()
-        : null;
 
     const hasMeaningfulUpdate =
       (noHpVal !== null && noHpVal.length > 0) ||
@@ -925,12 +791,9 @@ exports.resubmit = async (req, res, next) => {
       (pembimbing2Val !== null && pembimbing2Val.length > 0) ||
       perluSuratProvided ||
       (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
+      (alamatPerusahaanVal !== null && alamatPerusahaanVal.length > 0) ||
       syaratTranskrip !== undefined ||
-      syaratKrs !== undefined ||
-      syaratMetodologi !== undefined ||
-      (fileTranskripVal !== null && fileTranskripVal.length > 0) ||
-      (fileKrsVal !== null && fileKrsVal.length > 0) ||
-      (fileMetodologiVal !== null && fileMetodologiVal.length > 0);
+      (fileTranskripVal !== null && fileTranskripVal.length > 0);
 
     if (!hasMeaningfulUpdate) {
       return res.status(400).json({
@@ -974,6 +837,30 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
+    if (
+      perluSuratProvided &&
+      Boolean(perluSuratPengantar) &&
+      (!alamatPerusahaanVal || alamatPerusahaanVal.length === 0)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "alamatPerusahaan is required when perluSuratPengantar is true",
+      });
+    }
+
+    if (
+      perluSuratProvided &&
+      Boolean(perluSuratPengantar) &&
+      alamatPerusahaanVal &&
+      alamatPerusahaanVal.length < 2
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Alamat perusahaan minimal 2 karakter",
+      });
+    }
+
     const nidnsToCheck = [pembimbing1Val, pembimbing2Val].filter(
       (val) => val && val.length > 0,
     );
@@ -1003,7 +890,8 @@ exports.resubmit = async (req, res, next) => {
     txStarted = true;
 
     const [rows] = await conn.query(
-      `SELECT id, status, syarat_transkrip, syarat_krs, syarat_metodologi_nilai_min_c
+      `SELECT id, status, program_studi_id, pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
+              syarat_transkrip, nomor_sk_surat_pengantar
        FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
@@ -1031,6 +919,29 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
+    const effectivePembimbing1 =
+      pembimbing1Val && pembimbing1Val.length > 0
+        ? pembimbing1Val
+        : rows[0].pembimbing1_diajukan_nidn;
+    const effectivePembimbing2 =
+      pembimbing2Val && pembimbing2Val.length > 0
+        ? pembimbing2Val
+        : rows[0].pembimbing2_diajukan_nidn;
+    if (
+      !(await dosenBimbingProdiService.areEligible(rows[0].program_studi_id, [
+        effectivePembimbing1,
+        effectivePembimbing2,
+      ]))
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
+      });
+    }
+
     const sets = [];
     const params = [];
 
@@ -1051,6 +962,13 @@ exports.resubmit = async (req, res, next) => {
       params.push(Boolean(perluSuratPengantar) ? 1 : 0);
       if (!Boolean(perluSuratPengantar)) {
         sets.push("nama_perusahaan = NULL");
+        sets.push("alamat_perusahaan = NULL");
+        sets.push("nomor_sk_surat_pengantar = NULL");
+      } else if (!rows[0].nomor_sk_surat_pengantar) {
+        sets.push("nomor_sk_surat_pengantar = ?");
+        params.push(
+          await generateNomorSkSuratPengantar(conn, rows[0].program_studi_id),
+        );
       }
     }
     if (
@@ -1061,15 +979,17 @@ exports.resubmit = async (req, res, next) => {
       sets.push("nama_perusahaan = ?");
       params.push(namaPerusahaanVal);
     }
+    if (
+      alamatPerusahaanVal !== null &&
+      alamatPerusahaanVal.length > 0 &&
+      (!perluSuratProvided || Boolean(perluSuratPengantar))
+    ) {
+      sets.push("alamat_perusahaan = ?");
+      params.push(alamatPerusahaanVal);
+    }
     const currentRow = rows[0];
     sets.push("syarat_transkrip = ?");
     params.push(toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0));
-    sets.push("syarat_krs = ?");
-    params.push(toBit(syaratKrs, currentRow.syarat_krs ?? 0));
-    sets.push("syarat_metodologi_nilai_min_c = ?");
-    params.push(
-      toBit(syaratMetodologi, currentRow.syarat_metodologi_nilai_min_c ?? 0),
-    );
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
     sets.push("disposisi_at = NULL");
@@ -1114,34 +1034,6 @@ exports.resubmit = async (req, res, next) => {
       },
     ]);
 
-    // const resubFormulirBase64 = await generateFormulirDoc({
-    //   npm,
-    //   namaMahasiswa: resubDocData.nama_mahasiswa,
-    //   programStudiNama: resubDocData.program_studi_nama,
-    //   noHp: resubDocData.no_hp,
-    //   sks: resubDocData.sks,
-    //   judulSkripsi: resubDocData.judul_skripsi,
-    //   pembimbing1Nama:
-    //     resubDocData.pembimbing1_nama ??
-    //     resubDocData.pembimbing1_diajukan_nidn ??
-    //     "",
-    //   pembimbing2Nama:
-    //     resubDocData.pembimbing2_nama ??
-    //     resubDocData.pembimbing2_diajukan_nidn ??
-    //     "",
-    //   perluSuratPengantar: Boolean(resubDocData.perlu_surat_pengantar),
-    //   namaPerusahaan: resubDocData.nama_perusahaan ?? null,
-    //   studentSignature: resubDocData.signature_image,
-    //   submittedAt: new Date(),
-    // });
-    // await upsertFileByType(
-    //   conn,
-    //   id,
-    //   "PENGAJUAN_DISPOSISI_PEMBIMBING",
-    //   resubFormulirBase64,
-    //   buildFormulirFileName(npm, resubDocData.nama_mahasiswa),
-    // );
-
     if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
       await upsertFileByType(
         conn,
@@ -1150,28 +1042,6 @@ exports.resubmit = async (req, res, next) => {
         fileTranskripVal,
         fileTranskripNameVal !== null && fileTranskripNameVal.length > 0
           ? fileTranskripNameVal
-          : null,
-      );
-    }
-    if (fileKrsVal !== null && fileKrsVal.length > 0) {
-      await upsertFileByType(
-        conn,
-        id,
-        "KRS",
-        fileKrsVal,
-        fileKrsNameVal !== null && fileKrsNameVal.length > 0
-          ? fileKrsNameVal
-          : null,
-      );
-    }
-    if (fileMetodologiVal !== null && fileMetodologiVal.length > 0) {
-      await upsertFileByType(
-        conn,
-        id,
-        "METODOLOGI",
-        fileMetodologiVal,
-        fileMetodologiNameVal !== null && fileMetodologiNameVal.length > 0
-          ? fileMetodologiNameVal
           : null,
       );
     }
@@ -1187,7 +1057,7 @@ exports.resubmit = async (req, res, next) => {
         `SELECT u.id FROM users u
          JOIN user_roles ur ON ur.user_id = u.id
          JOIN roles r ON r.id = ur.role_id
-         JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
+         JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
          WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
          LIMIT 1`,
         [resubProgramStudiId],

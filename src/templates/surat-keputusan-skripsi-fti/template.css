@@ -122,10 +122,16 @@ h2 {
   text-align: justify;
 }
 .dean-approval {
-  width: 64mm;
+  width: 82mm;
   margin: 5mm 0 0 auto;
   font-size: 12pt;
   line-height: 1.2;
+}
+.dean-approval-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 2mm;
+  white-space: nowrap;
 }
 .signature-space {
   display: flex;
@@ -147,4 +153,30 @@ footer {
   margin-top: 2mm;
   font-size: 12pt;
   line-height: 1.2;
+}
+
+/* Normalized signatures: 40mm wide, name overlap, and a 2mm upward shift. */
+.signature-space {
+  position: relative;
+  width: 100%;
+  height: 12mm;
+  margin: 0 auto;
+}
+.signature-space > .signature-image {
+  position: absolute;
+  bottom: -2mm;
+  left: 50%;
+  transform: translate(-50%, -2mm);
+  width: 40mm;
+  max-width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  object-position: center bottom;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.signature-space + * {
+  display: block;
+  transform: translateY(-2mm);
 }

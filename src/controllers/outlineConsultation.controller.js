@@ -2,36 +2,14 @@
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const {
   generateKartuKonsultasiOutlineFTI,
 } = require("../services/generateKartuKonsultasiOutlineFTI.js");
 const {
   generateHalamanPersetujuanJudulDesainSkripsiFTI,
 } = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm
-     FROM users
-     WHERE id = ? AND is_active = 1
-     LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT nidn
-     FROM users
-     WHERE id = ? AND is_active = 1
-     LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -51,18 +29,6 @@ function buildKartuPreviewFileName(npm, namaMahasiswa) {
   );
 }
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id
-     FROM program_studi
-     WHERE kaprodi_nidn = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
 async function getKartuByOutlineId(outlineId) {
   const [rows] = await db.query(
     `SELECT
@@ -76,24 +42,16 @@ async function getKartuByOutlineId(outlineId) {
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       pu1.signature_image AS pembimbing1_signature,
-       pu2.signature_image AS pembimbing2_signature
+       sd1.dsnTtd AS pembimbing1_signature,
+       sd2.dsnTtd AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-       )
-     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-       )
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
@@ -149,100 +107,44 @@ function resolveActiveStage(stages, isCompleted) {
   };
 }
 
+const TITLE_CHANGE_PENDING_STATUSES = [
+  "WAITING_PEMBIMBING_2",
+  "WAITING_PEMBIMBING_1",
+];
+
+function validateJudulUsulan(judul) {
+  if (judul.length < 5) return "Judul usulan minimal 5 karakter";
+  if (judul.length > 255) return "Judul usulan maksimal 255 karakter";
+  return null;
+}
+
+async function getTitleChangesByOutlineId(conn, outlineId) {
+  const [rows] = await conn.query(
+    `SELECT
+       u.id, u.outline_id, u.konsultasi_outline_submission_id,
+       s.submission_no, u.diajukan_pada_stage,
+       u.judul_lama, u.judul_usulan, u.alasan, u.status,
+       u.pembimbing2_keputusan_at, u.pembimbing2_catatan, d2.nama AS pembimbing2_nama,
+       u.pembimbing1_keputusan_at, u.pembimbing1_catatan, d1.nama AS pembimbing1_nama,
+       u.alasan_penolakan, u.created_at, u.updated_at
+     FROM usulan_perubahan_judul u
+     JOIN outline o ON o.id = u.outline_id
+     LEFT JOIN konsultasi_outline_submission s ON s.id = u.konsultasi_outline_submission_id
+     LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
+     WHERE u.outline_id = ?
+     ORDER BY u.created_at DESC, u.id DESC`,
+    [outlineId],
+  );
+  return rows;
+}
+
 function canReviewStageStatus(stageStatus) {
   return stageStatus === "SUBMITTED" || stageStatus === "IN_REVIEW";
 }
 
 function hasRole(req, role) {
   return typeof req.user?.hasRole === "function" && req.user.hasRole(role);
-}
-
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (signatureValue === undefined || signatureValue === null) return null;
-
-  const raw = String(signatureValue).trim();
-  if (!raw) return null;
-
-  const dataUrlMatch = raw.match(
-    /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/i,
-  );
-  if (dataUrlMatch) {
-    try {
-      const mimeType = dataUrlMatch[1].toLowerCase();
-      const type = mimeType === "jpeg" ? "jpg" : mimeType;
-      return { buffer: Buffer.from(dataUrlMatch[2], "base64"), type };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  const normalized = raw.replace(/\s+/g, "");
-  const looksLikeBase64 =
-    /^[A-Za-z0-9+/=]+$/.test(normalized) && normalized.length % 4 === 0;
-  if (looksLikeBase64) {
-    try {
-      const buffer = Buffer.from(normalized, "base64");
-      const type = buffer[0] === 0x89 && buffer[1] === 0x50 ? "png" : "jpg";
-      return { buffer, type };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-function signatureImagePatch(signatureValue) {
-  const decoded = decodeSignatureToBuffer(signatureValue);
-  if (!decoded || decoded.buffer.length === 0) {
-    return textPatch("");
-  }
-
-  try {
-    return {
-      type: PatchType.PARAGRAPH,
-      children: [
-        new ImageRun({
-          type: decoded.type,
-          data: decoded.buffer,
-          transformation: {
-            width: 120,
-            height: 50,
-          },
-        }),
-      ],
-    };
-  } catch (_) {
-    return textPatch("");
-  }
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
 }
 
 function formatKartuDate(value) {
@@ -280,54 +182,6 @@ function getDecisionLabel(status) {
   return status ?? "";
 }
 
-async function buildKartuKonsultasiOutlineDocxBuffer(kartu, logs) {
-  const templatePath = path.join(
-    __dirname,
-    "..",
-    "templates",
-    "template_kartu_konsultasi_outline.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-
-  assertSignatures(
-    logs.map((log, idx) => ({
-      role: `Paraf ${idx + 1} (${getStageLabel(log.stage)})`,
-      nama: log.reviewer_nama,
-      signatureImage: log.reviewer_signature,
-    })),
-  );
-
-  const patches = {
-    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
-    npm: textPatch(kartu.npm),
-    program_studi: textPatch(kartu.program_studi_nama),
-    judul_skripsi: textPatch(kartu.judul_skripsi),
-    pembimbing1: textPatch(kartu.pembimbing1_nama),
-    pembimbing2: textPatch(kartu.pembimbing2_nama),
-    ttd_pembimbing1: signatureImagePatch(kartu.pembimbing1_signature),
-    ttd_pembimbing2: signatureImagePatch(kartu.pembimbing2_signature),
-  };
-
-  for (let i = 1; i <= 18; i += 1) {
-    const log = logs[i - 1];
-    const keterangan = log
-      ? `${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`
-      : "";
-
-    patches[`tanggal_${i}`] = textPatch(
-      log ? formatKartuDate(log.logged_at) : "",
-    );
-    patches[`keterangan_${i}`] = textPatch(keterangan);
-    patches[`paraf_${i}`] = signatureImagePatch(log?.reviewer_signature);
-  }
-
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-}
-
 async function getKartuLogs(queryable, kartuId) {
   const [logs] = await queryable.query(
     `SELECT
@@ -335,7 +189,7 @@ async function getKartuLogs(queryable, kartuId) {
        s.stage,
        r.submission_no,
        d.nama   AS reviewer_nama,
-       u.signature_image AS reviewer_signature,
+       sd.dsnTtd AS reviewer_signature,
        r.decision_status AS status,
        r.catatan_kartu,
        r.reviewed_at AS logged_at,
@@ -346,6 +200,7 @@ async function getKartuLogs(queryable, kartuId) {
      JOIN konsultasi_outline_review r ON r.konsultasi_outline_stage_id = s.id
      LEFT JOIN users u ON u.id = r.reviewer_user_id
      LEFT JOIN dosen d ON d.nidn = u.nidn
+     LEFT JOIN widya_miko.m_dosen sd ON sd.dsnId = s.pembimbing_nidn
      LEFT JOIN konsultasi_outline_review_file rf
        ON rf.konsultasi_outline_review_id = r.id
      WHERE s.kartu_konsultasi_outline_id = ?
@@ -372,24 +227,26 @@ async function generateAndStoreFinalKartuDocx(
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       pu1.signature_image AS pembimbing1_signature,
-       pu2.signature_image AS pembimbing2_signature
+       CASE WHEN st1.current_status = 'ACCEPTED'
+         THEN sd1.dsnTtd ELSE NULL END AS pembimbing1_signature,
+       CASE WHEN st2.current_status = 'CONTINUE'
+         THEN sd2.dsnTtd ELSE NULL END AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-       )
-     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-       )
+     LEFT JOIN konsultasi_outline_stage st1
+       ON st1.kartu_konsultasi_outline_id = k.id
+       AND st1.stage = 'PEMBIMBING_1'
+       AND st1.pembimbing_nidn = o.pembimbing1_nidn
+     LEFT JOIN konsultasi_outline_stage st2
+       ON st2.kartu_konsultasi_outline_id = k.id
+       AND st2.stage = 'PEMBIMBING_2'
+       AND st2.pembimbing_nidn = o.pembimbing2_nidn
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.id = ?
      LIMIT 1`,
 
@@ -403,14 +260,6 @@ async function generateAndStoreFinalKartuDocx(
   }
 
   const logs = await getKartuLogs(queryable, kartu.id);
-
-  // DOCX generator (legacy)
-  // const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
-  //   kartu,
-  //   logs,
-  // );
-  // const mimeType =
-  //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
   const dataKartuKonsultasiOutlineFTI = {
     mahasiswa: {
@@ -469,77 +318,28 @@ async function generateAndStoreFinalKartuDocx(
   };
 }
 
-async function buildHalamanPersetujuanDocxBuffer({
-  kartu,
-  signatures,
-  programStudiNama,
-  namaKaprodi,
-}) {
-  const templatePath = path.join(
-    __dirname,
-    "..",
-    "templates",
-    "template_halaman_persetujuan_judul_desain_skripsi.docx",
-  );
-  const templateBuffer = await readFile(templatePath);
-
-  const sigMap = {};
-  for (const s of signatures) {
-    sigMap[s.signer_role] = s.signature_image;
-  }
-
-  const programStudi = programStudiNama ?? kartu.program_studi_nama ?? "";
-
-  const patches = {
-    nama_mahasiswa: textPatch(kartu.nama_mahasiswa),
-    npm: textPatch(kartu.npm),
-    program_studi1: textPatch(programStudi),
-    program_studi2: textPatch(programStudi.toUpperCase()),
-    judul_skripsi: textPatch((kartu.judul_skripsi ?? "").toUpperCase()),
-    nama_pembimbing1: textPatch(kartu.pembimbing1_nama),
-    nama_pembimbing2: textPatch(kartu.pembimbing2_nama),
-    nama_kaprodi: textPatch(namaKaprodi ?? ""),
-    tahun: textPatch(String(new Date().getFullYear())),
-    ttd_mahasiswa: signatureImagePatch(sigMap["MAHASISWA"]),
-    ttd_pembimbing2: signatureImagePatch(sigMap["PEMBIMBING_2"]),
-    ttd_pembimbing1: signatureImagePatch(sigMap["PEMBIMBING_1"]),
-    ttd_kaprodi: signatureImagePatch(sigMap["KAPRODI"]),
-  };
-
-  return patchDocument({
-    outputType: "nodebuffer",
-    data: templateBuffer,
-    patches,
-  });
-}
-
 async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
-  console.log("[autoSubmitSkPenelitian] start", { outlineId, kartuId });
 
   const [existingRows] = await conn.query(
     `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
     [outlineId],
   );
   if (existingRows.length > 0) {
-    console.log(
-      "[autoSubmitSkPenelitian] skip: already_exists",
-      existingRows[0].id,
-    );
     return { skippedReason: "already_exists" };
   }
 
-  const [krsRows] = await conn.query(
-    `SELECT pf.file_content, pf.file_name
-     FROM pengajuan_disposisi_pembimbing_file pf
-     JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
-     WHERE pj.outline_id = ? AND pf.file_type = 'KRS' LIMIT 1`,
-    [outlineId],
-  );
-  const [rekapRows] = await conn.query(
+  const [transkripRows] = await conn.query(
     `SELECT pf.file_content, pf.file_name
      FROM pengajuan_disposisi_pembimbing_file pf
      JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
      WHERE pj.outline_id = ? AND pf.file_type = 'TRANSKRIP' LIMIT 1`,
+    [outlineId],
+  );
+  const [formulirRows] = await conn.query(
+    `SELECT pf.file_content, pf.file_name
+     FROM pengajuan_disposisi_pembimbing_file pf
+     JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+     WHERE pj.outline_id = ? AND pf.file_type = 'PENGAJUAN_DISPOSISI_PEMBIMBING' LIMIT 1`,
     [outlineId],
   );
   const [kartuFileRows] = await conn.query(
@@ -551,189 +351,134 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     [kartuId],
   );
 
-  console.log("[autoSubmitSkPenelitian] files found", {
-    krs: krsRows.length > 0,
-    rekap: rekapRows.length > 0,
-    kartu: kartuFileRows.length > 0,
-    outline: outlineRows.length > 0,
-  });
 
   const missingFiles = [];
-  if (krsRows.length === 0) missingFiles.push("KRS");
-  if (rekapRows.length === 0) missingFiles.push("REKAP_NILAI");
+  if (formulirRows.length === 0)
+    missingFiles.push("PENGAJUAN_DISPOSISI_PEMBIMBING");
+  if (transkripRows.length === 0) missingFiles.push("TRANSKRIP_NILAI");
   if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
   if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
   if (missingFiles.length > 0) {
-    console.log("[autoSubmitSkPenelitian] skip: missing_files", missingFiles);
     return { skippedReason: "missing_files", missingFiles };
   }
 
-  // Generate halaman persetujuan DOCX inline from users.signature_image
-  // Non-fatal: a missing signature must not abort the outline-review transaction
+  // Lecturer signatures are sourced from SIMIKO's m_dosen.dsnTtd.
+  // Blocking: HALAMAN_PERSETUJUAN is auto-verified and required for SK VERIFY,
+  // so a missing signature must abort the outline review rather than leave the SK stuck
   let halamanFile = null;
-  try {
-    const [[mahasiswaRow]] = await conn.query(
-      `SELECT u.signature_image FROM users u
-       JOIN outline o ON o.npm = u.npm
-       WHERE o.id = ? LIMIT 1`,
-      [kartu.outline_id],
-    );
-    const [[p2Row]] = await conn.query(
-      `SELECT u.signature_image FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
-      [kartu.pembimbing2_nidn],
-    );
-    const [[p1Row]] = await conn.query(
-      `SELECT u.signature_image FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE u.nidn = ? AND r.code = 'PEMBIMBING' LIMIT 1`,
-      [kartu.pembimbing1_nidn],
-    );
-    const [[kaprodiRow]] = await conn.query(
-      `SELECT u.signature_image FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       JOIN program_studi ps ON ps.kaprodi_nidn = u.nidn
-       WHERE r.code = 'KAPRODI' AND ps.id = ? LIMIT 1`,
-      [kartu.program_studi_id],
-    );
-    const [[psRow]] = await conn.query(
-      `SELECT
-         ps.nama AS program_studi_nama,
-         d.nama AS kaprodi_nama,
-         m.nama AS nama_mahasiswa,
-         o.judul AS judul_skripsi,
-         d1.nama AS pembimbing1_nama,
-         d2.nama AS pembimbing2_nama
-       FROM program_studi ps
-       LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
-       JOIN outline o ON o.id = ?
-       JOIN mahasiswa m ON m.npm = o.npm
-       LEFT JOIN dosen d1 ON d1.nidn = ?
-       LEFT JOIN dosen d2 ON d2.nidn = ?
-       WHERE ps.id = ? LIMIT 1`,
-      [
-        kartu.outline_id,
-        kartu.pembimbing1_nidn,
-        kartu.pembimbing2_nidn,
-        kartu.program_studi_id,
-      ],
-    );
+  const [[mahasiswaRow]] = await conn.query(
+    `SELECT u.signature_image FROM users u
+     JOIN outline o ON o.npm = u.npm
+     WHERE o.id = ? LIMIT 1`,
+    [kartu.outline_id],
+  );
+  const [[p2Row]] = await conn.query(
+    `SELECT dsnTtd AS signature_image
+     FROM widya_miko.m_dosen
+     WHERE dsnId = ?
+     LIMIT 1`,
+    [kartu.pembimbing2_nidn],
+  );
+  const [[p1Row]] = await conn.query(
+    `SELECT dsnTtd AS signature_image
+     FROM widya_miko.m_dosen
+     WHERE dsnId = ?
+     LIMIT 1`,
+    [kartu.pembimbing1_nidn],
+  );
+  const [[kaprodiRow]] = await conn.query(
+    // Match the working pengajuan-disposisi lookup using the assigned staff ID.
+    `SELECT md.dsnTtd AS signature_image FROM program_studi ps
+     JOIN widya_miko.c_useradm cua ON cua.usrId = ps.kaprodi_staff_usr_id
+     JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
+     WHERE ps.id = ? LIMIT 1`,
+    [kartu.program_studi_id],
+  );
+  const [[psRow]] = await conn.query(
+    `SELECT
+       ps.nama AS program_studi_nama,
+       COALESCE(staf.nama, d.nama) AS kaprodi_nama,
+       m.nama AS nama_mahasiswa,
+       o.judul AS judul_skripsi,
+       d1.nama AS pembimbing1_nama,
+       d2.nama AS pembimbing2_nama
+     FROM program_studi ps
+     LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
+     LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
+     JOIN outline o ON o.id = ?
+     JOIN mahasiswa m ON m.npm = o.npm
+     LEFT JOIN dosen d1 ON d1.nidn = ?
+     LEFT JOIN dosen d2 ON d2.nidn = ?
+     WHERE ps.id = ? LIMIT 1`,
+    [
+      kartu.outline_id,
+      kartu.pembimbing1_nidn,
+      kartu.pembimbing2_nidn,
+      kartu.program_studi_id,
+    ],
+  );
 
-    // DOCX generator (legacy)
-    // const halamanSignatures = [
-    //   {
-    //     signer_role: "MAHASISWA",
-    //     signature_image: mahasiswaRow?.signature_image ?? null,
-    //   },
-    //   {
-    //     signer_role: "PEMBIMBING_2",
-    //     signature_image: p2Row?.signature_image ?? null,
-    //   },
-    //   {
-    //     signer_role: "PEMBIMBING_1",
-    //     signature_image: p1Row?.signature_image ?? null,
-    //   },
-    //   {
-    //     signer_role: "KAPRODI",
-    //     signature_image: kaprodiRow?.signature_image ?? null,
-    //   },
-    // ];
+  assertSignatures([
+    {
+      role: "Mahasiswa",
+      nama: psRow?.nama_mahasiswa,
+      signatureImage: mahasiswaRow?.signature_image,
+    },
+    {
+      role: "Pembimbing 2",
+      nama: psRow?.pembimbing2_nama,
+      signatureImage: p2Row?.signature_image,
+    },
+    {
+      role: "Pembimbing 1",
+      nama: psRow?.pembimbing1_nama,
+      signatureImage: p1Row?.signature_image,
+    },
+    {
+      role: "Kaprodi",
+      nama: psRow?.kaprodi_nama,
+      signatureImage: kaprodiRow?.signature_image,
+    },
+  ]);
 
-    assertSignatures([
-      {
-        role: "Mahasiswa",
-        nama: psRow?.nama_mahasiswa,
-        signatureImage: mahasiswaRow?.signature_image,
+  const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
+    mahasiswa: {
+      nama: psRow?.nama_mahasiswa ?? "",
+      npm: kartu.npm,
+      signatureBase64: mahasiswaRow?.signature_image ?? null,
+    },
+    pembimbing: {
+      pertama: {
+        nama: psRow?.pembimbing1_nama ?? "",
+        signatureBase64: p1Row?.signature_image ?? null,
       },
-      {
-        role: "Pembimbing 2",
-        nama: psRow?.pembimbing2_nama,
-        signatureImage: p2Row?.signature_image,
+      kedua: {
+        nama: psRow?.pembimbing2_nama ?? "",
+        signatureBase64: p2Row?.signature_image ?? null,
       },
-      {
-        role: "Pembimbing 1",
-        nama: psRow?.pembimbing1_nama,
-        signatureImage: p1Row?.signature_image,
-      },
-      {
-        role: "Kaprodi",
-        nama: psRow?.kaprodi_nama,
-        signatureImage: kaprodiRow?.signature_image,
-      },
-    ]);
+    },
+    ketuaProgramStudi: {
+      nama: psRow?.kaprodi_nama ?? "",
+      signatureBase64: kaprodiRow?.signature_image ?? null,
+    },
+    programStudi: psRow?.program_studi_nama ?? "",
+    judulSkripsi: psRow?.judul_skripsi ?? "",
+    tahun: String(new Date().getFullYear()),
+  };
 
-    const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
-      mahasiswa: {
-        nama: psRow?.nama_mahasiswa ?? "",
-        npm: kartu.npm,
-        signatureBase64: mahasiswaRow?.signature_image ?? null,
-      },
-      pembimbing: {
-        pertama: {
-          nama: psRow?.pembimbing1_nama ?? "",
-          signatureBase64: p1Row?.signature_image ?? null,
-        },
-        kedua: {
-          nama: psRow?.pembimbing2_nama ?? "",
-          signatureBase64: p2Row?.signature_image ?? null,
-        },
-      },
-      ketuaProgramStudi: {
-        nama: psRow?.kaprodi_nama ?? "",
-        signatureBase64: kaprodiRow?.signature_image ?? null,
-      },
-      programStudi: psRow?.program_studi_nama ?? "",
-      judulSkripsi: psRow?.judul_skripsi ?? "",
-      tahun: String(new Date().getFullYear()),
-    };
+  const halamanBuffer = await generateHalamanPersetujuanJudulDesainSkripsiFTI(
+    dataHalamanPersetujuanJudulDesainSkripsiFTI,
+  );
 
-    const halamanBuffer =
-      await generateHalamanPersetujuanJudulDesainSkripsiFTI(
-        dataHalamanPersetujuanJudulDesainSkripsiFTI,
-      );
-
-    halamanFile = {
-      mime: "application/pdf",
-      name: buildKartuFileName(
-        kartu.npm,
-        psRow?.nama_mahasiswa,
-        "Halaman Persetujuan Judul",
-      ),
-      content: Buffer.from(halamanBuffer).toString("base64"),
-    };
-
-    // const kartuForHalaman = {
-    //   ...kartu,
-    //   nama_mahasiswa: psRow?.nama_mahasiswa ?? "",
-    //   judul_skripsi: psRow?.judul_skripsi ?? "",
-    //   pembimbing1_nama: psRow?.pembimbing1_nama ?? "",
-    //   pembimbing2_nama: psRow?.pembimbing2_nama ?? "",
-    // };
-    // const halamanBuffer = await buildHalamanPersetujuanDocxBuffer({
-    //   kartu: kartuForHalaman,
-    //   signatures: halamanSignatures,
-    //   programStudiNama: psRow?.program_studi_nama ?? "",
-    //   namaKaprodi: psRow?.kaprodi_nama ?? "",
-    // });
-    // halamanFile = {
-    //   mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    //   name: buildKartuFileName(
-    //     kartu.npm,
-    //     psRow?.nama_mahasiswa,
-    //     "Halaman Persetujuan Judul",
-    //   ),
-    //   content: halamanBuffer.toString("base64"),
-    // };
-  } catch (halamanErr) {
-    console.log(
-      "[autoSubmitSkPenelitian] halaman persetujuan generation skipped",
-      halamanErr.message,
-    );
-  }
+  halamanFile = {
+    mime: "application/pdf",
+    name: buildKartuFileName(
+      kartu.npm,
+      psRow?.nama_mahasiswa,
+      "Halaman Persetujuan Judul",
+    ),
+    content: Buffer.from(halamanBuffer).toString("base64"),
+  };
 
   const [ins] = await conn.query(
     `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
@@ -743,46 +488,55 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
 
   const files = [
     {
-      type: "KRS",
-      name: krsRows[0].file_name,
-      mime: null,
-      content: krsRows[0].file_content,
+      type: "PENGAJUAN_DISPOSISI_PEMBIMBING",
+      name: formulirRows[0].file_name,
+      mime: "application/pdf",
+      content: formulirRows[0].file_content,
+      status: "VERIFIED",
     },
     {
-      type: "REKAP_NILAI",
-      name: rekapRows[0].file_name,
+      type: "TRANSKRIP_NILAI",
+      name: transkripRows[0].file_name,
       mime: null,
-      content: rekapRows[0].file_content,
+      content: transkripRows[0].file_content,
+      status: "SUBMITTED",
     },
     {
       type: "KARTU_KONSULTASI_OUTLINE",
       name: kartuFileRows[0].file_name,
       mime: kartuFileRows[0].mime_type,
       content: kartuFileRows[0].file_content,
+      status: "VERIFIED",
     },
     {
       type: "FILE_OUTLINE",
       name: outlineRows[0].file_outline_name,
       mime: null,
       content: outlineRows[0].file_outline,
+      status: "VERIFIED",
     },
-  ];
-  if (halamanFile) {
-    files.push({
+    {
       type: "HALAMAN_PERSETUJUAN",
       name: halamanFile.name,
       mime: halamanFile.mime,
       content: halamanFile.content,
-    });
-  }
+      status: "VERIFIED",
+    },
+  ];
   for (const f of files) {
     await conn.query(
-      `INSERT INTO pengajuan_sk_penelitian_files (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status) VALUES (?, ?, ?, ?, ?, 'SYSTEM', 'SUBMITTED')`,
-      [skId, f.type, f.name, f.mime ?? "application/octet-stream", f.content],
+      `INSERT INTO pengajuan_sk_penelitian_files (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status) VALUES (?, ?, ?, ?, ?, 'SYSTEM', ?)`,
+      [
+        skId,
+        f.type,
+        f.name,
+        f.mime ?? "application/octet-stream",
+        f.content,
+        f.status,
+      ],
     );
   }
 
-  console.log("[autoSubmitSkPenelitian] done", { skId });
   return { skippedReason: null, skId };
 }
 
@@ -799,24 +553,26 @@ async function getAuthorizedKartuForDocument(queryable, req, outlineId) {
        o.judul             AS judul_skripsi,
        d1.nama             AS pembimbing1_nama,
        d2.nama             AS pembimbing2_nama,
-       pu1.signature_image AS pembimbing1_signature,
-       pu2.signature_image AS pembimbing2_signature
+       CASE WHEN st1.current_status = 'ACCEPTED'
+         THEN sd1.dsnTtd ELSE NULL END AS pembimbing1_signature,
+       CASE WHEN st2.current_status = 'CONTINUE'
+         THEN sd2.dsnTtd ELSE NULL END AS pembimbing2_signature
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
      JOIN mahasiswa m ON m.npm = o.npm
      JOIN program_studi ps ON ps.id = o.program_studi_id
      LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
      LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-     LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-       )
-     LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-       AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-         WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-       )
+     LEFT JOIN konsultasi_outline_stage st1
+       ON st1.kartu_konsultasi_outline_id = k.id
+       AND st1.stage = 'PEMBIMBING_1'
+       AND st1.pembimbing_nidn = o.pembimbing1_nidn
+     LEFT JOIN konsultasi_outline_stage st2
+       ON st2.kartu_konsultasi_outline_id = k.id
+       AND st2.stage = 'PEMBIMBING_2'
+       AND st2.pembimbing_nidn = o.pembimbing2_nidn
+     LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+     LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
      WHERE k.outline_id = ?
      LIMIT 1`,
     [outlineId],
@@ -1026,6 +782,11 @@ exports.getMyDetail = async (req, res, next) => {
       [kartu.id],
     );
 
+    const titleChanges = await getTitleChangesByOutlineId(db, outlineId);
+    const hasPendingTitleChange = titleChanges.some((t) =>
+      TITLE_CHANGE_PENDING_STATUSES.includes(t.status),
+    );
+
     return res.json({
       ok: true,
       data: {
@@ -1035,6 +796,9 @@ exports.getMyDetail = async (req, res, next) => {
         submissions,
         reviews,
         isCompleted: Boolean(kartu.is_completed),
+        titleChanges,
+        canProposeTitleChange:
+          !Number(kartu.is_completed) && !hasPendingTitleChange,
       },
     });
   } catch (err) {
@@ -1056,6 +820,11 @@ exports.submitMyOutline = async (req, res, next) => {
     }
 
     const { fileOutline, fileOutlineName } = req.body || {};
+    const judulUsulan = String(req.body?.judulUsulan ?? "").trim();
+    const alasanPerubahanJudul = String(
+      req.body?.alasanPerubahanJudul ?? "",
+    ).trim();
+    const hasTitleProposal = judulUsulan.length > 0;
     const safeFileOutlineName = String(fileOutlineName ?? "").trim();
     if (!fileOutline) {
       return res
@@ -1066,6 +835,18 @@ exports.submitMyOutline = async (req, res, next) => {
       return res
         .status(400)
         .json({ ok: false, message: "fileOutlineName is required" });
+    }
+    if (hasTitleProposal) {
+      const judulError = validateJudulUsulan(judulUsulan);
+      if (judulError) {
+        return res.status(400).json({ ok: false, message: judulError });
+      }
+      if (!alasanPerubahanJudul) {
+        return res.status(400).json({
+          ok: false,
+          message: "Alasan perubahan judul wajib diisi",
+        });
+      }
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -1143,9 +924,41 @@ exports.submitMyOutline = async (req, res, next) => {
         .json({ ok: false, message: "Consultation already accepted" });
     }
 
+    let judulLama = null;
+    if (hasTitleProposal) {
+      const [[outlineRow]] = await conn.query(
+        `SELECT judul FROM outline WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [outlineId],
+      );
+      judulLama = outlineRow?.judul ?? "";
+      if (judulUsulan === String(judulLama).trim()) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: "Judul usulan sama dengan judul saat ini",
+        });
+      }
+      const [pendingRows] = await conn.query(
+        `SELECT id FROM usulan_perubahan_judul
+         WHERE outline_id = ? AND status IN (?)
+         LIMIT 1`,
+        [outlineId, TITLE_CHANGE_PENDING_STATUSES],
+      );
+      if (pendingRows.length > 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message:
+            "Masih ada usulan perubahan judul yang menunggu keputusan pembimbing",
+        });
+      }
+    }
+
     const nextSubmissionNo = Number(activeStage.current_submission_no || 0) + 1;
 
-    await conn.query(
+    const [submissionIns] = await conn.query(
       `INSERT INTO konsultasi_outline_submission (
          konsultasi_outline_stage_id,
          submission_no,
@@ -1161,6 +974,33 @@ exports.submitMyOutline = async (req, res, next) => {
         req.user.id,
       ],
     );
+
+    let titleChangeId = null;
+    if (hasTitleProposal) {
+      const [titleIns] = await conn.query(
+        `INSERT INTO usulan_perubahan_judul (
+           outline_id,
+           konsultasi_outline_submission_id,
+           diajukan_pada_stage,
+           judul_lama,
+           judul_usulan,
+           alasan,
+           status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          outlineId,
+          submissionIns.insertId,
+          activeStage.stage,
+          judulLama,
+          judulUsulan,
+          alasanPerubahanJudul,
+          activeStage.stage === "PEMBIMBING_2"
+            ? "WAITING_PEMBIMBING_2"
+            : "WAITING_PEMBIMBING_1",
+        ],
+      );
+      titleChangeId = titleIns.insertId;
+    }
 
     await conn.query(
       `UPDATE konsultasi_outline_stage
@@ -1190,7 +1030,9 @@ exports.submitMyOutline = async (req, res, next) => {
         conn,
         pUserRows[0].id,
         "OUTLINE_CONSULTATION_SUBMITTED",
-        `Mahasiswa ${namaMahasiswa} mengumpulkan file outline untuk dikonsultasikan`,
+        hasTitleProposal
+          ? `Mahasiswa ${namaMahasiswa} mengumpulkan file outline beserta usulan perubahan judul`
+          : `Mahasiswa ${namaMahasiswa} mengumpulkan file outline untuk dikonsultasikan`,
         "/pembimbing/outline-consultations",
       );
     }
@@ -1205,6 +1047,7 @@ exports.submitMyOutline = async (req, res, next) => {
         stageId: activeStage.id,
         stage: activeStage.stage,
         submissionNo: nextSubmissionNo,
+        titleChangeId,
       },
     });
   } catch (err) {
@@ -1351,16 +1194,16 @@ exports.getReviewFile = async (req, res, next) => {
       isAuthorized = Boolean(npm) && npm === file.npm;
     } else if (req.user.userType === "LECTURER") {
       const nidn = await getLecturerNidn(req.user.id);
-      if (nidn) {
-        isAuthorized =
-          nidn === file.pembimbing1_nidn || nidn === file.pembimbing2_nidn;
-        if (!isAuthorized && hasRole(req, "KAPRODI")) {
-          const kaprodiProgramStudiIds =
-            await getKaprodiProgramStudiIdsByNidn(nidn);
-          isAuthorized = kaprodiProgramStudiIds.includes(
-            Number(file.program_studi_id),
-          );
-        }
+      isAuthorized =
+        Boolean(nidn) &&
+        (nidn === file.pembimbing1_nidn || nidn === file.pembimbing2_nidn);
+      if (!isAuthorized && hasRole(req, "KAPRODI")) {
+        const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(
+          await getStaffUsrId(req.user.id),
+        );
+        isAuthorized = kaprodiProgramStudiIds.includes(
+          Number(file.program_studi_id),
+        );
       }
     }
 
@@ -1403,18 +1246,18 @@ exports.getMyFinalKartuFile = async (req, res, next) => {
       isAuthorized = Boolean(npm) && npm === kartu.npm;
     } else {
       const nidn = await getLecturerNidn(req.user.id);
-      if (nidn) {
-        const isAssignedPembimbing =
-          nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn;
-        if (isAssignedPembimbing) {
-          isAuthorized = true;
-        } else if (hasRole(req, "KAPRODI")) {
-          const kaprodiProgramStudiIds =
-            await getKaprodiProgramStudiIdsByNidn(nidn);
-          isAuthorized = kaprodiProgramStudiIds.includes(
-            Number(kartu.program_studi_id),
-          );
-        }
+      const isAssignedPembimbing =
+        Boolean(nidn) &&
+        (nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn);
+      if (isAssignedPembimbing) {
+        isAuthorized = true;
+      } else if (hasRole(req, "KAPRODI")) {
+        const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(
+          await getStaffUsrId(req.user.id),
+        );
+        isAuthorized = kaprodiProgramStudiIds.includes(
+          Number(kartu.program_studi_id),
+        );
       }
     }
 
@@ -1490,11 +1333,6 @@ exports.previewKartuDocx = async (req, res, next) => {
     const outputBuffer = await generateKartuKonsultasiOutlineFTI(
       dataKartuKonsultasiOutlineFTI,
     );
-
-    // const outputBuffer = await buildKartuKonsultasiOutlineDocxBuffer(
-    //   kartu,
-    //   logs,
-    // );
 
     const fileName = buildKartuPreviewFileName(kartu.npm, kartu.nama_mahasiswa);
 
@@ -1919,12 +1757,12 @@ exports.listForKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Only kaprodi can access this endpoint" });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)
@@ -2079,12 +1917,12 @@ exports.getDetailForKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    if (!nidn) {
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    const programStudiIds = await getKaprodiProgramStudiIdsByNidn(nidn);
+    const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
     if (programStudiIds.length === 0) {
       return res
         .status(403)
@@ -2103,24 +1941,16 @@ exports.getDetailForKaprodi = async (req, res, next) => {
          o.judul             AS judul_skripsi,
          d1.nama             AS pembimbing1_nama,
          d2.nama             AS pembimbing2_nama,
-         pu1.signature_image AS pembimbing1_signature,
-         pu2.signature_image AS pembimbing2_signature
+         sd1.dsnTtd AS pembimbing1_signature,
+         sd2.dsnTtd AS pembimbing2_signature
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
        JOIN mahasiswa m ON m.npm = o.npm
        JOIN program_studi ps ON ps.id = o.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-       LEFT JOIN users pu1 ON pu1.nidn = o.pembimbing1_nidn
-         AND EXISTS (
-           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-           WHERE ur.user_id = pu1.id AND r.code = 'PEMBIMBING'
-         )
-       LEFT JOIN users pu2 ON pu2.nidn = o.pembimbing2_nidn
-         AND EXISTS (
-           SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-           WHERE ur.user_id = pu2.id AND r.code = 'PEMBIMBING'
-         )
+       LEFT JOIN widya_miko.m_dosen sd1 ON sd1.dsnId = o.pembimbing1_nidn
+       LEFT JOIN widya_miko.m_dosen sd2 ON sd2.dsnId = o.pembimbing2_nidn
        WHERE k.outline_id = ?
          AND o.program_studi_id IN (?)
        LIMIT 1`,
@@ -2310,9 +2140,24 @@ exports.getLecturerStageDetail = async (req, res, next) => {
 
     const kartuLogs = await getKartuLogs(db, row.kartu_id);
 
+    const titleChanges = await getTitleChangesByOutlineId(
+      db,
+      row.kartu_outline_id,
+    );
+    const awaitingStatus =
+      row.stage_name === "PEMBIMBING_2"
+        ? "WAITING_PEMBIMBING_2"
+        : "WAITING_PEMBIMBING_1";
+    const pendingTitleChange =
+      row.stage_pembimbing_nidn === nidn
+        ? (titleChanges.find((t) => t.status === awaitingStatus) ?? null)
+        : null;
+
     return res.json({
       ok: true,
       data: {
+        pendingTitleChange,
+        titleChanges,
         stage: {
           id: row.stage_id,
           kartuKonsultasiOutlineId: row.stage_kartu_konsultasi_outline_id,
@@ -2369,7 +2214,26 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       reviewFile,
       reviewFileName,
       reviewFileMimeType,
+      titleDecision,
+      titleCatatan,
+      titleAlasanPenolakan,
     } = req.body || {};
+    const hasTitleDecision =
+      titleDecision !== undefined && titleDecision !== null && titleDecision !== "";
+    if (hasTitleDecision && !["APPROVE", "REJECT"].includes(titleDecision)) {
+      return res.status(400).json({
+        ok: false,
+        message: "titleDecision must be APPROVE or REJECT",
+      });
+    }
+    const safeTitleCatatan = String(titleCatatan ?? "").trim() || null;
+    const safeTitleAlasanPenolakan = String(titleAlasanPenolakan ?? "").trim();
+    if (titleDecision === "REJECT" && !safeTitleAlasanPenolakan) {
+      return res.status(400).json({
+        ok: false,
+        message: "Alasan penolakan usulan judul wajib diisi",
+      });
+    }
     if (!decisionStatus || !String(catatanKartu || "").trim()) {
       return res.status(400).json({
         ok: false,
@@ -2438,8 +2302,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
     if (shouldRequireSignature) {
       const [[sigRow]] = await conn.query(
-        `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-        [req.user.id],
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
+        [stage.pembimbing_nidn],
       );
       if (!sigRow?.signature_image) {
         await conn.rollback();
@@ -2483,6 +2350,94 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res
         .status(409)
         .json({ ok: false, message: "Submission already reviewed" });
+    }
+
+    // A pending title proposal waiting on this stage must be decided in the
+    // same review, so consultation can never finish with a title in limbo.
+    const [[outlineRefRow]] = await conn.query(
+      `SELECT outline_id FROM kartu_konsultasi_outline WHERE id = ? LIMIT 1`,
+      [stage.kartu_id],
+    );
+    const stageOutlineId = outlineRefRow?.outline_id ?? null;
+    const [pendingTitleRows] = await conn.query(
+      `SELECT *
+       FROM usulan_perubahan_judul
+       WHERE outline_id = ? AND status = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [
+        stageOutlineId,
+        stage.stage === "PEMBIMBING_2"
+          ? "WAITING_PEMBIMBING_2"
+          : "WAITING_PEMBIMBING_1",
+      ],
+    );
+    const pendingTitle = pendingTitleRows[0] ?? null;
+    if (pendingTitle && !hasTitleDecision) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "Keputusan usulan perubahan judul wajib diisi",
+      });
+    }
+    if (!pendingTitle && hasTitleDecision) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Tidak ada usulan perubahan judul yang menunggu keputusan Anda",
+      });
+    }
+
+    let titleStatusAfter = null;
+    if (pendingTitle) {
+      const prefix =
+        stage.stage === "PEMBIMBING_2" ? "pembimbing2" : "pembimbing1";
+      if (titleDecision === "REJECT") {
+        titleStatusAfter = "REJECTED";
+      } else if (stage.stage === "PEMBIMBING_2") {
+        titleStatusAfter = "WAITING_PEMBIMBING_1";
+      } else {
+        titleStatusAfter = "APPROVED";
+      }
+
+      if (titleStatusAfter === "APPROVED") {
+        const [[outlineRow]] = await conn.query(
+          `SELECT judul FROM outline WHERE id = ? LIMIT 1 FOR UPDATE`,
+          [stageOutlineId],
+        );
+        if (outlineRow?.judul !== pendingTitle.judul_lama) {
+          await conn.rollback();
+          txStarted = false;
+          return res.status(409).json({
+            ok: false,
+            message:
+              "Judul outline telah berubah sejak usulan dibuat; usulan ini tidak dapat disetujui",
+          });
+        }
+        await conn.query(`UPDATE outline SET judul = ? WHERE id = ?`, [
+          pendingTitle.judul_usulan,
+          stageOutlineId,
+        ]);
+      }
+
+      await conn.query(
+        `UPDATE usulan_perubahan_judul
+         SET status = ?,
+             ${prefix}_user_id = ?,
+             ${prefix}_keputusan_at = CURRENT_TIMESTAMP,
+             ${prefix}_catatan = ?,
+             alasan_penolakan = ?
+         WHERE id = ?`,
+        [
+          titleStatusAfter,
+          req.user.id,
+          safeTitleCatatan,
+          titleDecision === "REJECT" ? safeTitleAlasanPenolakan : null,
+          pendingTitle.id,
+        ],
+      );
     }
 
     const [reviewIns] = await conn.query(
@@ -2622,6 +2577,23 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       const studentUserId = studentUserRow?.id ?? null;
       const namaMahasiswaForNotif = studentUserRow?.nama ?? kartuInfo.npm;
 
+      if (titleStatusAfter && studentUserId) {
+        const titleMessages = {
+          WAITING_PEMBIMBING_1:
+            "Usulan perubahan judul Anda disetujui Pembimbing 2 dan akan diputuskan oleh Pembimbing 1",
+          APPROVED:
+            "Usulan perubahan judul Anda disetujui; judul outline telah diperbarui",
+          REJECTED: `Usulan perubahan judul Anda ditolak oleh ${stage.stage === "PEMBIMBING_2" ? "Pembimbing 2" : "Pembimbing 1"}`,
+        };
+        await insertNotification(
+          conn,
+          studentUserId,
+          `OUTLINE_TITLE_CHANGE_${titleStatusAfter === "WAITING_PEMBIMBING_1" ? "CONTINUE" : titleStatusAfter}`,
+          titleMessages[titleStatusAfter],
+          "/student/outline-consultations",
+        );
+      }
+
       if (decisionStatus === "NEED_REVISION" && studentUserId) {
         await insertNotification(
           conn,
@@ -2702,6 +2674,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         hasReviewFile,
         finalFile: autoFinalizedFile,
         skPenelitian: autoSkResult,
+        titleChangeStatus: titleStatusAfter,
       },
     });
   } catch (err) {

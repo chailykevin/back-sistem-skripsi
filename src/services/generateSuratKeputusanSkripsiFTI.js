@@ -1,21 +1,15 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { imageToDataUrl, renderSignature } = require("./shared/images.js");
+const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(__dirname, "../templates/surat-keputusan-skripsi-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/surat-keputusan-skripsi-fti/template.css");
-const projectRootUrl = path.join(__dirname, "../");
-const mimeTypes = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-};
 
 async function renderTemplate(template, data) {
   const [logoUWDP, signatureDekan] = await Promise.all([
     imageToDataUrl("assets/logo-UWDP.png"),
-    renderSignature(data.dekan.signatureBase64),
+    renderNormalizedSignature(data.dekan.signatureBase64),
   ]);
   const values = {
     "{{nomorSurat}}": data.nomorSurat,

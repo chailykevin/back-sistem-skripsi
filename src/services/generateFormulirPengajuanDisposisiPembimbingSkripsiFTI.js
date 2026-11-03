@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { renderSignature } = require("./shared/images.js");
+const { renderNormalizedSignature } = require("./shared/images.js");
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
 const templatePath = path.join(
@@ -18,11 +18,6 @@ function renderCheckbox(label, checked) {
 function renderRequirements(requirements) {
   const items = [
     ["Salinan transkrip nilai", requirements.salinanTranskripNilai],
-    ["Kartu Rencana Studi (KRS)", requirements.kartuRencanaStudi],
-    [
-      "Lulus mata kuliah Metodologi Penelitian dengan nilai minimal C",
-      requirements.lulusMetodologiPenelitian,
-    ],
   ];
   return items
     .map(
@@ -38,8 +33,11 @@ async function renderTemplate(template, data) {
     throw new Error('Keputusan must be either "Diterima" or "Ditolak".');
   }
   const [signaturePemohon, signatureKetuaProgramStudi] = await Promise.all([
-    renderSignature(pengajuan.signatureBase64, "Tanda tangan pemohon"),
-    renderSignature(
+    renderNormalizedSignature(
+      pengajuan.signatureBase64,
+      "Tanda tangan pemohon",
+    ),
+    renderNormalizedSignature(
       disposisi.signatureBase64,
       "Tanda tangan ketua program studi",
     ),
@@ -55,6 +53,7 @@ async function renderTemplate(template, data) {
     "{{dosenPembimbingKedua}}": mahasiswa.dosenPembimbingKedua,
     "{{perluSuratPengantar}}": `<span class="checkbox-group">${renderCheckbox("Ya", pengajuan.perluSuratPengantar.ya)}${renderCheckbox("Tidak", pengajuan.perluSuratPengantar.tidak)}</span>`,
     "{{namaPerusahaan}}": pengajuan.namaPerusahaan,
+    "{{alamatPerusahaan}}": pengajuan.alamatPerusahaan,
     "{{tanggalPengajuan}}": pengajuan.tanggal,
     "{{namaPemohon}}": pengajuan.namaPemohon,
     "{{programStudiDisposisi}}": disposisi.programStudi.toUpperCase(),
@@ -99,7 +98,7 @@ async function generateFormulirPengajuanDisposisiPembimbingSkripsiFTI(data) {
       const root = document.documentElement;
       const pageHeight = (296 / 25.4) * 96;
       const minimumHeight = (5 / 25.4) * 96;
-      const maximumHeight = (50 / 25.4) * 96;
+      const maximumHeight = (12 / 25.4) * 96;
       const fits = (height) => {
         root.style.setProperty("--signature-height", `${height}px`);
         return form.getBoundingClientRect().height <= pageHeight + 1;

@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { escapeHtml } = require("./shared/html.js");
-const { renderSignature: signature } = require("./shared/images.js");
+const { renderNormalizedSignature: signature } = require("./shared/images.js");
 const { renderPdf } = require("./shared/pdf.js");
 const templatePath = path.join(__dirname, "../templates/halaman-pengesahan-majelis-penguji-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/halaman-pengesahan-majelis-penguji-fti/template.css");

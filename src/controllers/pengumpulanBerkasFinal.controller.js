@@ -2,37 +2,14 @@
 
 const db = require("../db");
 const path = require("path");
-const { readFile } = require("fs/promises");
-const { patchDocument, PatchType, TextRun, ImageRun } = require("docx");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const {
   generateSuratKeteranganPenyerahanSkripsiFTI,
 } = require("../services/generateSuratKeteranganPenyerahanSkripsiFTI");
-
-const BULAN_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
-
-const RECIPIENT_ROLES = [
-  "PERPUSTAKAAN",
-  "LPPM",
-  "PEMBIMBING_1",
-  "PEMBIMBING_2",
-  "PENGUJI_1",
-  "PENGUJI_2",
-];
+const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { assertSignatures } = require("../utils/signature");
+const { formatTanggal } = require("../utils/dates");
 
 function recipientLink(role, skripsiId) {
   switch (role) {
@@ -53,92 +30,24 @@ function recipientLink(role, skripsiId) {
   }
 }
 
-function formatTanggal(date) {
-  const d = new Date(date);
-  return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-function textPatch(value) {
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [new TextRun(String(value ?? ""))],
-  };
-}
-
-function decodeSignatureToBuffer(signatureValue) {
-  if (!signatureValue) return null;
-  const base64 = signatureValue.includes(",")
-    ? signatureValue.split(",")[1]
-    : signatureValue;
-  try {
-    return Buffer.from(base64, "base64");
-  } catch {
-    return null;
-  }
-}
-
-function signaturePatch(signatureValue) {
-  const buf = decodeSignatureToBuffer(signatureValue);
-  if (!buf) return textPatch("");
-  return {
-    type: PatchType.PARAGRAPH,
-    children: [
-      new ImageRun({ data: buf, transformation: { width: 100, height: 50 } }),
-    ],
-  };
-}
-
-function hasSignature(signatureValue) {
-  return Boolean(decodeSignatureToBuffer(signatureValue));
-}
-
-function assertSignatures(checks) {
-  const missing = checks
-    .filter((c) => !hasSignature(c.signatureImage))
-    .map((c) => ({ role: c.role, nama: c.nama ?? "" }));
-  if (missing.length > 0) {
-    const detail = missing
-      .map((m) => `${m.role}${m.nama ? ` (${m.nama})` : ""}`)
-      .join(", ");
-    const err = new Error(
-      `Dokumen belum dapat dibuat karena tanda tangan berikut belum tersimpan: ${detail}. Mohon hubungi admin agar pihak terkait mengunggah tanda tangan terlebih dahulu.`,
-    );
-    err.statusCode = 400;
-    err.missingSignatures = missing;
-    throw err;
-  }
-}
-
-async function getStudentNpm(userId) {
-  const [rows] = await db.query(
-    `SELECT npm FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.npm ?? null;
-}
-
-async function getLecturerNidn(userId) {
-  const [rows] = await db.query(
-    `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return rows[0]?.nidn ?? null;
-}
-
-async function getSigByUserId(conn, userId) {
-  if (!userId) return null;
-  const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  return row?.signature_image ?? null;
-}
-
 async function getSigByNpm(conn, npm) {
   if (!npm) return null;
   const [[row]] = await conn.query(
     `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
     [npm],
+  );
+  return row?.signature_image ?? null;
+}
+
+async function getSigByDosenUserId(conn, userId) {
+  if (!userId) return null;
+  const [[row]] = await conn.query(
+    `SELECT sd.dsnTtd AS signature_image
+     FROM users u
+     JOIN widya_miko.m_dosen sd ON sd.dsnId = u.nidn
+     WHERE u.id = ?
+     LIMIT 1`,
+    [userId],
   );
   return row?.signature_image ?? null;
 }
@@ -155,7 +64,7 @@ async function getSigByRole(conn, role, userIdForRole) {
 async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+    `SELECT id FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
     [nidn],
   );
   return row?.id ?? null;
@@ -182,29 +91,6 @@ async function getUserIdByRole(conn, role) {
   return row?.id ?? null;
 }
 
-async function getPengajuanDisposisiPembimbingRecord(conn, skripsiId) {
-  const [[row]] = await conn.query(
-    `SELECT sk.npm, sk.status as skripsi_status,
-            s.id as sidang_id,
-            sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-            psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-            m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi,
-            prog.id AS program_studi_id, prog.nama AS program_studi_nama,
-            rps.id as revisi_id, rps.is_completed as revisi_completed
-     FROM skripsi sk
-     JOIN mahasiswa m ON m.npm = sk.npm
-     LEFT JOIN sidang s ON s.skripsi_id = sk.id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = sk.id)
-     LEFT JOIN pengajuan_sidang_kaprodi psk_k
-            ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-     LEFT JOIN program_studi prog ON prog.id = sk.program_studi_id
-     LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
-     WHERE sk.id = ?
-     LIMIT 1`,
-    [skripsiId],
-  );
-  return row ?? null;
-}
-
 async function generateSuratDoc(
   conn,
   pengumpulan,
@@ -226,7 +112,7 @@ async function generateSuratDoc(
   const mhs = mhsRow[0] ?? {};
 
   const [[psRow]] = await conn.query(
-    `SELECT ps.nama as prodi_nama, ps.sekprodi_nidn
+    `SELECT ps.nama as prodi_nama
      FROM program_studi ps
      JOIN skripsi sk ON sk.program_studi_id = ps.id AND sk.id = ?
      LIMIT 1`,
@@ -252,10 +138,10 @@ async function generateSuratDoc(
 
   const [sigMhs, sigPb1, sigPb2, sigPg1, sigPg2] = await Promise.all([
     getSigByNpm(conn, pengumpulan.npm),
-    getSigByUserId(conn, confMap["PEMBIMBING_1"]?.user_id ?? null),
-    getSigByUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
-    getSigByUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
-    getSigByUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PEMBIMBING_1"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
+    getSigByDosenUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
   ]);
 
   async function getDosenNamaByUserId(userId) {
@@ -297,41 +183,6 @@ async function generateSuratDoc(
   ]);
 
   const tanggalDibuat = formatTanggal(new Date());
-
-  // DOCX generator (legacy)
-  // const templatePath = path.join(
-  //   __dirname,
-  //   "../templates/template_surat_keterangan_penyerahan_skripsi.docx",
-  // );
-  // const templateBuffer = await readFile(templatePath);
-  // const outputBuffer = await patchDocument({
-  //   outputType: "nodebuffer",
-  //   data: templateBuffer,
-  //   patches: {
-  //     nama_mahasiswa: textPatch(mhs.nama ?? sidangRow?.nama_mahasiswa ?? ""),
-  //     npm: textPatch(pengumpulan.npm),
-  //     no_hp: textPatch(mhs.no_hp ?? ""),
-  //     prodi: textPatch(psRow?.prodi_nama ?? sidangRow?.program_studi_nama ?? ""),
-  //     judul_skripsi: textPatch(skripsiRow?.judul ?? sidangRow?.judul_skripsi ?? ""),
-  //     tanggal_terima_perpus: textPatch(confMap["PERPUSTAKAAN"]?.confirmed_at ? formatTanggal(confMap["PERPUSTAKAAN"].confirmed_at) : ""),
-  //     tanggal_terima_lppm: textPatch(confMap["LPPM"]?.confirmed_at ? formatTanggal(confMap["LPPM"].confirmed_at) : ""),
-  //     tanggal_terima_pembimbing1: textPatch(confMap["PEMBIMBING_1"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_1"].confirmed_at) : ""),
-  //     tanggal_terima_pembimbing2: textPatch(confMap["PEMBIMBING_2"]?.confirmed_at ? formatTanggal(confMap["PEMBIMBING_2"].confirmed_at) : ""),
-  //     tanggal_terima_penguji1: textPatch(confMap["PENGUJI_1"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_1"].confirmed_at) : ""),
-  //     tanggal_terima_penguji2: textPatch(confMap["PENGUJI_2"]?.confirmed_at ? formatTanggal(confMap["PENGUJI_2"].confirmed_at) : ""),
-  //     ttd_perpustakaan: signaturePatch(perpusSig),
-  //     ttd_lppm: signaturePatch(lppmSig),
-  //     ttd_pembimbing1: signaturePatch(sigPb1),
-  //     ttd_pembimbing2: signaturePatch(sigPb2),
-  //     ttd_penguji1: signaturePatch(sigPg1),
-  //     ttd_penguji2: signaturePatch(sigPg2),
-  //     ttd_mahasiswa: signaturePatch(sigMhs),
-  //     ttd_sekprodi: sekprodiSig ? signaturePatch(sekprodiSig) : textPatch(""),
-  //     nama_sekprodi: textPatch(namaSekprodi ?? ""),
-  //     tanggal_dibuat: textPatch(tanggalDibuat),
-  //   },
-  // });
-  // return outputBuffer;
 
   const confirmationData = (role, signatureBase64) => ({
     tanggal: confMap[role]?.confirmed_at
@@ -782,11 +633,14 @@ exports.confirmPengumpulan = async (req, res, next) => {
       // Notify SEKPRODI of this prodi
       if (pengumpulan.program_studi_id) {
         const [[psRow]] = await conn.query(
-          `SELECT sekprodi_nidn FROM program_studi WHERE id = ? LIMIT 1`,
+          `SELECT sekprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
           [pengumpulan.program_studi_id],
         );
-        if (psRow?.sekprodi_nidn) {
-          const sekprodiUserId = await resolveUserId(conn, psRow.sekprodi_nidn);
+        if (psRow?.sekprodi_staff_usr_id) {
+          const sekprodiUserId = await resolveUserId(
+            conn,
+            psRow.sekprodi_staff_usr_id,
+          );
           if (sekprodiUserId) {
             await insertNotification(
               conn,
@@ -892,50 +746,52 @@ exports.signPengumpulan = async (req, res, next) => {
 
     // Verify sekprodi belongs to this prodi
     const [[sekprodiUserRow]] = await conn.query(
-      `SELECT u.nidn FROM users u
+      `SELECT u.staff_usr_id FROM users u
        INNER JOIN user_roles ur ON ur.user_id = u.id
        INNER JOIN roles r ON r.id = ur.role_id
        WHERE u.id = ? AND r.code = 'SEKPRODI' AND ur.is_active = 1
        LIMIT 1`,
       [userId],
     );
-    if (!sekprodiUserRow) {
+    if (!sekprodiUserRow?.staff_usr_id) {
       await conn.rollback();
       txStarted = false;
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    if (pengumpulan.program_studi_id) {
-      const [[psRow]] = await conn.query(
-        `SELECT sekprodi_nidn FROM program_studi WHERE id = ? LIMIT 1`,
-        [pengumpulan.program_studi_id],
-      );
-      if (
-        psRow?.sekprodi_nidn &&
-        psRow.sekprodi_nidn !== sekprodiUserRow.nidn
-      ) {
-        await conn.rollback();
-        txStarted = false;
-        return res
-          .status(403)
-          .json({
-            ok: false,
-            message: "Anda bukan Sekretaris Prodi dari program studi ini",
-          });
-      }
+    // Sekprodi is always a staff account; a prodi with no Sekprodi assigned must refuse, not skip the check.
+    const [[psRow]] = await conn.query(
+      `SELECT sekprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
+      [pengumpulan.program_studi_id],
+    );
+    if (
+      !psRow?.sekprodi_staff_usr_id ||
+      psRow.sekprodi_staff_usr_id !== sekprodiUserRow.staff_usr_id
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(403)
+        .json({
+          ok: false,
+          message: "Anda bukan Sekretaris Prodi dari program studi ini",
+        });
     }
 
-    // Get sekprodi signature and nama
     const [[sekprodiSigRow]] = await conn.query(
-      `SELECT u.signature_image FROM users u WHERE u.id = ? LIMIT 1`,
-      [userId],
+      `SELECT d.dsnTtd AS signature_image
+       FROM widya_miko.c_useradm u
+       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
+       WHERE u.usrId = ?
+       LIMIT 1`,
+      [sekprodiUserRow.staff_usr_id],
     );
-    const [[dosRow]] = await conn.query(
-      `SELECT d.nama FROM dosen d WHERE d.nidn = ? LIMIT 1`,
-      [sekprodiUserRow.nidn],
+    const [[stafRow]] = await conn.query(
+      `SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`,
+      [sekprodiUserRow.staff_usr_id],
     );
     const sekprodiSig = sekprodiSigRow?.signature_image ?? null;
-    const namaSekprodi = dosRow?.nama ?? "";
+    const namaSekprodi = stafRow?.nama ?? "";
 
     // Regenerate document with sekprodi signature
     const allConfs = await conn.query(
@@ -1295,7 +1151,7 @@ exports.listForSekretariatProdi = async (req, res, next) => {
     const userId = Number(req.user.id);
 
     const [[sekprodiUserRow]] = await db.query(
-      `SELECT u.nidn FROM users u WHERE u.id = ? AND u.is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(u.nidn, u.staff_usr_id) AS nidn FROM users u WHERE u.id = ? AND u.is_active = 1 LIMIT 1`,
       [userId],
     );
     if (!sekprodiUserRow?.nidn) {
@@ -1303,7 +1159,7 @@ exports.listForSekretariatProdi = async (req, res, next) => {
     }
 
     const [[psRow]] = await db.query(
-      `SELECT id FROM program_studi WHERE sekprodi_nidn = ? LIMIT 1`,
+      `SELECT id FROM program_studi WHERE COALESCE(sekprodi_nidn, sekprodi_staff_usr_id) = ? LIMIT 1`,
       [sekprodiUserRow.nidn],
     );
     if (!psRow) {
@@ -1351,16 +1207,6 @@ exports.listForSekretariatProdi = async (req, res, next) => {
   }
 };
 
-async function getKaprodiProgramStudiIdsByNidn(nidn) {
-  const [rows] = await db.query(
-    `SELECT id FROM program_studi WHERE kaprodi_nidn = ?`,
-    [nidn],
-  );
-  return rows
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-}
-
 const VALID_PENGUMPULAN_STATUSES = [
   "DRAFT",
   "SUBMITTED",
@@ -1384,9 +1230,9 @@ exports.getKaprodiPengumpulan = async (req, res, next) => {
       });
     }
 
-    const nidn = await getLecturerNidn(req.user.id);
-    const programStudiIds = nidn
-      ? await getKaprodiProgramStudiIdsByNidn(nidn)
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    const programStudiIds = staffUsrId
+      ? await getKaprodiProgramStudiIds(staffUsrId)
       : [];
     if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });

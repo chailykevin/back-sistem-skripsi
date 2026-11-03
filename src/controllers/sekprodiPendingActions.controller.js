@@ -9,7 +9,7 @@ exports.getPendingActions = async (req, res, next) => {
     }
 
     const [[userRow]] = await db.query(
-      `SELECT nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
       [req.user.id],
     );
     const nidn = userRow?.nidn ?? null;
@@ -24,7 +24,7 @@ exports.getPendingActions = async (req, res, next) => {
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
        JOIN program_studi ps ON ps.id = sk.program_studi_id
-       WHERE ps.sekprodi_nidn = ? AND pbf.status = 'WAITING_SIGNATURE'`,
+       WHERE COALESCE(ps.sekprodi_nidn, ps.sekprodi_staff_usr_id) = ? AND pbf.status = 'WAITING_SIGNATURE'`,
       [nidn],
     );
 

@@ -1,5 +1,127 @@
 const db = require("../db");
 
+const SIMIKO_STAFF_SIGNATURE_ROLES = new Set([
+  "KAPRODI",
+  "SEKPRODI",
+  "SEKRETARIAT_PRODI",
+  "DEKAN",
+]);
+
+const SIMIKO_LECTURER_SIGNATURE_ROLES = new Set(["LECTURER", "PEMBIMBING"]);
+
+function hasAnyRole(roles = [], wantedRoles) {
+  return roles.some((role) => wantedRoles.has(role));
+}
+
+async function getSignatureProfile(userId, roles = []) {
+  const [[user]] = await db.query(
+    `SELECT nidn, staff_usr_id, signature_image
+     FROM users
+     WHERE id = ? AND is_active = 1
+     LIMIT 1`,
+    [userId],
+  );
+
+  if (!user) return null;
+
+  const usesStaffSimikoSource = hasAnyRole(
+    roles,
+    SIMIKO_STAFF_SIGNATURE_ROLES,
+  );
+  const usesLecturerSimikoSource = hasAnyRole(
+    roles,
+    SIMIKO_LECTURER_SIGNATURE_ROLES,
+  );
+
+  if (!usesStaffSimikoSource && !usesLecturerSimikoSource) {
+    const signatureImage = user.signature_image ?? null;
+    return {
+      hasSignature: signatureImage !== null,
+      signatureImage,
+      source: "LOCAL",
+      canManage: true,
+      manageMessage: null,
+    };
+  }
+
+  if (usesStaffSimikoSource) {
+    const staffUserId = user.staff_usr_id ?? user.nidn;
+    if (!staffUserId) {
+      return {
+        hasSignature: false,
+        signatureImage: null,
+        source: "SIMIKO_PENDING",
+        canManage: false,
+        manageMessage:
+          "Tanda tangan akan dikelola melalui SIMIKO. Identitas SIMIKO akun ini belum tersedia.",
+      };
+    }
+    const [[staff]] = await db.query(
+      `SELECT d.dsnTtd
+       FROM widya_miko.c_useradm u
+       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
+       WHERE u.usrId = ?
+       LIMIT 1`,
+      [staffUserId],
+    );
+    const signatureImage = staff?.dsnTtd ?? null;
+    return {
+      hasSignature: signatureImage !== null,
+      signatureImage,
+      source: "SIMIKO",
+      canManage: false,
+      manageMessage: "Tanda tangan dikelola melalui SIMIKO.",
+    };
+  }
+
+  if (user.nidn) {
+    const [[dosen]] = await db.query(
+      `SELECT dsnTtd
+       FROM widya_miko.m_dosen
+       WHERE dsnId = ?
+       LIMIT 1`,
+      [user.nidn],
+    );
+    const signatureImage = dosen?.dsnTtd ?? null;
+    return {
+      hasSignature: signatureImage !== null,
+      signatureImage,
+      source: "SIMIKO",
+      canManage: false,
+      manageMessage: "Tanda tangan dikelola melalui SIMIKO.",
+    };
+  }
+
+  return {
+    hasSignature: false,
+    signatureImage: null,
+    source: "SIMIKO_PENDING",
+    canManage: false,
+    manageMessage:
+      "Tanda tangan akan dikelola melalui SIMIKO. Sumber preview untuk akun ini sedang disiapkan.",
+  };
+}
+
+async function rejectLocalSignatureManagement(req, res) {
+  const profile = await getSignatureProfile(req.user.id, req.user.roles);
+  if (!profile) {
+    res.status(404).json({ ok: false, message: "User not found" });
+    return true;
+  }
+  if (!profile.canManage) {
+    res.status(403).json({
+      ok: false,
+      message: profile.manageMessage,
+      data: {
+        source: profile.source,
+        canManage: profile.canManage,
+      },
+    });
+    return true;
+  }
+  return false;
+}
+
 function decodeSignatureToBuffer(signatureValue) {
   if (signatureValue === undefined || signatureValue === null) return null;
 
@@ -31,14 +153,13 @@ function decodeSignatureToBuffer(signatureValue) {
 
 exports.getMySignature = async (req, res, next) => {
   try {
-    const [rows] = await db.query(
-      `SELECT signature_image FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
-    );
-    const signatureImage = rows[0]?.signature_image ?? null;
+    const profile = await getSignatureProfile(req.user.id, req.user.roles);
+    if (!profile) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
     return res.json({
       ok: true,
-      data: { hasSignature: signatureImage !== null, signatureImage },
+      data: profile,
     });
   } catch (err) {
     next(err);
@@ -47,6 +168,8 @@ exports.getMySignature = async (req, res, next) => {
 
 exports.upsertMySignature = async (req, res, next) => {
   try {
+    if (await rejectLocalSignatureManagement(req, res)) return;
+
     const signatureImage = req.body?.signatureImage;
     if (!signatureImage || !String(signatureImage).trim()) {
       return res
@@ -74,6 +197,8 @@ exports.upsertMySignature = async (req, res, next) => {
 
 exports.deleteMySignature = async (req, res, next) => {
   try {
+    if (await rejectLocalSignatureManagement(req, res)) return;
+
     await db.query(
       `UPDATE users SET signature_image = NULL WHERE id = ?`,
       [req.user.id],
