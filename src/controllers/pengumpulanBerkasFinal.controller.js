@@ -103,7 +103,7 @@ async function generateSuratDoc(
   const [mhsRow] = await conn.query(
     `SELECT m.nama, m.npm, psk.no_hp
      FROM mahasiswa m
-     LEFT JOIN pengajuan_sidang ps_ref ON ps_ref.skripsi_id = ? AND ps_ref.status = 'COMPLETED'
+     LEFT JOIN pengajuan_sidang ps_ref ON ps_ref.skripsi_id = ? AND ps_ref.jenis = 'SKRIPSI' AND ps_ref.status = 'COMPLETED'
      LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps_ref.id
      WHERE m.npm = ?
      LIMIT 1`,
@@ -254,7 +254,7 @@ exports.initPengumpulan = async (req, res, next) => {
       `SELECT rps.id, rps.is_completed
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+       WHERE s.skripsi_id = ? AND s.jenis = 'SKRIPSI' ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisiRow || !revisiRow.is_completed) {
@@ -267,7 +267,7 @@ exports.initPengumpulan = async (req, res, next) => {
 
     // Prerequisite: latest sidang must be LULUS
     const [[latestSidang]] = await conn.query(
-      `SELECT hasil_sidang FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT hasil_sidang FROM sidang WHERE skripsi_id = ? AND jenis = 'SKRIPSI' ORDER BY id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!latestSidang || latestSidang.hasil_sidang !== "LULUS") {
@@ -350,7 +350,7 @@ exports.submitPengumpulan = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        WHERE pbf.skripsi_id = ? AND sk.npm = ?
@@ -497,7 +497,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
               sk.program_studi_id
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        WHERE pbf.skripsi_id = ?
@@ -600,7 +600,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
          FROM sidang s
          JOIN skripsi sk ON sk.id = s.skripsi_id
          JOIN mahasiswa m ON m.npm = sk.npm
-         WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+         WHERE s.skripsi_id = ? AND s.jenis = 'SKRIPSI' ORDER BY s.id DESC LIMIT 1`,
         [skripsiId],
       );
       const sidangRow = sidangRows[0][0] ?? null;
@@ -720,7 +720,7 @@ exports.signPengumpulan = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        WHERE pbf.skripsi_id = ?
@@ -803,7 +803,7 @@ exports.signPengumpulan = async (req, res, next) => {
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
+       WHERE s.skripsi_id = ? AND s.jenis = 'SKRIPSI' ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     const sidangRow = sidangRows[0][0] ?? null;
@@ -887,7 +887,7 @@ exports.getPengumpulan = async (req, res, next) => {
        LEFT JOIN program_studi prog ON prog.id = sk.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen dp1 ON dp1.nidn = psk_k.penguji1_nidn
@@ -1019,7 +1019,7 @@ exports.getFile = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        WHERE pbf.skripsi_id = ?
@@ -1098,7 +1098,7 @@ exports.listForLecturer = async (req, res, next) => {
               conf.confirmed_at as caller_confirmed_at
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN mahasiswa m ON m.npm = sk.npm
@@ -1171,7 +1171,7 @@ exports.listForSekretariatProdi = async (req, res, next) => {
                WHERE c.pengumpulan_id = pbf.id AND c.confirmed_at IS NOT NULL) as confirmed_count
        FROM pengumpulan_berkas_final pbf
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+       INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN mahasiswa m ON m.npm = sk.npm
        WHERE sk.program_studi_id = ?
        ORDER BY pbf.created_at DESC`,

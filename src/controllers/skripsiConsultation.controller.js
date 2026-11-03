@@ -1060,7 +1060,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         const kartuSkripsiId = kartuSkripsiRow?.skripsi_id;
         let [[existingSidang]] = await conn.query(
           `SELECT id FROM pengajuan_sidang
-           WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+           WHERE skripsi_id = ? AND jenis = 'SKRIPSI' AND status NOT IN ('COMPLETED','REJECTED')
            ORDER BY id DESC LIMIT 1`,
           [kartuSkripsiId],
         );
@@ -1068,7 +1068,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         if (!autoSidangId) {
           const openPeriod = await getSidangOpenPeriod();
           const [sidangIns] = await conn.query(
-            `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', 1, ?)`,
+            `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'SKRIPSI', 'DRAFT', 1, ?)`,
             [kartuSkripsiId, openPeriod?.id ?? null],
           );
           autoSidangId = sidangIns.insertId;

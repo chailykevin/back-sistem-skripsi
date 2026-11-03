@@ -708,7 +708,7 @@ async function getRecap(programStudiIds, term) {
      FROM pengumpulan_berkas_final pbf
      JOIN skripsi s ON s.id = pbf.skripsi_id
      LEFT JOIN sidang sd ON sd.id = (
-       SELECT MAX(sd2.id) FROM sidang sd2 WHERE sd2.skripsi_id = pbf.skripsi_id AND sd2.hasil_sidang = 'LULUS'
+       SELECT MAX(sd2.id) FROM sidang sd2 WHERE sd2.skripsi_id = pbf.skripsi_id AND sd2.jenis = 'SKRIPSI' AND sd2.hasil_sidang = 'LULUS'
      )
      LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
      LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id

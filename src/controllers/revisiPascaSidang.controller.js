@@ -21,6 +21,10 @@ const {
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
+const {
+  resolveJenis,
+  countSidang,
+} = require("../services/sidangScope.service");
 
 const STAGE_ORDER = ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"];
 
@@ -257,6 +261,7 @@ exports.initRevisi = async (req, res, next) => {
       });
     }
 
+    const jenis = await resolveJenis(db, skripsiId);
     const [[sidang]] = await db.query(
       `SELECT s.id, s.status, s.hasil_sidang, s.pengajuan_sidang_id,
               m.npm,
@@ -266,9 +271,9 @@ exports.initRevisi = async (req, res, next) => {
        JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ?
+       WHERE s.skripsi_id = ? AND s.jenis = ?
        ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
+      [skripsiId, jenis],
     );
     if (!sidang) {
       return res
@@ -372,6 +377,7 @@ exports.submitRevisi = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "fileContent dan fileName wajib diisi" });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
@@ -393,8 +399,8 @@ exports.submitRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
+       WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
+      [skripsiId, jenis],
     );
     if (!revisi) {
       await conn.rollback();
@@ -539,6 +545,7 @@ exports.reviewRevisi = async (req, res, next) => {
         message: "reviewFileName is required when reviewFile is provided",
       });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
@@ -565,8 +572,8 @@ exports.reviewRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
+       WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
+      [skripsiId, jenis],
     );
     if (!revisi) {
       await conn.rollback();
@@ -852,14 +859,10 @@ exports.reviewRevisi = async (req, res, next) => {
         );
 
         if (revisi.hasil_sidang === "TIDAK_LULUS") {
-          const [[{ sidangCount }]] = await conn.query(
-            `SELECT COUNT(*) AS sidangCount FROM sidang WHERE skripsi_id = ?`,
-            [skripsiId],
-          );
-          const ujianKe = Number(sidangCount) + 1;
+          const ujianKe = (await countSidang(conn, skripsiId, jenis)) + 1;
           await conn.query(
-            `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke) VALUES (?, 'DRAFT', ?)`,
-            [skripsiId, ujianKe],
+            `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke) VALUES (?, ?, 'DRAFT', ?)`,
+            [skripsiId, jenis, ujianKe],
           );
         }
       }
@@ -891,6 +894,7 @@ exports.getRevisi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
+    const jenis = await resolveJenis(db, skripsiId);
     const [[revisi]] = await db.query(
       `SELECT rps.*,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
@@ -915,8 +919,8 @@ exports.getRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen dq1 ON dq1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen dq2 ON dq2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
+       WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
+      [skripsiId, jenis],
     );
     if (!revisi) {
       return res
@@ -1268,6 +1272,25 @@ function sendDocx(res, fileRow) {
   });
 }
 
+// The revisi file downloads share this lookup: identity and participant NIDNs for the access check.
+async function getRevisiForFileAccess(skripsiId) {
+  const jenis = await resolveJenis(db, skripsiId);
+  const [[revisi]] = await db.query(
+    `SELECT rps.id, m.npm, sk.program_studi_id,
+            sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+            psk_k.penguji1_nidn, psk_k.penguji2_nidn
+     FROM revisi_pasca_sidang rps
+     JOIN sidang s ON s.id = rps.sidang_id
+     JOIN skripsi sk ON sk.id = s.skripsi_id
+     JOIN mahasiswa m ON m.npm = sk.npm
+     LEFT JOIN pengajuan_sidang_kaprodi psk_k
+            ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+     WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
+    [skripsiId, jenis],
+  );
+  return revisi ?? null;
+}
+
 // GET /revisi-pasca-sidang/:skripsiId/files/submission
 exports.getSubmissionFile = async (req, res, next) => {
   try {
@@ -1276,19 +1299,7 @@ exports.getSubmissionFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const [[revisi]] = await db.query(
-      `SELECT rps.id, m.npm, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const revisi = await getRevisiForFileAccess(skripsiId);
     if (!revisi) {
       return res
         .status(404)
@@ -1385,19 +1396,7 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const [[revisi]] = await db.query(
-      `SELECT rps.id, m.npm, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const revisi = await getRevisiForFileAccess(skripsiId);
     if (!revisi) {
       return res
         .status(404)
@@ -1434,19 +1433,7 @@ exports.getHalamanDekanFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const [[revisi]] = await db.query(
-      `SELECT rps.id, m.npm, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const revisi = await getRevisiForFileAccess(skripsiId);
     if (!revisi) {
       return res
         .status(404)

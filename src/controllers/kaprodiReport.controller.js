@@ -1286,7 +1286,7 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
        INNER JOIN skripsi sk ON sk.id = pbf.skripsi_id
        INNER JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id
-              AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id)
+              AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = s.pengajuan_sidang_id
        WHERE sk.program_studi_id IN (${placeholders})
        ORDER BY sk.npm`,

@@ -8,6 +8,13 @@ const {
 const {
   attachSidangSystemFiles,
 } = require("../services/pengajuanSidangSystemFiles.service");
+const {
+  resolveJenis,
+  getLatestSidang,
+  countSidang,
+  getActivePengajuanSidang,
+  getEditablePengajuanSidang,
+} = require("../services/sidangScope.service");
 const dosenUjiSidangSkripsiProdiService = require("../services/dosenUjiSidangSkripsiProdi.service");
 const path = require("path");
 const {
@@ -217,18 +224,12 @@ const VALID_SIDANG_STATUSES = [
 ];
 const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
 
-// Returns the active (non-terminal) sidang or the most recent one
 async function getActiveSidang(conn, skripsiId) {
-  const [rows] = await conn.query(
-    `SELECT * FROM pengajuan_sidang
-     WHERE skripsi_id = ?
-     ORDER BY
-       CASE WHEN status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED') THEN 0 ELSE 1 END ASC,
-       created_at DESC
-     LIMIT 1`,
-    [skripsiId],
+  return getActivePengajuanSidang(
+    conn,
+    skripsiId,
+    await resolveJenis(conn, skripsiId),
   );
-  return rows[0] ?? null;
 }
 
 // These records hold KTM, pas foto, address and phone numbers, so reads are limited to
@@ -318,11 +319,10 @@ exports.initPengajuanSidang = async (req, res, next) => {
         .json({ ok: false, message: "Konsultasi skripsi belum selesai" });
     }
 
+    const jenis = await resolveJenis(conn, skripsiId);
+
     // Determine if this is an ujian ulang (re-exam) or original sidang
-    const [[latestSidang]] = await conn.query(
-      `SELECT id, hasil_sidang FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const latestSidang = await getLatestSidang(conn, skripsiId, jenis);
     const isUjianUlang = !!(
       latestSidang && latestSidang.hasil_sidang === "TIDAK_LULUS"
     );
@@ -341,8 +341,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
     } else {
       // Original flow: Kaprodi form must be VALID
       const [[latestSidangForKaprodi]] = await conn.query(
-        `SELECT id FROM pengajuan_sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1`,
-        [skripsiId],
+        `SELECT id FROM pengajuan_sidang WHERE skripsi_id = ? AND jenis = ? ORDER BY id DESC LIMIT 1`,
+        [skripsiId, jenis],
       );
       const [[kaprodiRow]] = latestSidangForKaprodi
         ? await conn.query(
@@ -362,12 +362,12 @@ exports.initPengajuanSidang = async (req, res, next) => {
     // so they must also prevent creating a new row.
     const [[activeRow]] = await conn.query(
       `SELECT id, status, submitted_at FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND jenis = ? AND status NOT IN ('COMPLETED','REJECTED')
        ORDER BY
          CASE WHEN status = 'DRAFT' AND submitted_at IS NULL THEN 0 ELSE 1 END ASC,
          created_at DESC
        LIMIT 1`,
-      [skripsiId],
+      [skripsiId, jenis],
     );
 
     await conn.beginTransaction();
@@ -395,12 +395,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
         });
       }
     } else {
-      // Count existing sidang rows to determine ujian_ke
-      const [[{ sidangCount }]] = await conn.query(
-        `SELECT COUNT(*) AS sidangCount FROM sidang WHERE skripsi_id = ?`,
-        [skripsiId],
-      );
-      const ujianKe = Number(sidangCount) + 1;
+      const ujianKe = (await countSidang(conn, skripsiId, jenis)) + 1;
 
       // Gate by period for original flow only (ujian ulang is exempt)
       let sidangPeriodId = null;
@@ -418,8 +413,8 @@ exports.initPengajuanSidang = async (req, res, next) => {
       }
 
       const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', ?, ?)`,
-        [skripsiId, ujianKe, sidangPeriodId],
+        `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', ?, ?)`,
+        [skripsiId, jenis, ujianKe, sidangPeriodId],
       );
       sidangId = ins.insertId;
       isNew = true;
@@ -784,16 +779,14 @@ exports.submitPengajuanSidang = async (req, res, next) => {
     if (!(await isSkripsiOwnedBy(conn, skripsiId, npm))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    const [[sidang]] = await conn.query(
-      `SELECT * FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
-       ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [skripsiId],
-    );
+    const sidang = await getEditablePengajuanSidang(conn, skripsiId, jenis, {
+      forUpdate: true,
+    });
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -954,16 +947,14 @@ exports.reviewFile = async (req, res, next) => {
         message: `status harus salah satu dari: ${VALID_FILE_STATUSES.join(", ")}`,
       });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    const [[sidang]] = await conn.query(
-      `SELECT * FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
-       ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [skripsiId],
-    );
+    const sidang = await getEditablePengajuanSidang(conn, skripsiId, jenis, {
+      forUpdate: true,
+    });
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -1050,16 +1041,14 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "catatanSekretariat wajib diisi" });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    const [[sidang]] = await conn.query(
-      `SELECT * FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
-       ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [skripsiId],
-    );
+    const sidang = await getEditablePengajuanSidang(conn, skripsiId, jenis, {
+      forUpdate: true,
+    });
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -1393,12 +1382,14 @@ exports.initKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Konsultasi skripsi belum selesai" });
     }
 
+    const jenis = await resolveJenis(conn, skripsiId);
+
     // Find the current active pengajuan_sidang for this student
     let [[activeSidang]] = await conn.query(
       `SELECT id, ujian_ke, status FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND status NOT IN ('COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND jenis = ? AND status NOT IN ('COMPLETED','REJECTED')
        ORDER BY id DESC LIMIT 1`,
-      [skripsiId],
+      [skripsiId, jenis],
     );
 
     // Check if a kaprodi row already exists for this specific pengajuan_sidang
@@ -1430,8 +1421,8 @@ exports.initKaprodi = async (req, res, next) => {
     // instead of creating a spurious new DRAFT pengajuan_sidang.
     if (!activeSidang) {
       const [[completedSidang]] = await conn.query(
-        `SELECT id FROM pengajuan_sidang WHERE skripsi_id = ? AND status = 'COMPLETED' ORDER BY id DESC LIMIT 1`,
-        [skripsiId],
+        `SELECT id FROM pengajuan_sidang WHERE skripsi_id = ? AND jenis = ? AND status = 'COMPLETED' ORDER BY id DESC LIMIT 1`,
+        [skripsiId, jenis],
       );
       if (completedSidang) {
         const [[existingKaprodi]] = await conn.query(
@@ -1468,8 +1459,8 @@ exports.initKaprodi = async (req, res, next) => {
     // Auto-create pengajuan_sidang DRAFT if missing (auto-init from konsultasi may have been skipped)
     if (!activeSidang) {
       const [sidangIns] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', 1, ?)`,
-        [skripsiId, openPeriod?.id ?? null],
+        `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', 1, ?)`,
+        [skripsiId, jenis, openPeriod?.id ?? null],
       );
       activeSidang = { id: sidangIns.insertId, ujian_ke: 1 };
     }
@@ -1480,17 +1471,7 @@ exports.initKaprodi = async (req, res, next) => {
     );
 
     if (!isUjianUlang) {
-      // Original flow: auto-create DRAFT pengajuan_sidang if needed and attach system files
-      let targetSidangId = activeSidang?.id;
-      if (!targetSidangId) {
-        const [sidangIns] = await conn.query(
-          `INSERT INTO pengajuan_sidang (skripsi_id, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'DRAFT', 1, ?)`,
-          [skripsiId, openPeriod?.id ?? null],
-        );
-        targetSidangId = sidangIns.insertId;
-      }
-
-      await attachSidangSystemFiles(conn, targetSidangId, skripsiId);
+      await attachSidangSystemFiles(conn, activeSidang.id, skripsiId);
     }
     // Ujian ulang: no system files; student has already uploaded BUKTI_PEMBAYARAN + BERKAS_SKRIPSI
 
@@ -1559,28 +1540,24 @@ exports.getKaprodi = async (req, res, next) => {
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
        LEFT JOIN pengajuan_sidang psd ON psd.skripsi_id = s.id
+         AND psd.jenis = ?
          AND psd.status NOT IN ('REJECTED')
        WHERE s.id = ?
        ORDER BY psd.id DESC LIMIT 1`,
-      [skripsiId],
+      [activeSidangForGet.jenis, skripsiId],
     );
 
     const tahunMasuk = autoData?.npm
       ? "20" + String(autoData.npm).substring(0, 2)
       : null;
 
-    const sidang = await getActiveSidang(db, skripsiId);
-    let files = [];
-    if (sidang) {
-      const [fileRows] = await db.query(
-        `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
-         FROM pengajuan_sidang_files
-         WHERE pengajuan_sidang_id = ? AND file_type IN (?)
-         ORDER BY file_type ASC`,
-        [sidang.id, KAPRODI_FILE_TYPES],
-      );
-      files = fileRows;
-    }
+    const [files] = await db.query(
+      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
+       FROM pengajuan_sidang_files
+       WHERE pengajuan_sidang_id = ? AND file_type IN (?)
+       ORDER BY file_type ASC`,
+      [activeSidangForGet.id, KAPRODI_FILE_TYPES],
+    );
 
     return res.json({
       ok: true,
@@ -2029,17 +2006,17 @@ exports.submitKaprodi = async (req, res, next) => {
     const mimeLembarPdf = "application/pdf";
 
     // Auto-create pengajuan_sidang DRAFT if none exists, then upsert the file
-    let [[existingSidang]] = await conn.query(
-      `SELECT id FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND status NOT IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
-       ORDER BY created_at DESC LIMIT 1`,
-      [skripsiId],
+    const jenis = activeSidangForSubmit.jenis;
+    let existingSidang = await getEditablePengajuanSidang(
+      conn,
+      skripsiId,
+      jenis,
     );
     if (!existingSidang) {
       const openPeriodForFallback = await getSidangOpenPeriod();
       const [ins] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, status, sidang_submission_period_id) VALUES (?, 'DRAFT', ?)`,
-        [skripsiId, openPeriodForFallback?.id ?? null],
+        `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', ?)`,
+        [skripsiId, jenis, openPeriodForFallback?.id ?? null],
       );
       existingSidang = { id: ins.insertId };
     }
@@ -3217,18 +3194,19 @@ exports.generateSuratUndangan = async (req, res, next) => {
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
     const [[sidang]] = await conn.query(
       `SELECT * FROM pengajuan_sidang
-       WHERE skripsi_id = ?
+       WHERE skripsi_id = ? AND jenis = ?
        ORDER BY
          CASE WHEN status = 'WAITING_FOR_SURAT' THEN 0 ELSE 1 END ASC,
          created_at DESC
        LIMIT 1 FOR UPDATE`,
-      [skripsiId],
+      [skripsiId, jenis],
     );
     if (!sidang) {
       await conn.rollback();
@@ -3337,11 +3315,12 @@ exports.generateSuratUndangan = async (req, res, next) => {
        FROM sidang sd
        JOIN skripsi sk ON sk.id = sd.skripsi_id
        WHERE sk.program_studi_id = ?
+         AND sd.jenis = ?
          AND sd.nomor_surat IS NOT NULL
          AND YEAR(sd.created_at) = ?
          AND MONTH(sd.created_at) = ?
        FOR SHARE`,
-      [dataRow?.program_studi_id, year, month],
+      [dataRow?.program_studi_id, jenis, year, month],
     );
     const nomorSuratSidang = `${String(Number(seq) + 1).padStart(3, "0")}/${dataRow?.f_kode ?? ""}/${dataRow?.ps_kode ?? ""}/Sidang-Skripsi/${BULAN_ROMAWI[month - 1]}/${year}`;
 
@@ -3427,9 +3406,9 @@ exports.generateSuratUndangan = async (req, res, next) => {
     if (!existingSidang) {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
-           (skripsi_id, nomor_surat, pengajuan_sidang_id)
-         VALUES (?, ?, ?)`,
-        [skripsiId, nomorSuratSidang, sidang.id],
+           (skripsi_id, jenis, nomor_surat, pengajuan_sidang_id)
+         VALUES (?, ?, ?, ?)`,
+        [skripsiId, sidang.jenis, nomorSuratSidang, sidang.id],
       );
       const newSidangId = sidangIns.insertId;
 

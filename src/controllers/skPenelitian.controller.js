@@ -1516,7 +1516,8 @@ exports.listSkForDekan = async (req, res, next) => {
            SELECT 1 FROM revisi_pasca_sidang rps
            JOIN sidang sd ON sd.id = rps.sidang_id
            JOIN revisi_pasca_sidang_files rf ON rf.revisi_id = rps.id AND rf.file_type = 'HALAMAN_PENGESAHAN_DEKAN'
-           WHERE sd.skripsi_id = (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1)
+           WHERE sd.jenis = 'SKRIPSI'
+             AND sd.skripsi_id = (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1)
          ) AS has_halaman_pengesahan
        FROM pengajuan_sk_penelitian sk
        JOIN outline o ON o.id = sk.outline_id

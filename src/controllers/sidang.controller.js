@@ -23,6 +23,11 @@ const {
 } = require("../utils/identity");
 const { assertSignatures } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
+const {
+  requireJenis,
+  resolveJenis,
+  getLatestSidang,
+} = require("../services/sidangScope.service");
 
 const MIME_PDF = "application/pdf";
 
@@ -96,10 +101,10 @@ const NOTULEN_ROLE_LABEL = {
   PENGUJI_2: "Anggota Penguji",
 };
 
-async function getSidangBySkripsiId(conn, skripsiId) {
+async function getSidangBySkripsiId(conn, skripsiId, jenis) {
   const [[sidang]] = await conn.query(
     `SELECT
-       s.id, s.skripsi_id, s.pengajuan_sidang_id, s.nomor_surat,
+       s.id, s.skripsi_id, s.jenis, s.pengajuan_sidang_id, s.nomor_surat,
        m.nama AS nama_mahasiswa, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
        psk_k.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
        s.created_at, s.updated_at, s.completed_at,
@@ -123,8 +128,8 @@ async function getSidangBySkripsiId(conn, skripsiId) {
             ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
      LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
      LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-     WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-    [skripsiId],
+     WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
+    [skripsiId, requireJenis(jenis)],
   );
   return sidang ?? null;
 }
@@ -132,12 +137,29 @@ async function getSidangBySkripsiId(conn, skripsiId) {
 // Serializes notulen, penilaian and hasil-penilaian writes on one sidang, so two pembimbing
 // submitting hasil at once, or a penilaian edited while hasil is computing, can't interleave.
 // Must run before the transaction's first plain read: the snapshot is taken at that read, so a
-// waiter then sees the status the lock holder committed (e.g. COMPLETED → clean 409).
-async function lockLatestSidang(conn, skripsiId) {
-  await conn.query(
-    `SELECT id FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
-    [skripsiId],
+// waiter then sees the status the lock holder committed (e.g. COMPLETED → clean 409). That is
+// also why callers resolve jenis before beginTransaction().
+async function lockLatestSidang(conn, skripsiId, jenis) {
+  await getLatestSidang(conn, skripsiId, jenis, { forUpdate: true });
+}
+
+// The four file downloads share this lookup: identity and participant NIDNs for the access check.
+async function getSidangForFileAccess(skripsiId) {
+  const jenis = await resolveJenis(db, skripsiId);
+  const [[sidang]] = await db.query(
+    `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
+            m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
+            sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+            psk_k.penguji1_nidn, psk_k.penguji2_nidn
+     FROM sidang s
+     JOIN skripsi sk ON sk.id = s.skripsi_id
+     JOIN mahasiswa m ON m.npm = sk.npm
+     LEFT JOIN pengajuan_sidang_kaprodi psk_k
+            ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+     WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
+    [skripsiId, jenis],
   );
+  return sidang ?? null;
 }
 
 // GET /sidang/:skripsiId
@@ -148,7 +170,11 @@ exports.getSidang = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const sidang = await getSidangBySkripsiId(db, skripsiId);
+    const sidang = await getSidangBySkripsiId(
+      db,
+      skripsiId,
+      await resolveJenis(db, skripsiId),
+    );
     if (!sidang) {
       return res
         .status(404)
@@ -339,7 +365,11 @@ exports.startSidang = async (req, res, next) => {
         .json({ ok: false, message: "Hanya dosen yang dapat memulai sidang" });
     }
 
-    const sidang = await getSidangBySkripsiId(db, skripsiId);
+    const sidang = await getSidangBySkripsiId(
+      db,
+      skripsiId,
+      await resolveJenis(db, skripsiId),
+    );
     if (!sidang) {
       return res
         .status(404)
@@ -432,12 +462,13 @@ exports.submitNotulen = async (req, res, next) => {
     if (!note) {
       return res.status(400).json({ ok: false, message: "note wajib diisi" });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    await lockLatestSidang(conn, skripsiId);
-    const sidang = await getSidangBySkripsiId(conn, skripsiId);
+    await lockLatestSidang(conn, skripsiId, jenis);
+    const sidang = await getSidangBySkripsiId(conn, skripsiId, jenis);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -566,12 +597,13 @@ exports.submitPenilaian = async (req, res, next) => {
         message: `Nilai ${key} harus antara 0 dan ${NILAI_MAX[key]} (bobot ${BOBOT[key] * 100}%)`,
       });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    await lockLatestSidang(conn, skripsiId);
-    const sidang = await getSidangBySkripsiId(conn, skripsiId);
+    await lockLatestSidang(conn, skripsiId, jenis);
+    const sidang = await getSidangBySkripsiId(conn, skripsiId, jenis);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -801,12 +833,13 @@ exports.submitHasilPenilaian = async (req, res, next) => {
         message: "hasilSidang harus LULUS, TIDAK_LULUS, atau GAGAL",
       });
     }
+    const jenis = await resolveJenis(conn, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    await lockLatestSidang(conn, skripsiId);
-    const sidang = await getSidangBySkripsiId(conn, skripsiId);
+    await lockLatestSidang(conn, skripsiId, jenis);
+    const sidang = await getSidangBySkripsiId(conn, skripsiId, jenis);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -1471,19 +1504,7 @@ exports.getBeritaAcara = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const [[sidang]] = await db.query(
-      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM sidang s
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const sidang = await getSidangForFileAccess(skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -1530,19 +1551,7 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const [[sidang]] = await db.query(
-      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM sidang s
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const sidang = await getSidangForFileAccess(skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -1611,19 +1620,7 @@ exports.getPenilaianFile = async (req, res, next) => {
       });
     }
 
-    const [[sidang]] = await db.query(
-      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM sidang s
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const sidang = await getSidangForFileAccess(skripsiId);
     if (!sidang) {
       return res
         .status(404)
@@ -1678,19 +1675,7 @@ exports.getNotulenFile = async (req, res, next) => {
       });
     }
 
-    const [[sidang]] = await db.query(
-      `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM sidang s
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
+    const sidang = await getSidangForFileAccess(skripsiId);
     if (!sidang) {
       return res
         .status(404)
