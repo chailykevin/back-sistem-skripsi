@@ -248,12 +248,13 @@ exports.initPengumpulan = async (req, res, next) => {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    // Prerequisite: revisi_pasca_sidang.is_completed = 1
+    // Prerequisite: the latest sidang's revisi_pasca_sidang.is_completed = 1 (an earlier
+    // failed attempt's completed revisi must not count)
     const [[revisiRow]] = await conn.query(
       `SELECT rps.id, rps.is_completed
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisiRow || !revisiRow.is_completed) {

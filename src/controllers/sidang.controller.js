@@ -14,7 +14,13 @@ const {
 const {
   generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI,
 } = require("../services/generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI");
-const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const {
+  getStudentNpm,
+  getLecturerNidn,
+  getStaffUsrId,
+  getKaprodiProgramStudiIds,
+  isKaprodiOfProgramStudi,
+} = require("../utils/identity");
 const { assertSignatures } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 
@@ -147,7 +153,11 @@ exports.getSidang = async (req, res, next) => {
       if (npm !== sidang.npm) {
         return res.status(403).json({ ok: false, message: "Forbidden" });
       }
-    } else if (!isSekretatariat && !isKaprodi) {
+    } else if (isKaprodi && !isSekretatariat) {
+      if (!(await isKaprodiOfProgramStudi(req.user.id, sidang.program_studi_id))) {
+        return res.status(403).json({ ok: false, message: "Forbidden" });
+      }
+    } else if (!isSekretatariat) {
       const nidn = await getLecturerNidn(req.user.id);
       const role = resolveSidangRole(sidang, nidn);
       if (!role) {
@@ -198,9 +208,9 @@ exports.getSidang = async (req, res, next) => {
 
     const isOngoing = sidang.status !== "COMPLETED";
 
-    // For mahasiswa during ONGOING: hide score details
+    // Mahasiswa never see scores, only the outcome via sidang.hasil_sidang
     const sanitizePenilaian = (row) => {
-      if (!isStudent || !isOngoing) return row;
+      if (!isStudent) return row;
       const {
         nilai_isi,
         keterangan_isi,
@@ -989,68 +999,17 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       });
     }
 
-    // Detect re-exam: a prior sidang exists for this student (ujian_ke >= 2)
-    const [[priorSidang]] = await conn.query(
-      `SELECT id FROM sidang WHERE skripsi_id = ? AND id != ? LIMIT 1`,
-      [skripsiId, sidang.id],
+    // One revisi per sidang: an ujian ulang gets its own revisi, and the earlier
+    // attempt's revisi stays as history.
+    const [[existingRevisi]] = await conn.query(
+      `SELECT id FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+      [sidang.id],
     );
-    const isUjianUlang = !!priorSidang;
-
-    if (isUjianUlang && hasilSidang === "LULUS") {
-      // Re-exam passed: reset revisi_pasca_sidang so student goes through revisi again
-      const [[existingRevisi]] = await conn.query(
-        `SELECT id FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+    if (!existingRevisi) {
+      await conn.query(
+        `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
         [sidang.id],
       );
-      if (existingRevisi) {
-        const [stageRows] = await conn.query(
-          `SELECT id FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
-          [existingRevisi.id],
-        );
-        const stageIds = stageRows.map((r) => r.id);
-        if (stageIds.length > 0) {
-          await conn.query(
-            `DELETE FROM revisi_pasca_sidang_reviews WHERE stage_id IN (?)`,
-            [stageIds],
-          );
-          await conn.query(
-            `DELETE FROM revisi_pasca_sidang_submissions WHERE stage_id IN (?)`,
-            [stageIds],
-          );
-          await conn.query(
-            `DELETE FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
-            [existingRevisi.id],
-          );
-        }
-        await conn.query(
-          `DELETE FROM revisi_pasca_sidang_files WHERE revisi_id = ?`,
-          [existingRevisi.id],
-        );
-        await conn.query(
-          `UPDATE revisi_pasca_sidang SET sidang_id = ?, is_completed = 0, updated_at = NOW() WHERE id = ?`,
-          [sidang.id, existingRevisi.id],
-        );
-        const pg2UserId = await resolveUserId(conn, sidang.penguji2_nidn);
-        await conn.query(
-          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
-           VALUES (?, 'PENGUJI_2', ?)`,
-          [existingRevisi.id, pg2UserId],
-        );
-      }
-    }
-
-    // Auto-init revisi pasca sidang for original sidang (existence-guarded; re-exam resets above handle it)
-    if (!isUjianUlang) {
-      const [[existingRevisi]] = await conn.query(
-        `SELECT id FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
-        [sidang.id],
-      );
-      if (!existingRevisi) {
-        await conn.query(
-          `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
-          [sidang.id],
-        );
-      }
     }
 
     // Notify student + all 4 participants of LULUS / TIDAK_LULUS result
@@ -1449,8 +1408,10 @@ exports.getKaprodiSidang = async (req, res, next) => {
 };
 
 async function resolveSidangFileAccess(req, sidang) {
-  if (req.user.hasRole("SEKRETARIAT") || req.user.hasRole("KAPRODI"))
-    return true;
+  if (req.user.hasRole("SEKRETARIAT")) return true;
+  if (req.user.hasRole("KAPRODI")) {
+    return isKaprodiOfProgramStudi(req.user.id, sidang.program_studi_id);
+  }
   if (req.user.hasRole("STUDENT")) {
     const npm = await getStudentNpm(req.user.id);
     return npm === sidang.npm;
@@ -1483,7 +1444,8 @@ exports.getBeritaAcara = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
+              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1541,7 +1503,8 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
+              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1621,7 +1584,8 @@ exports.getPenilaianFile = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
+              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1687,7 +1651,8 @@ exports.getNotulenFile = async (req, res, next) => {
 
     const [[sidang]] = await db.query(
       `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
-              m.npm, m.nama AS nama_mahasiswa, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
+              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM sidang s
        JOIN skripsi sk ON sk.id = s.skripsi_id

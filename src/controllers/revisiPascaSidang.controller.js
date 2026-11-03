@@ -11,7 +11,13 @@ const {
 const {
   generateNotulenPengujiFTI,
 } = require("../services/generateNotulenPengujiFTI");
-const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const {
+  getStudentNpm,
+  getLecturerNidn,
+  getStaffUsrId,
+  getKaprodiProgramStudiIds,
+  isKaprodiOfProgramStudi,
+} = require("../utils/identity");
 const { assertSignatures } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
@@ -109,6 +115,19 @@ function isRevisiParticipant(sidangRow, nidn) {
       sidangRow.penguji1_nidn === nidn ||
       sidangRow.penguji2_nidn === nidn)
   );
+}
+
+// revisiRow needs npm, program_studi_id and the 4 participant NIDNs.
+async function canAccessRevisi(req, revisiRow, { allowDekan = false } = {}) {
+  if (req.user.hasRole("STUDENT")) {
+    return (await getStudentNpm(req.user.id)) === revisiRow.npm;
+  }
+  if (req.user.hasRole("SEKRETARIAT")) return true;
+  if (allowDekan && req.user.hasRole("DEKAN")) return true;
+  if (req.user.hasRole("KAPRODI")) {
+    return isKaprodiOfProgramStudi(req.user.id, revisiRow.program_studi_id);
+  }
+  return !!isRevisiParticipant(revisiRow, await getLecturerNidn(req.user.id));
 }
 
 async function generateHalamanPengesahanMajelisDoc(conn, sidangRow) {
@@ -278,13 +297,10 @@ exports.initRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Sidang belum selesai" });
     }
 
-    // Return existing if already created
+    // Return existing if already created for the latest sidang
     const [[existing]] = await db.query(
-      `SELECT rps.id, rps.is_completed
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
-       WHERE s.skripsi_id = ? LIMIT 1`,
-      [skripsiId],
+      `SELECT id, is_completed FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+      [sidang.id],
     );
     if (existing) {
       const [[existingStage]] = await db.query(
@@ -383,7 +399,7 @@ exports.submitRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -887,6 +903,7 @@ exports.getRevisi = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               m.nama AS nama_mahasiswa, m.npm AS mahasiswa_npm,
               sk.judul AS judul_skripsi,
+              sk.program_studi_id,
               ps.nama AS program_studi_nama,
               d1.nama AS pembimbing1_nama,
               d2.nama AS pembimbing2_nama,
@@ -904,7 +921,7 @@ exports.getRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen dq1 ON dq1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen dq2 ON dq2.nidn = psk_k.penguji2_nidn
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -913,21 +930,8 @@ exports.getRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Revisi tidak ditemukan" });
     }
 
-    // Authorization
-    const isStudent = req.user.hasRole("STUDENT");
-    const isSekretariat = req.user.hasRole("SEKRETARIAT");
-    const isKaprodi = req.user.hasRole("KAPRODI");
-
-    if (isStudent) {
-      const npm = await getStudentNpm(req.user.id);
-      if (npm !== revisi.mahasiswa_npm) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
-    } else if (!isSekretariat && !isKaprodi) {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (!isRevisiParticipant(revisi, nidn)) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
+    if (!(await canAccessRevisi(req, { ...revisi, npm: revisi.mahasiswa_npm }))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [stages] = await db.query(
@@ -1279,7 +1283,7 @@ exports.getSubmissionFile = async (req, res, next) => {
     }
 
     const [[revisi]] = await db.query(
-      `SELECT rps.id, m.npm,
+      `SELECT rps.id, m.npm, sk.program_studi_id,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM revisi_pasca_sidang rps
@@ -1288,7 +1292,7 @@ exports.getSubmissionFile = async (req, res, next) => {
        JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -1297,19 +1301,8 @@ exports.getSubmissionFile = async (req, res, next) => {
         .json({ ok: false, message: "Revisi tidak ditemukan" });
     }
 
-    const isStudent = req.user.hasRole("STUDENT");
-    if (isStudent) {
-      const npm = await getStudentNpm(req.user.id);
-      if (npm !== revisi.npm)
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-    } else if (
-      !req.user.hasRole("SEKRETARIAT") &&
-      !req.user.hasRole("KAPRODI")
-    ) {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (!isRevisiParticipant(revisi, nidn)) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
+    if (!(await canAccessRevisi(req, revisi))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     // Return the most recently submitted file across all stages of this revisi
@@ -1352,7 +1345,7 @@ exports.getReviewFile = async (req, res, next) => {
     const [[file]] = await db.query(
       `SELECT
          rf.id, rf.file_content, rf.file_name, rf.mime_type,
-         m.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+         m.npm, sk.program_studi_id, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
          psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM revisi_pasca_sidang_review_file rf
        INNER JOIN revisi_pasca_sidang_reviews rev ON rev.id = rf.revisi_pasca_sidang_review_id
@@ -1373,20 +1366,8 @@ exports.getReviewFile = async (req, res, next) => {
         .json({ ok: false, message: "Review file not found" });
     }
 
-    const isStudent = req.user.hasRole("STUDENT");
-    if (isStudent) {
-      const npm = await getStudentNpm(req.user.id);
-      if (npm !== file.npm) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
-    } else if (
-      !req.user.hasRole("SEKRETARIAT") &&
-      !req.user.hasRole("KAPRODI")
-    ) {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (!isRevisiParticipant(file, nidn)) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
+    if (!(await canAccessRevisi(req, file))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     return res.json({
@@ -1411,7 +1392,7 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
     }
 
     const [[revisi]] = await db.query(
-      `SELECT rps.id, m.npm,
+      `SELECT rps.id, m.npm, sk.program_studi_id,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM revisi_pasca_sidang rps
@@ -1420,7 +1401,7 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
        JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -1429,19 +1410,8 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
         .json({ ok: false, message: "Revisi tidak ditemukan" });
     }
 
-    const isStudent = req.user.hasRole("STUDENT");
-    if (isStudent) {
-      const npm = await getStudentNpm(req.user.id);
-      if (npm !== revisi.npm)
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-    } else if (
-      !req.user.hasRole("SEKRETARIAT") &&
-      !req.user.hasRole("KAPRODI")
-    ) {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (!isRevisiParticipant(revisi, nidn)) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
+    if (!(await canAccessRevisi(req, revisi))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [[fileRow]] = await db.query(
@@ -1471,7 +1441,7 @@ exports.getHalamanDekanFile = async (req, res, next) => {
     }
 
     const [[revisi]] = await db.query(
-      `SELECT rps.id, m.npm,
+      `SELECT rps.id, m.npm, sk.program_studi_id,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn
        FROM revisi_pasca_sidang rps
@@ -1480,7 +1450,7 @@ exports.getHalamanDekanFile = async (req, res, next) => {
        JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE s.skripsi_id = ? LIMIT 1`,
+       WHERE s.skripsi_id = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId],
     );
     if (!revisi) {
@@ -1489,20 +1459,8 @@ exports.getHalamanDekanFile = async (req, res, next) => {
         .json({ ok: false, message: "Revisi tidak ditemukan" });
     }
 
-    const isStudent = req.user.hasRole("STUDENT");
-    if (isStudent) {
-      const npm = await getStudentNpm(req.user.id);
-      if (npm !== revisi.npm)
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-    } else if (
-      !req.user.hasRole("SEKRETARIAT") &&
-      !req.user.hasRole("KAPRODI") &&
-      !req.user.hasRole("DEKAN")
-    ) {
-      const nidn = await getLecturerNidn(req.user.id);
-      if (!isRevisiParticipant(revisi, nidn)) {
-        return res.status(403).json({ ok: false, message: "Forbidden" });
-      }
+    if (!(await canAccessRevisi(req, revisi, { allowDekan: true }))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [[fileRow]] = await db.query(

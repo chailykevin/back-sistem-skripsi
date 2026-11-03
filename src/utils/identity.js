@@ -40,9 +40,17 @@ async function getKaprodiProgramStudiIds(staffUsrId) {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
+async function isKaprodiOfProgramStudi(userId, programStudiId) {
+  const programStudiIds = await getKaprodiProgramStudiIds(
+    await getStaffUsrId(userId),
+  );
+  return programStudiIds.includes(Number(programStudiId));
+}
+
 module.exports = {
   getStudentNpm,
   getLecturerNidn,
   getStaffUsrId,
   getKaprodiProgramStudiIds,
+  isKaprodiOfProgramStudi,
 };

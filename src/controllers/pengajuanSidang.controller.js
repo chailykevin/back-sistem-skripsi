@@ -29,7 +29,12 @@ const {
 const {
   generateSuratUndanganSidangFTI,
 } = require("../services/generateSuratUndanganSidangFTI.js");
-const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const {
+  getStudentNpm,
+  getStaffUsrId,
+  getKaprodiProgramStudiIds,
+  isKaprodiOfProgramStudi,
+} = require("../utils/identity");
 const { assertSignatures } = require("../utils/signature");
 const { BULAN_ROMAWI, formatTanggal } = require("../utils/dates");
 
@@ -226,6 +231,24 @@ async function getActiveSidang(conn, skripsiId) {
   return rows[0] ?? null;
 }
 
+// These records hold KTM, pas foto, address and phone numbers, so reads are limited to
+// the owning student, Sekretariat, and the Kaprodi of the skripsi's prodi.
+async function canReadPengajuanSidang(req, skripsiId) {
+  const [[skripsi]] = await db.query(
+    `SELECT npm, program_studi_id FROM skripsi WHERE id = ? LIMIT 1`,
+    [skripsiId],
+  );
+  if (!skripsi) return false;
+  if (req.user.hasRole("SEKRETARIAT")) return true;
+  if (req.user.hasRole("KAPRODI")) {
+    return isKaprodiOfProgramStudi(req.user.id, skripsi.program_studi_id);
+  }
+  if (req.user.hasRole("STUDENT")) {
+    return (await getStudentNpm(req.user.id)) === skripsi.npm;
+  }
+  return false;
+}
+
 // The consultation-completion auto-init can create an original sidang draft
 // before an administrator opens a submission period. Attach that period at
 // the student's first eligible submission without changing a prior assignment.
@@ -296,10 +319,10 @@ exports.initPengajuanSidang = async (req, res, next) => {
     );
 
     if (isUjianUlang) {
-      // Ujian ulang: prerequisite is revisi_pasca_sidang completed
+      // Ujian ulang: prerequisite is the failed sidang's revisi_pasca_sidang completed
       const [[revisiRow]] = await conn.query(
-        `SELECT id, is_completed FROM revisi_pasca_sidang WHERE skripsi_id = ? LIMIT 1`,
-        [skripsiId],
+        `SELECT id, is_completed FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+        [latestSidang.id],
       );
       if (!revisiRow || !revisiRow.is_completed) {
         return res
@@ -522,6 +545,9 @@ exports.getPengajuanSidang = async (req, res, next) => {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
+    }
+    if (!(await canReadPengajuanSidang(req, skripsiId))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const sidang = await getActiveSidang(db, skripsiId);
@@ -1228,6 +1254,9 @@ exports.getFile = async (req, res, next) => {
         message: `fileType tidak valid: ${fileType}`,
       });
     }
+    if (!(await canReadPengajuanSidang(req, skripsiId))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
 
     const sidang = await getActiveSidang(db, skripsiId);
     if (!sidang) {
@@ -1471,6 +1500,9 @@ exports.getKaprodi = async (req, res, next) => {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
+    }
+    if (!(await canReadPengajuanSidang(req, skripsiId))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const activeSidangForGet = await getActiveSidang(db, skripsiId);
