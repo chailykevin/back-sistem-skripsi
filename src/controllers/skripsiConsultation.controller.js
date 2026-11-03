@@ -13,8 +13,66 @@ const {
 } = require("../services/generateKartuPenulisanSkripsiFTI.js");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
+const {
+  JENIS,
+  requireJenis,
+  resolveJenis,
+} = require("../services/sidangScope.service");
 
 const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
+
+// A Seminar Bisnis Digital record pauses after Bab 3 for its Seminar sidang; Bab 4 opens once the
+// SK Skripsi is issued, when resolveJenis switches the record to SKRIPSI.
+function lastChapterGroupFor(jenis) {
+  return jenis === JENIS.SEMINAR_BISNIS_DIGITAL ? "BAB_3" : "BAB_5";
+}
+
+function isAwaitingSkSkripsi(jenis, stages) {
+  return (
+    jenis === JENIS.SEMINAR_BISNIS_DIGITAL &&
+    stages.some(
+      (s) =>
+        s.chapter_group === lastChapterGroupFor(jenis) &&
+        s.stage === "PEMBIMBING_1" &&
+        s.current_status === "ACCEPTED",
+    )
+  );
+}
+
+// Auto-init at the end of a konsultasi phase: the pengajuan_sidang DRAFT, its Kaprodi row and the
+// system files. Existence-guarded, so a repeated call is a no-op.
+async function ensurePengajuanSidangDraft(conn, skripsiId, jenis) {
+  const [[existing]] = await conn.query(
+    `SELECT id FROM pengajuan_sidang
+     WHERE skripsi_id = ? AND jenis = ? AND status NOT IN ('COMPLETED','REJECTED')
+     ORDER BY id DESC LIMIT 1`,
+    [skripsiId, requireJenis(jenis)],
+  );
+  let pengajuanSidangId = existing?.id ?? null;
+  if (!pengajuanSidangId) {
+    // sidang_submission_period holds only Skripsi windows until it gets a jenis column.
+    const openPeriod =
+      jenis === JENIS.SKRIPSI ? await getSidangOpenPeriod() : null;
+    const [ins] = await conn.query(
+      `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', 1, ?)`,
+      [skripsiId, jenis, openPeriod?.id ?? null],
+    );
+    pengajuanSidangId = ins.insertId;
+  }
+
+  const [[existingKaprodi]] = await conn.query(
+    `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+    [pengajuanSidangId],
+  );
+  if (!existingKaprodi) {
+    await conn.query(
+      `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_sidang_id, status) VALUES (?, 'DRAFT')`,
+      [pengajuanSidangId],
+    );
+  }
+
+  await attachSidangSystemFiles(conn, pengajuanSidangId, skripsiId);
+}
 const CHAPTER_LABEL = {
   BAB_1: "Bab 1",
   BAB_2: "Bab 2",
@@ -522,6 +580,7 @@ exports.getMyDetail = async (req, res, next) => {
     );
 
     const resolved = resolveActiveStage(stages);
+    const jenis = await resolveJenis(db, skripsiId);
 
     return res.json({
       ok: true,
@@ -534,6 +593,8 @@ exports.getMyDetail = async (req, res, next) => {
         submissions,
         reviews,
         isCompleted: Boolean(kartu.is_completed),
+        jenis,
+        awaitingSkSkripsi: isAwaitingSkSkripsi(jenis, stages),
       },
     });
   } catch (err) {
@@ -611,11 +672,15 @@ exports.submitMyChapter = async (req, res, next) => {
 
     const resolved = resolveActiveStage(stageRows);
     if (!resolved.stageRow) {
+      const jenis = await resolveJenis(conn, skripsiId);
       await conn.rollback();
       txStarted = false;
-      return res
-        .status(409)
-        .json({ ok: false, message: "No active stage to submit to" });
+      return res.status(409).json({
+        ok: false,
+        message: isAwaitingSkSkripsi(jenis, stageRows)
+          ? "Konsultasi Bab 1–3 sudah selesai. Bab 4 dibuka setelah SK Skripsi diterbitkan."
+          : "No active stage to submit to",
+      });
     }
 
     const activeStage = resolved.stageRow;
@@ -846,7 +911,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     txStarted = true;
 
     const [stageRows] = await conn.query(
-      `SELECT s.*, k.id AS kartu_id, sk.pembimbing1_nidn, sk.pembimbing2_nidn
+      `SELECT s.*, k.id AS kartu_id, k.skripsi_id AS kartu_skripsi_id,
+              sk.pembimbing1_nidn, sk.pembimbing2_nidn
        FROM konsultasi_skripsi_stage s
        INNER JOIN kartu_konsultasi_skripsi k ON k.id = s.kartu_konsultasi_skripsi_id
        JOIN skripsi sk ON sk.id = k.skripsi_id
@@ -880,6 +946,13 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         message: `Decision ${decisionStatus} is not allowed for ${stage.stage}`,
       });
     }
+
+    const jenis = await resolveJenis(conn, stage.kartu_skripsi_id);
+    const isSeminar = jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+    const isPhaseEnd =
+      stage.stage === "PEMBIMBING_1" &&
+      decisionStatus === "ACCEPTED" &&
+      stage.chapter_group === lastChapterGroupFor(jenis);
 
     const shouldRequireSignature =
       (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
@@ -1008,8 +1081,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     }
 
     if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
-      const nextChapter = nextChapterGroup(stage.chapter_group);
-      if (nextChapter) {
+      if (!isPhaseEnd) {
+        const nextChapter = nextChapterGroup(stage.chapter_group);
         const [nextP2Rows] = await conn.query(
           `SELECT id FROM konsultasi_skripsi_stage
            WHERE kartu_konsultasi_skripsi_id = ? AND chapter_group = ? AND stage = 'PEMBIMBING_2'
@@ -1038,6 +1111,19 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             [stage.kartu_id, nextChapter, pembimbing2Nidn],
           );
         }
+      } else if (isSeminar) {
+        // Bab 1–3 card: same template and kartu row, left incomplete (blank Tanggal Selesai) and
+        // overwritten by the Bab 1–5 card when Bab 5 is accepted.
+        autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
+          kartuId: stage.kartu_id,
+          skripsiId: stage.kartu_skripsi_id,
+          generatedByUserId: req.user.id,
+        });
+        await ensurePengajuanSidangDraft(
+          conn,
+          stage.kartu_skripsi_id,
+          JENIS.SEMINAR_BISNIS_DIGITAL,
+        );
       } else {
         await conn.query(
           `UPDATE kartu_konsultasi_skripsi
@@ -1045,47 +1131,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
            WHERE id = ?`,
           [stage.kartu_id],
         );
-
-        const [[kartuSkripsiRow]] = await conn.query(
-          `SELECT skripsi_id FROM kartu_konsultasi_skripsi WHERE id = ? LIMIT 1`,
-          [stage.kartu_id],
-        );
         autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
           kartuId: stage.kartu_id,
-          skripsiId: kartuSkripsiRow?.skripsi_id,
+          skripsiId: stage.kartu_skripsi_id,
           generatedByUserId: req.user.id,
         });
-
-        // Auto-init pengajuan_sidang DRAFT first, then pengajuan_sidang_kaprodi linked to it
-        const kartuSkripsiId = kartuSkripsiRow?.skripsi_id;
-        let [[existingSidang]] = await conn.query(
-          `SELECT id FROM pengajuan_sidang
-           WHERE skripsi_id = ? AND jenis = 'SKRIPSI' AND status NOT IN ('COMPLETED','REJECTED')
-           ORDER BY id DESC LIMIT 1`,
-          [kartuSkripsiId],
+        await ensurePengajuanSidangDraft(
+          conn,
+          stage.kartu_skripsi_id,
+          JENIS.SKRIPSI,
         );
-        let autoSidangId = existingSidang?.id ?? null;
-        if (!autoSidangId) {
-          const openPeriod = await getSidangOpenPeriod();
-          const [sidangIns] = await conn.query(
-            `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, 'SKRIPSI', 'DRAFT', 1, ?)`,
-            [kartuSkripsiId, openPeriod?.id ?? null],
-          );
-          autoSidangId = sidangIns.insertId;
-        }
-
-        const [[existingKaprodi]] = await conn.query(
-          `SELECT id FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
-          [autoSidangId],
-        );
-        if (!existingKaprodi) {
-          await conn.query(
-            `INSERT INTO pengajuan_sidang_kaprodi (pengajuan_sidang_id, status) VALUES (?, 'DRAFT')`,
-            [autoSidangId],
-          );
-        }
-
-        await attachSidangSystemFiles(conn, autoSidangId, kartuSkripsiId);
       }
     }
 
@@ -1140,10 +1195,15 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           );
         }
       } else if (decisionStatus === "ACCEPTED" && studentUserId) {
-        const isFinal =
-          stage.stage === "PEMBIMBING_1" &&
-          !nextChapterGroup(stage.chapter_group);
-        if (isFinal) {
+        if (isPhaseEnd && isSeminar) {
+          await insertNotification(
+            conn,
+            studentUserId,
+            "SKRIPSI_CONSULTATION_SEMINAR_COMPLETED",
+            "Konsultasi Bab 1–3 Anda telah selesai. Silakan lanjut ke Pengajuan Sidang Seminar Bisnis Digital.",
+            "/student/skripsi-consultations",
+          );
+        } else if (isPhaseEnd) {
           await insertNotification(
             conn,
             studentUserId,
@@ -1174,12 +1234,9 @@ exports.reviewStageByLecturer = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message:
-        stage.stage === "PEMBIMBING_1" &&
-        decisionStatus === "ACCEPTED" &&
-        !nextChapterGroup(stage.chapter_group)
-          ? "Review saved and final DOCX generated"
-          : "Review saved",
+      message: isPhaseEnd
+        ? "Review saved and kartu generated"
+        : "Review saved",
       data: {
         stageId,
         submissionNo: latestSubmission.submission_no,

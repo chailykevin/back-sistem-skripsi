@@ -8,8 +8,12 @@ const {
   generateSuratKeputusanSkripsiFTI,
 } = require("../services/generateSuratKeputusanSkripsiFTI.js");
 const {
+  generateSuratKeputusanSeminarBisnisDigitalFTI,
+} = require("../services/generateSuratKeputusanSeminarBisnisDigitalFTI.js");
+const {
   generatePernyataanPenyelesaianSkripsiFTI,
 } = require("../services/generatePernyataanPenyelesaianSkripsiFTI.js");
+const { JENIS } = require("../services/sidangScope.service");
 const {
   generateSuratKeteranganFTI,
 } = require("../services/generateSuratKeteranganFTI.js");
@@ -31,7 +35,8 @@ function buildKartuFileName(npm, namaMahasiswa, suffix) {
   return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
 }
 
-async function generateSkDocuments(conn, sk, outlineId) {
+async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
+  const isSeminar = jenisSk === JENIS.SEMINAR_BISNIS_DIGITAL;
   // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
   const [[kartu]] = await conn.query(
     `SELECT o.npm, o.judul AS judul_skripsi, o.program_studi_id,
@@ -137,22 +142,30 @@ async function generateSkDocuments(conn, sk, outlineId) {
     },
   ]);
 
-  // Generate nomor_surat sequence (count SKs completed this month for same prodi)
+  // Monthly sequence per prodi, separate for Skep-Skripsi and Skep-BD. Locking the prodi row
+  // serializes concurrent verifications, and the count is a locking read (FOR SHARE) so it sees
+  // numbers committed while we waited — a plain read would use an older snapshot and duplicate one.
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1; // 1-based
+  await conn.query(`SELECT id FROM program_studi WHERE id = ? FOR UPDATE`, [
+    kartu.program_studi_id,
+  ]);
   const [[{ seq }]] = await conn.query(
     `SELECT COUNT(*) AS seq
      FROM pengajuan_sk_penelitian psk
      JOIN outline o ON o.id = psk.outline_id
      WHERE o.program_studi_id = ?
+       AND psk.jenis_sk = ?
        AND psk.nomor_surat IS NOT NULL
        AND YEAR(psk.completed_at) = ?
-       AND MONTH(psk.completed_at) = ?`,
-    [kartu.program_studi_id, year, month],
+       AND MONTH(psk.completed_at) = ?
+     FOR SHARE`,
+    [kartu.program_studi_id, jenisSk, year, month],
   );
   const seqNum = Number(seq) + 1;
-  const nomorSurat = `${String(seqNum).padStart(3, "0")}/${ps.f_kode}/${ps.ps_kode}/Skep-Skripsi/${BULAN_ROMAWI[month - 1]}/${year}`;
+  const kodeSurat = isSeminar ? "Skep-BD" : "Skep-Skripsi";
+  const nomorSurat = `${String(seqNum).padStart(3, "0")}/${ps.f_kode}/${ps.ps_kode}/${kodeSurat}/${BULAN_ROMAWI[month - 1]}/${year}`;
 
   // Update nomor_surat on the SK record
   await conn.query(
@@ -162,7 +175,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
   const tanggal = formatTanggal(now);
 
-  const dataSuratKeputusanSkripsiFTI = {
+  const dataSuratKeputusan = {
     nomorSurat,
     programStudi: kartu.program_studi_nama,
     mahasiswa: {
@@ -173,16 +186,21 @@ async function generateSkDocuments(conn, sk, outlineId) {
       pertama: kartu.pembimbing1_nama,
       kedua: kartu.pembimbing2_nama,
     },
-    judulSkripsi: kartu.judul_skripsi,
     tanggal,
     dekan: {
       nama: dekan.nama_dekan,
       signatureBase64: dekan.signature_image,
     },
   };
-  const skBuffer = await generateSuratKeputusanSkripsiFTI(
-    dataSuratKeputusanSkripsiFTI,
-  );
+  const skBuffer = isSeminar
+    ? await generateSuratKeputusanSeminarBisnisDigitalFTI({
+        ...dataSuratKeputusan,
+        judul: kartu.judul_skripsi,
+      })
+    : await generateSuratKeputusanSkripsiFTI({
+        ...dataSuratKeputusan,
+        judulSkripsi: kartu.judul_skripsi,
+      });
   const skBase64 = Buffer.from(skBuffer).toString("base64");
   const mimePdf = "application/pdf";
   const mimeDocx =
@@ -201,7 +219,9 @@ async function generateSkDocuments(conn, sk, outlineId) {
       buildKartuFileName(
         kartu.npm,
         kartu.nama_mahasiswa,
-        "SK Penunjukan Pembimbing",
+        isSeminar
+          ? "SK Penunjukan Pembimbing Seminar Bisnis Digital"
+          : "SK Penunjukan Pembimbing",
       ),
       mimePdf,
       skBase64,
@@ -1064,10 +1084,25 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       });
     }
 
+    // A BD student still in Seminar Bisnis Digital (per the SIMIKO KRS sync) gets the Seminar SK,
+    // and the skripsi record follows the Seminar flow until the SK Skripsi is issued.
+    const [[tahapRow]] = await conn.query(
+      `SELECT m.tahap_tugas_akhir
+       FROM outline o
+       JOIN mahasiswa m ON m.npm = o.npm
+       WHERE o.id = ? LIMIT 1`,
+      [outlineId],
+    );
+    const jenisSk =
+      tahapRow?.tahap_tugas_akhir === JENIS.SEMINAR_BISNIS_DIGITAL
+        ? JENIS.SEMINAR_BISNIS_DIGITAL
+        : JENIS.SKRIPSI;
+
     // set COMPLETED then generate documents
     await conn.query(
       `UPDATE pengajuan_sk_penelitian
        SET status = 'COMPLETED',
+           jenis_sk = ?,
            catatan_sekretariat = ?,
            verified_by_user_id = ?,
            verified_at = CURRENT_TIMESTAMP,
@@ -1075,13 +1110,14 @@ exports.reviewSkPenelitian = async (req, res, next) => {
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
+        jenisSk,
         catatanSekretariat ? String(catatanSekretariat).trim() : null,
         req.user.id,
         sk.id,
       ],
     );
 
-    await generateSkDocuments(conn, sk, outlineId);
+    await generateSkDocuments(conn, sk, outlineId, jenisSk);
 
     const [[skripsiSource]] = await conn.query(
       `SELECT o.npm, o.judul AS judul, o.program_studi_id,
@@ -1095,13 +1131,14 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     if (skripsiSource) {
       await conn.query(
         `INSERT INTO skripsi
-           (npm, outline_id, judul, status, program_studi_id,
+           (npm, outline_id, judul, status, jalur, program_studi_id,
             pembimbing1_nidn, pembimbing2_nidn)
-         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?)`,
+         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?)`,
         [
           skripsiSource.npm,
           skripsiSource.outline_id,
           skripsiSource.judul,
+          jenisSk,
           skripsiSource.program_studi_id ?? null,
           skripsiSource.pembimbing1_nidn ?? null,
           skripsiSource.pembimbing2_nidn ?? null,
