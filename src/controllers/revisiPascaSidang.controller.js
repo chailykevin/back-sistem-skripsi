@@ -18,7 +18,7 @@ const {
   getKaprodiProgramStudiIds,
   isKaprodiOfProgramStudi,
 } = require("../utils/identity");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
 
@@ -53,19 +53,6 @@ async function getSigByNidn(conn, nidn) {
     `SELECT dsnTtd AS signature_image
      FROM widya_miko.m_dosen
      WHERE dsnId = ?
-     LIMIT 1`,
-    [nidn],
-  );
-  return row?.signature_image ?? null;
-}
-
-async function getSigByNidnAndRole(conn, nidn, roleCode) {
-  if (!nidn) return null;
-  const [[row]] = await conn.query(
-    `SELECT d.dsnTtd AS signature_image
-     FROM widya_miko.c_useradm u
-     JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
-     WHERE u.usrId = ?
      LIMIT 1`,
     [nidn],
   );
@@ -213,7 +200,7 @@ async function generateHalamanPengesahanDekanDoc(conn, sidangRow) {
     getSigByNpm(conn, sidangRow.npm),
     getSigByNidn(conn, sidangRow.pembimbing1_nidn),
     getSigByNidn(conn, sidangRow.pembimbing2_nidn),
-    getSigByNidnAndRole(conn, dekanStaffUsrId, "DEKAN"),
+    getStaffSignature(conn, dekanStaffUsrId),
   ]);
 
   assertSignatures([
@@ -271,7 +258,7 @@ exports.initRevisi = async (req, res, next) => {
     }
 
     const [[sidang]] = await db.query(
-      `SELECT s.id, s.status, s.pengajuan_sidang_id,
+      `SELECT s.id, s.status, s.hasil_sidang, s.pengajuan_sidang_id,
               m.npm,
               psk_k.penguji2_nidn
        FROM sidang s
@@ -295,6 +282,13 @@ exports.initRevisi = async (req, res, next) => {
       return res
         .status(409)
         .json({ ok: false, message: "Sidang belum selesai" });
+    }
+    if (sidang.hasil_sidang === "GAGAL") {
+      return res.status(409).json({
+        ok: false,
+        message:
+          "Sidang dinyatakan GAGAL, tidak ada revisi pasca sidang. Silakan mengulang dari pengajuan outline.",
+      });
     }
 
     // Return existing if already created for the latest sidang
@@ -473,7 +467,7 @@ exports.submitRevisi = async (req, res, next) => {
       activeStage.user_id,
       "REVISI_PASCA_SIDANG",
       `Mahasiswa ${revisi.nama_mahasiswa} telah mengunggah revisi dan menunggu review Anda`,
-      `/revisi-pasca-sidang/${skripsiId}`,
+      `/pembimbing/revisi-pasca-sidang/${skripsiId}`,
     );
 
     await conn.commit();
@@ -669,7 +663,7 @@ exports.reviewRevisi = async (req, res, next) => {
         studentUserId,
         "REVISI_PASCA_SIDANG",
         `${getRoleLabel(activeStage.signer_role)} meminta revisi: ${catatan.trim()}`,
-        `/revisi-pasca-sidang/${skripsiId}`,
+        `/student/revisi-pasca-sidang/${skripsiId}`,
       );
     } else {
       // APPROVED
@@ -778,7 +772,7 @@ exports.reviewRevisi = async (req, res, next) => {
           studentUserId,
           "REVISI_PASCA_SIDANG",
           `${getRoleLabel(activeStage.signer_role)} menyetujui revisi. Silakan unggah file ke ${getRoleLabel(nextRole)}`,
-          `/revisi-pasca-sidang/${skripsiId}`,
+          `/student/revisi-pasca-sidang/${skripsiId}`,
         );
 
         await insertNotification(
@@ -786,7 +780,7 @@ exports.reviewRevisi = async (req, res, next) => {
           nextUserId,
           "REVISI_PASCA_SIDANG",
           `Mahasiswa ${revisi.nama_mahasiswa} akan mengunggah revisi untuk ditandatangani`,
-          `/revisi-pasca-sidang/${skripsiId}`,
+          `/pembimbing/revisi-pasca-sidang/${skripsiId}`,
         );
       } else {
         // PEMBIMBING_1 approved — last stage
@@ -854,7 +848,7 @@ exports.reviewRevisi = async (req, res, next) => {
           studentUserId,
           "REVISI_PASCA_SIDANG",
           completionMessage,
-          `/revisi-pasca-sidang/${skripsiId}`,
+          `/student/revisi-pasca-sidang/${skripsiId}`,
         );
 
         if (revisi.hasil_sidang === "TIDAK_LULUS") {

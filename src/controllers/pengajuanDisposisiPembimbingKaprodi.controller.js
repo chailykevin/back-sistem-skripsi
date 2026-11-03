@@ -6,7 +6,7 @@ const path = require("path");
 const {
   generateFormulirPengajuanDisposisiPembimbingSkripsiFTI,
 } = require("../services/generateFormulirPengajuanDisposisiPembimbingSkripsiFTI.js");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { BULAN_ID } = require("../utils/dates");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
@@ -511,16 +511,8 @@ exports.review = async (req, res, next) => {
        LIMIT 1`,
       [id],
     );
-    const [[kaprodiUserRow]] = await conn.query(
-      `SELECT d.dsnTtd AS signature_image
-       FROM widya_miko.c_useradm u
-       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
-       WHERE u.usrId = ?
-       LIMIT 1`,
-      [reviewDocRows[0]?.kaprodi_nidn],
-    );
     const rd = reviewDocRows[0] ?? {};
-    rd.kaprodi_signature = kaprodiUserRow?.signature_image ?? null;
+    rd.kaprodi_signature = await getStaffSignature(conn, rd.kaprodi_nidn);
 
     const keputusanMap = {
       APPROVED: "Diterima",

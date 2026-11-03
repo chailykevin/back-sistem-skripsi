@@ -18,7 +18,7 @@ function createTransport() {
  *
  * @param {object} opts
  * @param {string[]} opts.recipients  - filtered list of email addresses
- * @param {Buffer}  opts.suratBuffer  - generated DOCX buffer
+ * @param {Buffer}  opts.suratBuffer  - generated PDF buffer
  * @param {string}  opts.npm
  * @param {string}  opts.namaMahasiswa
  * @param {string}  opts.sidangDate   - formatted date string (DD MMM YYYY)
@@ -106,8 +106,7 @@ async function sendSuratUndangan({
       {
         filename: `Surat_Undangan_Sidang_${npm}.pdf`,
         content: suratBuffer,
-        contentType:
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        contentType: "application/pdf",
       },
     ],
   });

@@ -1,4 +1,5 @@
 const db = require("../db");
+const { getStaffSignature } = require("../utils/signature");
 
 const SIMIKO_STAFF_SIGNATURE_ROLES = new Set([
   "KAPRODI",
@@ -56,15 +57,20 @@ async function getSignatureProfile(userId, roles = []) {
           "Tanda tangan akan dikelola melalui SIMIKO. Identitas SIMIKO akun ini belum tersedia.",
       };
     }
-    const [[staff]] = await db.query(
-      `SELECT d.dsnTtd
-       FROM widya_miko.c_useradm u
-       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
-       WHERE u.usrId = ?
-       LIMIT 1`,
-      [staffUserId],
-    );
-    const signatureImage = staff?.dsnTtd ?? null;
+    let signatureImage;
+    try {
+      signatureImage = await getStaffSignature(db, staffUserId);
+    } catch (err) {
+      // Ambiguous name match: show the reason on the profile instead of failing the request
+      if (err.statusCode !== 409) throw err;
+      return {
+        hasSignature: false,
+        signatureImage: null,
+        source: "SIMIKO",
+        canManage: false,
+        manageMessage: err.message,
+      };
+    }
     return {
       hasSignature: signatureImage !== null,
       signatureImage,

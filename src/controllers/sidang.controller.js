@@ -129,6 +129,17 @@ async function getSidangBySkripsiId(conn, skripsiId) {
   return sidang ?? null;
 }
 
+// Serializes notulen, penilaian and hasil-penilaian writes on one sidang, so two pembimbing
+// submitting hasil at once, or a penilaian edited while hasil is computing, can't interleave.
+// Must run before the transaction's first plain read: the snapshot is taken at that read, so a
+// waiter then sees the status the lock holder committed (e.g. COMPLETED → clean 409).
+async function lockLatestSidang(conn, skripsiId) {
+  await conn.query(
+    `SELECT id FROM sidang WHERE skripsi_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+    [skripsiId],
+  );
+}
+
 // GET /sidang/:skripsiId
 exports.getSidang = async (req, res, next) => {
   try {
@@ -425,6 +436,7 @@ exports.submitNotulen = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    await lockLatestSidang(conn, skripsiId);
     const sidang = await getSidangBySkripsiId(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
@@ -558,6 +570,7 @@ exports.submitPenilaian = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    await lockLatestSidang(conn, skripsiId);
     const sidang = await getSidangBySkripsiId(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
@@ -792,6 +805,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     await conn.beginTransaction();
     txStarted = true;
 
+    await lockLatestSidang(conn, skripsiId);
     const sidang = await getSidangBySkripsiId(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
@@ -838,6 +852,24 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       return res.status(400).json({
         ok: false,
         message: `Penilaian belum lengkap. Belum disubmit: ${unsubmitted.map((r) => r.role).join(", ")}`,
+      });
+    }
+
+    // Gate: both penguji must have submitted their notulen
+    const [notulenGateRows] = await conn.query(
+      `SELECT role FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
+      [sidang.id],
+    );
+    const submittedNotulenRoles = new Set(notulenGateRows.map((r) => r.role));
+    const missingNotulen = ["PENGUJI_1", "PENGUJI_2"].filter(
+      (r) => !submittedNotulenRoles.has(r),
+    );
+    if (missingNotulen.length > 0) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: `Notulen belum lengkap. Belum disubmit: ${missingNotulen.join(", ")}`,
       });
     }
 
@@ -1073,59 +1105,56 @@ exports.submitHasilPenilaian = async (req, res, next) => {
   }
 };
 
+// Fatal like Berita Acara: both notulen are required documents, so a generation failure rolls
+// back hasil-penilaian instead of completing the sidang with a notulen that has no file.
 async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
-  try {
-    const [notulenRows] = await conn.query(
-      `SELECT role, note FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
-      [sidang.id],
+  const [notulenRows] = await conn.query(
+    `SELECT role, note FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
+    [sidang.id],
+  );
+
+  const tanggalFormatted = sidang.tanggal_sidang
+    ? formatTanggal(new Date(sidang.tanggal_sidang))
+    : "";
+
+  for (const row of notulenRows) {
+    const role = row.role;
+
+    const outputBuffer = await generateNotulenPengujiFTI({
+      mahasiswa: {
+        npm: sidang.npm,
+        nama: sidang.nama_mahasiswa,
+        programStudi: sidang.program_studi_nama,
+        judulSkripsi: sidang.judul_skripsi,
+      },
+      pembimbing: {
+        pertama: sidang.pembimbing1_nama,
+        kedua: sidang.pembimbing2_nama,
+      },
+      tanggalSidang: tanggalFormatted,
+      hasilSidang: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+      penguji: {
+        role: NOTULEN_ROLE_LABEL[role],
+        nama:
+          role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
+        // Signed only when the penguji approves the student's revision (revisiPascaSidang.reviewRevisi)
+        signatureBase64: null,
+      },
+      note: row.note,
+    });
+    const fileBase64 = Buffer.from(outputBuffer).toString("base64");
+    await conn.query(
+      `UPDATE sidang_notulen
+       SET hasil_sidang = ?, file_content = ?, file_name = ?, updated_at = NOW()
+       WHERE sidang_id = ? AND role = ?`,
+      [
+        hasilSidang,
+        fileBase64,
+        `Notulen_${role}_${sidang.npm}.pdf`,
+        sidang.id,
+        role,
+      ],
     );
-    if (notulenRows.length === 0) return;
-
-    const tanggalFormatted = sidang.tanggal_sidang
-      ? formatTanggal(new Date(sidang.tanggal_sidang))
-      : "";
-
-    for (const row of notulenRows) {
-      const role = row.role;
-
-      const outputBuffer = await generateNotulenPengujiFTI({
-        mahasiswa: {
-          npm: sidang.npm,
-          nama: sidang.nama_mahasiswa,
-          programStudi: sidang.program_studi_nama,
-          judulSkripsi: sidang.judul_skripsi,
-        },
-        pembimbing: {
-          pertama: sidang.pembimbing1_nama,
-          kedua: sidang.pembimbing2_nama,
-        },
-        tanggalSidang: tanggalFormatted,
-        hasilSidang: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
-        penguji: {
-          role: NOTULEN_ROLE_LABEL[role],
-          nama:
-            role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-          // Signed only when the penguji approves the student's revision (revisiPascaSidang.reviewRevisi)
-          signatureBase64: null,
-        },
-        note: row.note,
-      });
-      const fileBase64 = Buffer.from(outputBuffer).toString("base64");
-      await conn.query(
-        `UPDATE sidang_notulen
-         SET hasil_sidang = ?, file_content = ?, file_name = ?, updated_at = NOW()
-         WHERE sidang_id = ? AND role = ?`,
-        [
-          hasilSidang,
-          fileBase64,
-          `Notulen_${role}_${sidang.npm}.pdf`,
-          sidang.id,
-          role,
-        ],
-      );
-    }
-  } catch (err) {
-    console.error("generateAndStoreNotulen error (non-fatal):", err);
   }
 }
 

@@ -9,7 +9,7 @@ const {
   generateHalamanPersetujuanJudulDesainSkripsiFTI,
 } = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -386,14 +386,16 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
      LIMIT 1`,
     [kartu.pembimbing1_nidn],
   );
-  const [[kaprodiRow]] = await conn.query(
-    // Match the working pengajuan-disposisi lookup using the assigned staff ID.
-    `SELECT md.dsnTtd AS signature_image FROM program_studi ps
-     JOIN widya_miko.c_useradm cua ON cua.usrId = ps.kaprodi_staff_usr_id
-     JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-     WHERE ps.id = ? LIMIT 1`,
+  const [[kaprodiStaffRow]] = await conn.query(
+    `SELECT kaprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
     [kartu.program_studi_id],
   );
+  const kaprodiRow = {
+    signature_image: await getStaffSignature(
+      conn,
+      kaprodiStaffRow?.kaprodi_staff_usr_id,
+    ),
+  };
   const [[psRow]] = await conn.query(
     `SELECT
        ps.nama AS program_studi_nama,

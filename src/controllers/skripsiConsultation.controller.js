@@ -12,7 +12,7 @@ const {
   generateKartuPenulisanSkripsiFTI,
 } = require("../services/generateKartuPenulisanSkripsiFTI.js");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 
 const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 const CHAPTER_LABEL = {
@@ -220,15 +220,14 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
   let kaprodiSignature = null;
   if (psRow?.kaprodi_staff_usr_id) {
     const [[kaprodiRow]] = await queryable.query(
-      `SELECT staf.nama, md.dsnTtd AS signature_image
-       FROM widya_miko.c_useradm cua
-       JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-       LEFT JOIN staf ON staf.usr_id = cua.usrId
-       WHERE cua.usrId = ? LIMIT 1`,
+      `SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`,
       [psRow.kaprodi_staff_usr_id],
     );
     kaprodiNama = kaprodiRow?.nama ?? "";
-    kaprodiSignature = kaprodiRow?.signature_image ?? null;
+    kaprodiSignature = await getStaffSignature(
+      queryable,
+      psRow.kaprodi_staff_usr_id,
+    );
   }
 
   return {

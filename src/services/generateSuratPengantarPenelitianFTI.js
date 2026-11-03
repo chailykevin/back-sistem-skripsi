@@ -3,6 +3,7 @@ const { replacePlaceholders } = require("./shared/html.js");
 const { imageToDataUrl, renderNormalizedSignature } = require("./shared/images.js");
 const { renderPdf } = require("./shared/pdf.js");
 const { formatTanggal } = require("../utils/dates");
+const { getStaffSignature } = require("../utils/signature");
 const templatePath = path.join(__dirname, "../templates/surat-pengantar-penelitian-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/surat-pengantar-penelitian-fti/template.css");
 
@@ -24,20 +25,19 @@ async function getSuratPengantarPenelitianData(conn, pengajuanDisposisiPembimbin
               o.judul
             ) AS judul_skripsi,
             COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
-            md_kaprodi.dsnTtd AS kaprodi_sig
+            ps.kaprodi_staff_usr_id
      FROM pengajuan_disposisi_pembimbing pj
      JOIN mahasiswa m ON m.npm = pj.npm
      JOIN program_studi ps ON ps.id = m.program_studi_id
      LEFT JOIN outline o ON o.id = pj.outline_id
      LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
      LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-     LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_staff_usr_id
-     LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
      WHERE pj.id = ?
      LIMIT 1`,
     [pengajuanDisposisiPembimbingId],
   );
   if (!row) return null;
+  row.kaprodi_sig = await getStaffSignature(conn, row.kaprodi_staff_usr_id);
 
   return {
     nomorSurat: row.nomor_sk_surat_pengantar ?? "",

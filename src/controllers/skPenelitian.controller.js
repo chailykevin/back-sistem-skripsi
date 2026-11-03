@@ -18,7 +18,7 @@ const {
   generateSuratPengantarPenelitianFTI,
 } = require("../services/generateSuratPengantarPenelitianFTI.js");
 const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { BULAN_ROMAWI, formatTanggal } = require("../utils/dates");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
@@ -90,12 +90,7 @@ async function generateSkDocuments(conn, sk, outlineId) {
 
 
   const [[dekan]] = await conn.query(
-    `SELECT md.dsnTtd AS signature_image, s.nama AS nama_dekan 
-     from staf s
-     JOIN widya_miko.c_useradm cua ON cua.usrId = s.usr_id 
-     JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-     WHERE s.usr_id = ?
-     LIMIT 1`,
+    `SELECT s.nama AS nama_dekan FROM staf s WHERE s.usr_id = ? LIMIT 1`,
     [ps.dekan_nidn],
   );
 
@@ -103,16 +98,21 @@ async function generateSkDocuments(conn, sk, outlineId) {
     throw Object.assign(new Error("Dekan belum dikonfigurasi"), {
       statusCode: 400,
     });
+  dekan.signature_image = await getStaffSignature(conn, ps.dekan_nidn);
 
   const [[kaprodi]] = await conn.query(
-    `SELECT md.dsnTtd AS signature_image, staf.nama AS nama_kaprodi
+    `SELECT ps.kaprodi_staff_usr_id, staf.nama AS nama_kaprodi
      FROM program_studi ps
      LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
-     JOIN widya_miko.c_useradm cua ON cua.usrId = ps.kaprodi_staff_usr_id
-     JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
      WHERE ps.id = ? LIMIT 1`,
     [kartu.program_studi_id],
   );
+  if (kaprodi) {
+    kaprodi.signature_image = await getStaffSignature(
+      conn,
+      kaprodi.kaprodi_staff_usr_id,
+    );
+  }
 
   const [[mahasiswaUser]] = await conn.query(
     `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
@@ -444,13 +444,16 @@ exports.initSkPenelitian = async (req, res, next) => {
        LIMIT 1`,
       [kartu.pembimbing1_nidn],
     );
-    const [[kaprodiRow]] = await conn.query(
-      `SELECT md.dsnTtd AS signature_image FROM program_studi ps
-       JOIN widya_miko.c_useradm cua ON cua.usrId = ps.kaprodi_staff_usr_id
-       JOIN widya_miko.m_dosen md ON md.dsnNama = cua.usrNama
-       WHERE ps.id = ? LIMIT 1`,
+    const [[kaprodiStaffRow]] = await conn.query(
+      `SELECT kaprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
       [kartu.program_studi_id],
     );
+    const kaprodiRow = {
+      signature_image: await getStaffSignature(
+        conn,
+        kaprodiStaffRow?.kaprodi_staff_usr_id,
+      ),
+    };
     const [[psRow]] = await conn.query(
       `SELECT ps.nama AS program_studi_nama, COALESCE(staf.nama, d.nama) AS kaprodi_nama,
               m.nama AS nama_mahasiswa,

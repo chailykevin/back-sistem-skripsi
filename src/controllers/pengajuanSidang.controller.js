@@ -35,7 +35,7 @@ const {
   getKaprodiProgramStudiIds,
   isKaprodiOfProgramStudi,
 } = require("../utils/identity");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { BULAN_ROMAWI, formatTanggal } = require("../utils/dates");
 
 function validateIpk(ipk) {
@@ -247,6 +247,15 @@ async function canReadPengajuanSidang(req, skripsiId) {
     return (await getStudentNpm(req.user.id)) === skripsi.npm;
   }
   return false;
+}
+
+async function isSkripsiOwnedBy(queryable, skripsiId, npm) {
+  if (!npm) return false;
+  const [[row]] = await queryable.query(
+    `SELECT id FROM skripsi WHERE id = ? AND npm = ? LIMIT 1`,
+    [skripsiId, npm],
+  );
+  return !!row;
 }
 
 // The consultation-completion auto-init can create an original sidang draft
@@ -638,6 +647,11 @@ exports.uploadFiles = async (req, res, next) => {
         .json({ ok: false, message: "fileType tidak boleh duplikat" });
     }
 
+    const npm = await getStudentNpm(req.user.id);
+    if (!(await isSkripsiOwnedBy(db, skripsiId, npm))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
     const sidang = await getActiveSidang(db, skripsiId);
     if (!sidang) {
       return res
@@ -766,6 +780,9 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       return res
         .status(400)
         .json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+    if (!(await isSkripsiOwnedBy(conn, skripsiId, npm))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     await conn.beginTransaction();
@@ -1610,6 +1627,11 @@ exports.updateKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
+    const npm = await getStudentNpm(req.user.id);
+    if (!(await isSkripsiOwnedBy(db, skripsiId, npm))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+
     const activeSidangForUpdate = await getActiveSidang(db, skripsiId);
     if (!activeSidangForUpdate) {
       return res.status(404).json({
@@ -1820,6 +1842,9 @@ exports.submitKaprodi = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
+    if (!(await isSkripsiOwnedBy(conn, skripsiId, npm))) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
 
     await conn.beginTransaction();
     txStarted = true;
@@ -1927,7 +1952,7 @@ exports.submitKaprodi = async (req, res, next) => {
               s.judul AS judul_skripsi,
               d1.nama AS dospem1_nama,
               d2.nama AS dospem2_nama,
-              md_kaprodi.dsnTtd AS kaprodi_sig,
+              ps.kaprodi_staff_usr_id,
               COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
               u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
@@ -1938,12 +1963,16 @@ exports.submitKaprodi = async (req, res, next) => {
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
        LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_staff_usr_id
-       LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
       [skripsiId],
     );
+    if (docData) {
+      docData.kaprodi_sig = await getStaffSignature(
+        conn,
+        docData.kaprodi_staff_usr_id,
+      );
+    }
 
     const todayDate = formatTanggal(new Date());
     const tahunMasuk = docData?.npm
@@ -2932,7 +2961,7 @@ exports.submitDisposisi = async (req, res, next) => {
          s.judul AS judul_skripsi,
          d1.nama AS dospem1_nama,
          d2.nama AS dospem2_nama,
-         md_kaprodi.dsnTtd AS kaprodi_sig,
+         ps.kaprodi_staff_usr_id,
          COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
          u_mhs.signature_image AS mahasiswa_sig
        FROM skripsi s
@@ -2943,12 +2972,16 @@ exports.submitDisposisi = async (req, res, next) => {
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
        LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-       LEFT JOIN widya_miko.c_useradm cua_kaprodi ON cua_kaprodi.usrId = ps.kaprodi_staff_usr_id
-       LEFT JOIN widya_miko.m_dosen md_kaprodi ON md_kaprodi.dsnNama = cua_kaprodi.usrNama
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
       [skripsiId],
     );
+    if (docData) {
+      docData.kaprodi_sig = await getStaffSignature(
+        conn,
+        docData.kaprodi_staff_usr_id,
+      );
+    }
 
     const npm = docData?.npm ?? "";
     const sidangDateFormatted = kaprodi.tanggal_sidang
@@ -3256,16 +3289,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
 
     // Kaprodi signature + name
     const kaprodiStaffUserId = dataRow?.kaprodi_staff_usr_id ?? null;
-    const [[kaprodiUserRow]] = kaprodiStaffUserId
-      ? await conn.query(
-          `SELECT d.dsnTtd AS signature_image
-           FROM widya_miko.c_useradm u
-           JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
-           WHERE u.usrId = ?
-           LIMIT 1`,
-          [kaprodiStaffUserId],
-        )
-      : [[null]];
+    const kaprodiSignature = await getStaffSignature(conn, kaprodiStaffUserId);
     const [[kaprodiStaffRow]] = kaprodiStaffUserId
       ? await conn.query(`SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`, [
           kaprodiStaffUserId,
@@ -3276,7 +3300,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
       {
         role: "Kaprodi",
         nama: kaprodiStaffRow?.nama,
-        signatureImage: kaprodiUserRow?.signature_image,
+        signatureImage: kaprodiSignature,
       },
     ]);
 
@@ -3298,10 +3322,16 @@ exports.generateSuratUndangan = async (req, res, next) => {
         getDosenEmail(dataRow?.penguji2_nidn),
       ]);
 
-    // Generate nomor_surat for surat undangan (monthly sequence per prodi, resets each month)
+    // Generate nomor_surat for surat undangan (monthly sequence per prodi, resets each month).
+    // Locking the prodi row serializes concurrent generations for the same prodi, and the count
+    // is a locking read (FOR SHARE) so it sees letters committed while we waited for that lock —
+    // a plain read would use this transaction's older snapshot and hand out a duplicate number.
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
+    await conn.query(`SELECT id FROM program_studi WHERE id = ? FOR UPDATE`, [
+      dataRow?.program_studi_id,
+    ]);
     const [[{ seq }]] = await conn.query(
       `SELECT COUNT(*) AS seq
        FROM sidang sd
@@ -3309,7 +3339,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
        WHERE sk.program_studi_id = ?
          AND sd.nomor_surat IS NOT NULL
          AND YEAR(sd.created_at) = ?
-         AND MONTH(sd.created_at) = ?`,
+         AND MONTH(sd.created_at) = ?
+       FOR SHARE`,
       [dataRow?.program_studi_id, year, month],
     );
     const nomorSuratSidang = `${String(Number(seq) + 1).padStart(3, "0")}/${dataRow?.f_kode ?? ""}/${dataRow?.ps_kode ?? ""}/Sidang-Skripsi/${BULAN_ROMAWI[month - 1]}/${year}`;
@@ -3349,7 +3380,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
       tempatSidang: dataRow?.tempat_sidang ?? "",
       ketuaProgramStudi: {
         nama: kaprodiStaffRow?.nama ?? "",
-        signatureBase64: kaprodiUserRow?.signature_image ?? null,
+        signatureBase64: kaprodiSignature ?? null,
       },
     };
     const suratBuffer = await generateSuratUndanganSidangFTI(
@@ -3468,7 +3499,10 @@ exports.generateSuratUndangan = async (req, res, next) => {
     await conn.commit();
     txStarted = false;
 
-    // Best-effort email dispatch after commit — errors are logged but do not fail the response
+    // Best-effort email after commit — failures are logged but never fail the response, since the
+    // surat is already stored. It is awaited because on Vercel a send left running after the
+    // response can be frozen mid-way and silently dropped; the timeout caps how long a slow SMTP
+    // server can hold the request.
     const recipients = [
       pembimbing1Email,
       pembimbing2Email,
@@ -3478,21 +3512,34 @@ exports.generateSuratUndangan = async (req, res, next) => {
     ].filter(Boolean);
 
     if (recipients.length > 0) {
-      sendSuratUndangan({
-        recipients,
-        suratBuffer,
-        npm,
-        namaMahasiswa: dataRow?.nama_mahasiswa ?? "",
-        sidangDate,
-        sidangTime,
-        tempat: dataRow?.tempat_sidang ?? "",
-        judulSkripsi: dataRow?.judul_skripsi ?? "",
-      }).catch((err) => {
+      let emailTimer;
+      try {
+        await Promise.race([
+          sendSuratUndangan({
+            recipients,
+            suratBuffer,
+            npm,
+            namaMahasiswa: dataRow?.nama_mahasiswa ?? "",
+            sidangDate,
+            sidangTime,
+            tempat: dataRow?.tempat_sidang ?? "",
+            judulSkripsi: dataRow?.judul_skripsi ?? "",
+          }),
+          new Promise((_, reject) => {
+            emailTimer = setTimeout(
+              () => reject(new Error("timeout after 10s")),
+              10000,
+            );
+          }),
+        ]);
+      } catch (err) {
         console.error(
           "[generateSuratUndangan] email dispatch failed:",
           err?.message ?? err,
         );
-      });
+      } finally {
+        clearTimeout(emailTimer);
+      }
     }
 
     return res.json({ ok: true, data: { status: "COMPLETED" } });

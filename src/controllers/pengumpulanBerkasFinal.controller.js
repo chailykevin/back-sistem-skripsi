@@ -8,7 +8,7 @@ const {
   generateSuratKeteranganPenyerahanSkripsiFTI,
 } = require("../services/generateSuratKeteranganPenyerahanSkripsiFTI");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-const { assertSignatures } = require("../utils/signature");
+const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 
 function recipientLink(role, skripsiId) {
@@ -779,19 +779,14 @@ exports.signPengumpulan = async (req, res, next) => {
         });
     }
 
-    const [[sekprodiSigRow]] = await conn.query(
-      `SELECT d.dsnTtd AS signature_image
-       FROM widya_miko.c_useradm u
-       JOIN widya_miko.m_dosen d ON d.dsnNama = u.usrNama
-       WHERE u.usrId = ?
-       LIMIT 1`,
-      [sekprodiUserRow.staff_usr_id],
+    const sekprodiSig = await getStaffSignature(
+      conn,
+      sekprodiUserRow.staff_usr_id,
     );
     const [[stafRow]] = await conn.query(
       `SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`,
       [sekprodiUserRow.staff_usr_id],
     );
-    const sekprodiSig = sekprodiSigRow?.signature_image ?? null;
     const namaSekprodi = stafRow?.nama ?? "";
 
     // Regenerate document with sekprodi signature

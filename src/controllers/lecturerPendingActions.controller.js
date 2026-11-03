@@ -82,6 +82,7 @@ exports.getPendingActions = async (req, res, next) => {
          WHERE si.status = 'ONGOING'
            AND sk.pembimbing1_nidn = ?
            AND (SELECT COUNT(*) FROM sidang_penilaian sp WHERE sp.sidang_id = si.id AND sp.submitted_at IS NOT NULL) = 4
+           AND (SELECT COUNT(*) FROM sidang_notulen sn2 WHERE sn2.sidang_id = si.id AND sn2.submitted_at IS NOT NULL) = 2
            AND NOT EXISTS (
              SELECT 1 FROM sidang_hasil_penilaian shp
              WHERE shp.sidang_id = si.id AND shp.submitted_at IS NOT NULL
