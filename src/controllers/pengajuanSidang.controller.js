@@ -30,7 +30,6 @@ const {
 } = require("../services/generatePernyataanKelengkapanDanNilaiMatkulFTI.js");
 const {
   generateUsulanPengujiFTI,
-  resolvePengujiChoice,
 } = require("../services/generateUsulanPengujiFTI.js");
 const {
   generatePernyataanPenyelesaianSkripsiFTI,
@@ -184,6 +183,28 @@ async function getIneligiblePengujiMessage(
     )
     .join(", ");
   return `Dosen penguji berikut tidak tersedia untuk posisi tersebut di program studi ini: ${names}`;
+}
+
+// The Lembar Usulan Penguji lists the prodi's eligible examiners and highlights the picks by NIDN.
+// Callers check eligibility first (getIneligiblePengujiMessage), so both picks are on the lists.
+async function buildPilihanPenguji(
+  conn,
+  programStudiId,
+  jenis,
+  { penguji1Nidn, penguji2Nidn },
+) {
+  const roster = await dosenUjiSidangSkripsiProdiService.listUsulanRoster(
+    conn,
+    programStudiId,
+    jenis,
+  );
+  const nomor = (list, nidn) => list.findIndex((d) => d.nidn === nidn) + 1;
+  return {
+    utama: roster.utama.map((d) => d.nama),
+    kedua: roster.kedua.map((d) => d.nama),
+    utamaNomor: nomor(roster.utama, penguji1Nidn),
+    keduaNomor: nomor(roster.kedua, penguji2Nidn),
+  };
 }
 
 
@@ -2219,13 +2240,14 @@ exports.submitKaprodi = async (req, res, next) => {
 
     // Generate LEMBAR_USULAN_PENGUJI (not for Bisnis Digital, whose penguji Kaprodi assigns)
     if (pengujiRule.studentPicks) {
-      const [[pg1RowUsulan]] = await conn.query(
-        `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
-        [kaprodi.penguji1_nidn],
-      );
-      const [[pg2RowUsulan]] = await conn.query(
-        `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
-        [kaprodi.penguji2_nidn],
+      const pilihanPengujiUsulan = await buildPilihanPenguji(
+        conn,
+        skripsiProdiRow?.program_studi_id,
+        activeSidangForSubmit.jenis,
+        {
+          penguji1Nidn: kaprodi.penguji1_nidn,
+          penguji2Nidn: kaprodi.penguji2_nidn,
+        },
       );
 
       const dataUsulanPengujiFTI = {
@@ -2243,10 +2265,7 @@ exports.submitKaprodi = async (req, res, next) => {
           judulSkripsi: docData?.judul_skripsi ?? "",
           signatureBase64: docData?.mahasiswa_sig ?? null,
         },
-        pilihanPenguji: {
-          utamaNomor: resolvePengujiChoice(pg1RowUsulan?.nama, "utama"),
-          keduaNomor: resolvePengujiChoice(pg2RowUsulan?.nama, "kedua"),
-        },
+        pilihanPenguji: pilihanPengujiUsulan,
         disposisi: {
           pengujiUtama: "",
           pengujiKedua: "",
@@ -3164,10 +3183,15 @@ exports.submitDisposisi = async (req, res, next) => {
           judulSkripsi: docData?.judul_skripsi ?? "",
           signatureBase64: docData?.mahasiswa_sig ?? null,
         },
-        pilihanPenguji: {
-          utamaNomor: resolvePengujiChoice(pg1RowDisposisi?.nama, "utama"),
-          keduaNomor: resolvePengujiChoice(pg2RowDisposisi?.nama, "kedua"),
-        },
+        pilihanPenguji: await buildPilihanPenguji(
+          conn,
+          kaprodi.program_studi_id,
+          activeSidangForDisposisi.jenis,
+          {
+            penguji1Nidn: kaprodi.penguji1_nidn,
+            penguji2Nidn: kaprodi.penguji2_nidn,
+          },
+        ),
         disposisi: {
           pengujiUtama: pg1RowDisposisi?.nama ?? "",
           pengujiKedua: pg2RowDisposisi?.nama ?? "",

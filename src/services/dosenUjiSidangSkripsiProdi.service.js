@@ -84,6 +84,20 @@ async function findIneligible(conn, programStudiId, jenis, picks) {
   return ineligible.map((p) => ({ ...p, nama: namaByNidn.get(p.nidn) ?? null }));
 }
 
+// The examiner lists printed on the Lembar Usulan Penguji, alphabetical, read on the caller's connection.
+async function listUsulanRoster(conn, programStudiId, jenis) {
+  const [rows] = await conn.query(
+    `SELECT dusp.role, d.nidn, d.nama
+       FROM dosen_uji_sidang_skripsi_prodi dusp INNER JOIN dosen d ON d.nidn = dusp.dosen_nidn
+      WHERE dusp.program_studi_id = ? AND dusp.jenis = ?
+      ORDER BY d.nama ASC`,
+    [programStudiId, requireJenis(jenis)],
+  );
+  const pick = (role) =>
+    rows.filter((row) => row.role === role).map(({ nidn, nama }) => ({ nidn, nama }));
+  return { utama: pick("PENGUJI_1"), kedua: pick("PENGUJI_2") };
+}
+
 async function getManagementData({
   jenis,
   q = null,
@@ -226,5 +240,6 @@ module.exports = {
   listByProgramStudiId,
   listEligibleByRole,
   findIneligible,
+  listUsulanRoster,
   getManagementData,
 };
