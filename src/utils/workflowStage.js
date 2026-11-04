@@ -69,9 +69,19 @@ function latestByKey(rows, keyField, tieBreakField = "id") {
 
 const RPS_STAGE_ORDER = ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"];
 
-function resolveActiveRevisiStage(stages, isCompleted) {
+// A Seminar Bisnis Digital revisi has 3 stages: its single penguji is stored as PENGUJI_1.
+const RPS_STAGE_ORDER_BY_JENIS = {
+  SKRIPSI: RPS_STAGE_ORDER,
+  SEMINAR_BISNIS_DIGITAL: ["PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"],
+};
+
+function revisiStageOrderFor(jenis) {
+  return RPS_STAGE_ORDER_BY_JENIS[jenis] ?? RPS_STAGE_ORDER;
+}
+
+function resolveActiveRevisiStage(stages, isCompleted, jenis) {
   if (isCompleted) return { activeStage: null, activeStatus: null, stageRow: null };
-  for (const role of RPS_STAGE_ORDER) {
+  for (const role of revisiStageOrderFor(jenis)) {
     const stage = stages.find((s) => s.signer_role === role);
     if (!stage) return { activeStage: null, activeStatus: null, stageRow: null };
     if (stage.current_status !== "APPROVED") {
@@ -84,6 +94,7 @@ function resolveActiveRevisiStage(stages, isCompleted) {
 module.exports = {
   CHAPTER_ORDER,
   RPS_STAGE_ORDER,
+  revisiStageOrderFor,
   latestByKey,
   resolveActiveKonsultasiOutlineStage,
   resolveActiveKonsultasiSkripsiStage,

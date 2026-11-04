@@ -21,6 +21,31 @@ async function renderConsultationRows(rows) {
   ).join("");
 }
 
+function renderTanggalSelesaiRow(label, value) {
+  return `<div><span>${label}</span><span>:</span><strong class="writing-date">${escapeHtml(value)}</strong></div>`;
+}
+
+// A Bisnis Digital student who went through the Seminar has two end dates on the same card:
+// the proposal (Bab 3 accepted) and the skripsi (Bab 5 accepted).
+function renderTanggalSelesaiRows(data) {
+  if (data.tanggalSelesaiMenulisProposal === undefined) {
+    return renderTanggalSelesaiRow(
+      "Tanggal Selesai Menulis",
+      data.tanggalSelesaiMenulis,
+    );
+  }
+  return (
+    renderTanggalSelesaiRow(
+      "Tanggal Selesai Menulis Proposal",
+      data.tanggalSelesaiMenulisProposal,
+    ) +
+    renderTanggalSelesaiRow(
+      "Tanggal Selesai Menulis Skripsi",
+      data.tanggalSelesaiMenulis,
+    )
+  );
+}
+
 async function renderTemplate(template, data) {
   const [
     logoUWDP,
@@ -54,7 +79,6 @@ async function renderTemplate(template, data) {
     "{{namaPembimbingPertama}}": data.pembimbing.pertama.nama,
     "{{namaPembimbingKedua}}": data.pembimbing.kedua.nama,
     "{{tanggalMulaiMenulis}}": data.tanggalMulaiMenulis,
-    "{{tanggalSelesaiMenulis}}": data.tanggalSelesaiMenulis,
     "{{namaKetuaProgramStudi}}": data.ketuaProgramStudi.nama,
   };
   const html = Object.entries(values).reduce(
@@ -66,6 +90,11 @@ async function renderTemplate(template, data) {
     .replace("{{signaturePembimbingPertama}}", signaturePembimbingPertama)
     .replace("{{signaturePembimbingKedua}}", signaturePembimbingKedua)
     .replace("{{signatureKetuaProgramStudi}}", signatureKetuaProgramStudi)
+    .replace("{{barisTanggalSelesai}}", renderTanggalSelesaiRows(data))
+    .replace(
+      "{{studentDetailsClass}}",
+      data.tanggalSelesaiMenulisProposal === undefined ? "" : "with-proposal",
+    )
     .replace("{{catatanKonsultasiRows}}", consultationRows);
 }
 

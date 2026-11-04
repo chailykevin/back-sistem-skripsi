@@ -1,4 +1,15 @@
 const db = require("../db");
+const { JENIS } = require("../services/sidangScope.service");
+
+// Omitted = SKRIPSI: the student, Kaprodi and admin pages pick "the open window" from the list,
+// so Seminar windows must not appear there unless asked for.
+function parseJenis(value) {
+  if (value === undefined || value === null || value === "") return JENIS.SKRIPSI;
+  const jenis = String(value).trim().toUpperCase();
+  return Object.values(JENIS).includes(jenis) ? jenis : null;
+}
+
+const INVALID_JENIS_MESSAGE = "jenis must be SKRIPSI or SEMINAR_BISNIS_DIGITAL";
 
 function parseDateInput(raw) {
   if (!raw) return null;
@@ -28,6 +39,7 @@ function computeStatus(openAt, closeAt) {
 function formatRow(r) {
   return {
     id: r.id,
+    jenis: r.jenis,
     tahunAkademik: r.tahun_akademik,
     periodeAkademik: r.periode_akademik,
     openAt: r.open_at,
@@ -76,12 +88,12 @@ function validatePeriodFields({ openAt, closeAt, tahunAkademik, periodeAkademik 
 
 // Overlap test: existing.open_at < new.closeAt AND existing.close_at > new.openAt
 // (strict comparisons so periods that merely touch at a shared boundary instant don't count as overlapping)
-// Checked against ALL periods regardless of tahun_akademik/periode_akademik so that at most one
-// sidang submission period can ever be open at the same time.
-async function findOverlappingPeriod({ id, openAt, closeAt }) {
-  const params = [closeAt, openAt];
+// Checked against all periods of the same jenis regardless of tahun_akademik/periode_akademik, so at
+// most one Skripsi and one Seminar Bisnis Digital window can be open at the same time.
+async function findOverlappingPeriod({ id, jenis, openAt, closeAt }) {
+  const params = [jenis, closeAt, openAt];
   let sql = `SELECT id FROM sidang_submission_period
-             WHERE open_at < ? AND close_at > ?`;
+             WHERE jenis = ? AND open_at < ? AND close_at > ?`;
   if (id !== undefined) {
     sql += " AND id != ?";
     params.push(id);
@@ -92,10 +104,16 @@ async function findOverlappingPeriod({ id, openAt, closeAt }) {
 
 exports.list = async (req, res, next) => {
   try {
+    const jenis = parseJenis(req.query?.jenis);
+    if (!jenis) {
+      return res.status(400).json({ ok: false, message: INVALID_JENIS_MESSAGE });
+    }
     const [rows] = await db.query(
-      `SELECT id, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
+      `SELECT id, jenis, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
        FROM sidang_submission_period
-       ORDER BY open_at DESC`
+       WHERE jenis = ?
+       ORDER BY open_at DESC`,
+      [jenis]
     );
     return res.json({ ok: true, data: rows.map(formatRow) });
   } catch (err) {
@@ -121,27 +139,34 @@ exports.create = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: validationError });
     }
 
+    const jenis = parseJenis(req.body?.jenis);
+    if (!jenis) {
+      return res.status(400).json({ ok: false, message: INVALID_JENIS_MESSAGE });
+    }
+
     const trimmedTahunAkademik = String(tahunAkademik).trim();
     const openSql = toSqlDateTime(parseDateInput(openAt));
     const closeSql = toSqlDateTime(parseDateInput(closeAt));
 
     const hasOverlap = await findOverlappingPeriod({
+      jenis,
       openAt: openSql,
       closeAt: closeSql,
     });
     if (hasOverlap) {
       return res.status(409).json({
         ok: false,
-        message: "Sudah ada periode lain dengan rentang tanggal yang tumpang tindih. Hanya boleh ada satu periode yang buka pada satu waktu.",
+        message: "Sudah ada periode lain dengan jenis yang sama dan rentang tanggal yang tumpang tindih. Hanya boleh ada satu periode per jenis yang buka pada satu waktu.",
       });
     }
 
     const actorUserId = Number(req.user.id) || null;
     const [result] = await db.query(
       `INSERT INTO sidang_submission_period
-         (tahun_akademik, periode_akademik, open_at, close_at, created_by_user_id, updated_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (jenis, tahun_akademik, periode_akademik, open_at, close_at, created_by_user_id, updated_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
+        jenis,
         trimmedTahunAkademik,
         periodeAkademik,
         openSql,
@@ -152,7 +177,7 @@ exports.create = async (req, res, next) => {
     );
 
     const [rows] = await db.query(
-      `SELECT id, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
+      `SELECT id, jenis, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
        FROM sidang_submission_period WHERE id = ?`,
       [result.insertId]
     );
@@ -171,7 +196,7 @@ exports.getById = async (req, res, next) => {
     }
 
     const [rows] = await db.query(
-      `SELECT id, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
+      `SELECT id, jenis, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
        FROM sidang_submission_period WHERE id = ?`,
       [id]
     );
@@ -206,7 +231,7 @@ exports.update = async (req, res, next) => {
     }
 
     const [existing] = await db.query(
-      `SELECT id, open_at, close_at, tahun_akademik, periode_akademik FROM sidang_submission_period WHERE id = ?`,
+      `SELECT id, jenis, open_at, close_at, tahun_akademik, periode_akademik FROM sidang_submission_period WHERE id = ?`,
       [id]
     );
     if (!existing.length) {
@@ -222,13 +247,14 @@ exports.update = async (req, res, next) => {
 
     const hasOverlap = await findOverlappingPeriod({
       id,
+      jenis: existing[0].jenis,
       openAt: toSqlDateTime(resolvedOpen),
       closeAt: toSqlDateTime(resolvedClose),
     });
     if (hasOverlap) {
       return res.status(409).json({
         ok: false,
-        message: "Sudah ada periode lain dengan rentang tanggal yang tumpang tindih. Hanya boleh ada satu periode yang buka pada satu waktu.",
+        message: "Sudah ada periode lain dengan jenis yang sama dan rentang tanggal yang tumpang tindih. Hanya boleh ada satu periode per jenis yang buka pada satu waktu.",
       });
     }
 
@@ -252,7 +278,7 @@ exports.update = async (req, res, next) => {
     await db.query(`UPDATE sidang_submission_period SET ${sets.join(", ")} WHERE id = ?`, params);
 
     const [rows] = await db.query(
-      `SELECT id, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
+      `SELECT id, jenis, tahun_akademik, periode_akademik, open_at, close_at, created_at, updated_at
        FROM sidang_submission_period WHERE id = ?`,
       [id]
     );

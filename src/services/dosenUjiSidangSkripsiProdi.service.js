@@ -1,14 +1,30 @@
 const db = require("../db");
+const {
+  JENIS,
+  BISNIS_DIGITAL_PROGRAM_STUDI_KODE,
+  requireJenis,
+} = require("./sidangScope.service");
 
 const PENGUJI_ROLES = ["PENGUJI_1", "PENGUJI_2"];
 
+// A Seminar Bisnis Digital sidang has one penguji, and only Bisnis Digital takes the Seminar.
+const SEMINAR_PENGUJI_ROLES = ["PENGUJI_1"];
+const SEMINAR_PROGRAM_STUDI_KODE = BISNIS_DIGITAL_PROGRAM_STUDI_KODE;
+
+function rolesFor(jenis) {
+  return jenis === JENIS.SEMINAR_BISNIS_DIGITAL
+    ? SEMINAR_PENGUJI_ROLES
+    : PENGUJI_ROLES;
+}
+
 async function listByProgramStudiId(
   programStudiId,
+  jenis,
   { role = null, excludeNidns = [] } = {},
 ) {
   const excluded = [...new Set(excludeNidns.filter(Boolean))];
-  const where = ["dusp.program_studi_id = ?"];
-  const params = [programStudiId];
+  const where = ["dusp.program_studi_id = ?", "dusp.jenis = ?"];
+  const params = [programStudiId, requireJenis(jenis)];
   if (role) {
     where.push("dusp.role = ?");
     params.push(role);
@@ -18,7 +34,7 @@ async function listByProgramStudiId(
     params.push(...excluded);
   }
   const [rows] = await db.query(
-    `SELECT dusp.id_dosen_uji_sidang_skripsi_prodi, dusp.role, d.nidn, d.nama, d.email
+    `SELECT dusp.id_dosen_uji_sidang_skripsi_prodi, dusp.role, dusp.jenis, d.nidn, d.nama, d.email
        FROM dosen_uji_sidang_skripsi_prodi dusp INNER JOIN dosen d ON d.nidn = dusp.dosen_nidn
       WHERE ${where.join(" AND ")}
       ORDER BY d.nama ASC, dusp.role ASC`,
@@ -27,8 +43,10 @@ async function listByProgramStudiId(
   return rows;
 }
 
-async function listEligibleByRole(programStudiId, excludeNidns = []) {
-  const rows = await listByProgramStudiId(programStudiId, { excludeNidns });
+async function listEligibleByRole(programStudiId, jenis, excludeNidns = []) {
+  const rows = await listByProgramStudiId(programStudiId, jenis, {
+    excludeNidns,
+  });
   const pick = (role) =>
     rows
       .filter((row) => row.role === role)
@@ -42,15 +60,15 @@ async function listEligibleByRole(programStudiId, excludeNidns = []) {
 }
 
 // picks: [{ nidn, role }]; returns the picks that are not eligible for their role.
-async function findIneligible(conn, programStudiId, picks) {
+async function findIneligible(conn, programStudiId, jenis, picks) {
   const wanted = picks.filter((p) => p.nidn && PENGUJI_ROLES.includes(p.role));
   if (!wanted.length) return [];
   const nidns = [...new Set(wanted.map((p) => p.nidn))];
   const placeholders = nidns.map(() => "?").join(", ");
   const [eligibleRows] = await conn.query(
     `SELECT dosen_nidn, role FROM dosen_uji_sidang_skripsi_prodi
-      WHERE program_studi_id = ? AND dosen_nidn IN (${placeholders})`,
-    [programStudiId, ...nidns],
+      WHERE program_studi_id = ? AND jenis = ? AND dosen_nidn IN (${placeholders})`,
+    [programStudiId, requireJenis(jenis), ...nidns],
   );
   const eligible = new Set(
     eligibleRows.map((row) => `${row.dosen_nidn}|${row.role}`),
@@ -67,6 +85,7 @@ async function findIneligible(conn, programStudiId, picks) {
 }
 
 async function getManagementData({
+  jenis,
   q = null,
   homeProgramStudiId = null,
   programStudiId = null,
@@ -74,6 +93,7 @@ async function getManagementData({
   limit = 10,
   offset = 0,
 } = {}) {
+  requireJenis(jenis);
   const where = [];
   const params = [];
 
@@ -89,7 +109,8 @@ async function getManagementData({
     params.push(homeProgramStudiId);
   }
   if (programStudiId || role) {
-    const conditions = ["eligible.dosen_nidn = d.nidn"];
+    const conditions = ["eligible.dosen_nidn = d.nidn", "eligible.jenis = ?"];
+    params.push(jenis);
     if (programStudiId) {
       conditions.push("eligible.program_studi_id = ?");
       params.push(programStudiId);
@@ -145,11 +166,11 @@ async function getManagementData({
          assigned_ps.nama AS assigned_program_studi_nama
        FROM dosen d
        LEFT JOIN program_studi home_ps ON home_ps.id = d.program_studi_id
-       LEFT JOIN dosen_uji_sidang_skripsi_prodi dusp ON dusp.dosen_nidn = d.nidn
+       LEFT JOIN dosen_uji_sidang_skripsi_prodi dusp ON dusp.dosen_nidn = d.nidn AND dusp.jenis = ?
        LEFT JOIN program_studi assigned_ps ON assigned_ps.id = dusp.program_studi_id
        WHERE d.nidn IN (${nidns.map(() => "?").join(", ")})
        ORDER BY d.nama ASC, d.nidn ASC, assigned_ps.nama ASC, dusp.role ASC`,
-      nidns,
+      [jenis, ...nidns],
     );
   }
 
@@ -200,6 +221,8 @@ async function getManagementData({
 
 module.exports = {
   PENGUJI_ROLES,
+  SEMINAR_PROGRAM_STUDI_KODE,
+  rolesFor,
   listByProgramStudiId,
   listEligibleByRole,
   findIneligible,

@@ -74,6 +74,9 @@ app.use("/", revisiPascaSidangRoutes);
 const pengumpulanBerkasFinalRoutes = require("./routes/pengumpulanBerkasFinal.routes");
 app.use("/", pengumpulanBerkasFinalRoutes);
 
+const skSkripsiLanjutanRoutes = require("./routes/skSkripsiLanjutan.routes");
+app.use("/", skSkripsiLanjutanRoutes);
+
 const notificationRoutes = require("./routes/notification.routes");
 app.use("/notifications", notificationRoutes);
 

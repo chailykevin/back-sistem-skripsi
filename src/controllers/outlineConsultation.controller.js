@@ -1653,8 +1653,7 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
     );
 
     if (kartuRows.length === 0) {
-      pagination.totalItems = 0;
-      return listResponse(res, { rows: [], pagination });
+      return res.json({ ok: true, data: [] });
     }
 
     const kartuIds = kartuRows.map((r) => r.kartu_id);

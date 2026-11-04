@@ -50,9 +50,7 @@ async function ensurePengajuanSidangDraft(conn, skripsiId, jenis) {
   );
   let pengajuanSidangId = existing?.id ?? null;
   if (!pengajuanSidangId) {
-    // sidang_submission_period holds only Skripsi windows until it gets a jenis column.
-    const openPeriod =
-      jenis === JENIS.SKRIPSI ? await getSidangOpenPeriod() : null;
+    const openPeriod = await getSidangOpenPeriod(jenis);
     const [ins] = await conn.query(
       `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', 1, ?)`,
       [skripsiId, jenis, openPeriod?.id ?? null],
@@ -247,6 +245,9 @@ function buildKartuKonsultasiSkripsiPdfData(kartu, logs, extra = {}) {
     tanggalSelesaiMenulis: kartu.completed_at
       ? formatKartuDate(kartu.completed_at)
       : "",
+    ...(extra.tanggalSelesaiProposal !== undefined && {
+      tanggalSelesaiMenulisProposal: extra.tanggalSelesaiProposal,
+    }),
     catatanKonsultasi: logs.slice(0, 53).map((log) => ({
       tanggal: formatKartuDate(log.logged_at),
       keterangan: `${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`,
@@ -257,12 +258,29 @@ function buildKartuKonsultasiSkripsiPdfData(kartu, logs, extra = {}) {
 
 async function fetchKartuExtra(queryable, kartuId, skripsiId) {
   const [[skRow]] = await queryable.query(
-    `SELECT psk.nomor_surat, psk.verified_at
+    `SELECT psk.nomor_surat, psk.verified_at, psk.jenis_sk
      FROM pengajuan_sk_penelitian psk
      JOIN skripsi s ON s.outline_id = psk.outline_id
      WHERE s.id = ? ORDER BY psk.created_at DESC LIMIT 1`,
     [skripsiId],
   );
+
+  // A student who went through the Seminar (Seminar SK) gets a separate "Selesai Menulis Proposal"
+  // date on the card: when Pembimbing 1 accepted Bab 3. Read from the SK, which never changes, not
+  // resolveJenis, which switches to SKRIPSI after the bridge.
+  let tanggalSelesaiProposal;
+  if (skRow?.jenis_sk === JENIS.SEMINAR_BISNIS_DIGITAL) {
+    const [[bab3Row]] = await queryable.query(
+      `SELECT finished_at FROM konsultasi_skripsi_stage
+       WHERE kartu_konsultasi_skripsi_id = ? AND chapter_group = 'BAB_3'
+         AND stage = 'PEMBIMBING_1' AND current_status = 'ACCEPTED'
+       LIMIT 1`,
+      [kartuId],
+    );
+    tanggalSelesaiProposal = bab3Row?.finished_at
+      ? formatKartuDate(bab3Row.finished_at)
+      : "";
+  }
 
   const [[psRow]] = await queryable.query(
     `SELECT f.nama AS fakultas_nama, ps.kaprodi_staff_usr_id
@@ -292,6 +310,7 @@ async function fetchKartuExtra(queryable, kartuId, skripsiId) {
     fakultasNama: psRow?.fakultas_nama ?? "",
     nomorSk: skRow?.nomor_surat ?? "",
     tanggalMulai: skRow?.verified_at ? formatKartuDate(skRow.verified_at) : "",
+    tanggalSelesaiProposal,
     kaprodiNama,
     kaprodiSignature,
   };

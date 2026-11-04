@@ -17,7 +17,7 @@
       <h1>KARTU PENULISAN SKRIPSI</h1>
       <div class="letter-number">{{nomorSk}}</div>
 
-      <section class="student-details">
+      <section class="student-details {{studentDetailsClass}}">
         <div class="student-first-row">
           <span>Nama Mahasiswa</span><span>:</span><strong>{{namaMahasiswa}}</strong>
           <span>NPM</span><span>:</span><strong>{{npm}}</strong>
@@ -27,7 +27,7 @@
         <div><span>Pembimbing Pertama</span><span>:</span><strong>{{namaPembimbingPertama}}</strong></div>
         <div><span>Pembimbing Kedua</span><span>:</span><strong>{{namaPembimbingKedua}}</strong></div>
         <div><span>Tanggal Mulai Menulis</span><span>:</span><strong class="writing-date">{{tanggalMulaiMenulis}}</strong></div>
-        <div><span>Tanggal Selesai Menulis</span><span>:</span><strong class="writing-date">{{tanggalSelesaiMenulis}}</strong></div>
+        {{barisTanggalSelesai}}
       </section>
 
       <section class="approvals">

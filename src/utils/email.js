@@ -25,6 +25,7 @@ function createTransport() {
  * @param {string}  opts.sidangTime   - HH:MM string
  * @param {string}  opts.tempat
  * @param {string}  opts.judulSkripsi
+ * @param {string}  [opts.namaKegiatan] - e.g. "Seminar Proposal"; defaults to "Sidang Skripsi"
  */
 async function sendSuratUndangan({
   recipients,
@@ -35,12 +36,13 @@ async function sendSuratUndangan({
   sidangTime,
   tempat,
   judulSkripsi,
+  namaKegiatan = "Sidang Skripsi",
 }) {
   if (!recipients || recipients.length === 0) return;
 
   const transporter = createTransport();
 
-  const subject = `Undangan Sidang Skripsi - ${namaMahasiswa}`;
+  const subject = `Undangan ${namaKegiatan} - ${namaMahasiswa}`;
 
   const html = `
 <!DOCTYPE html>
@@ -51,7 +53,7 @@ async function sendSuratUndangan({
 
   <p>
     Dengan hormat, bersama surat ini kami sampaikan pemberitahuan bahwa mahasiswa berikut
-    telah dijadwalkan untuk melaksanakan Sidang Skripsi:
+    telah dijadwalkan untuk melaksanakan ${namaKegiatan}:
   </p>
 
   <table style="border-collapse: collapse; width: 100%; margin: 16px 0;">

@@ -24,10 +24,47 @@ const {
 const { assertSignatures } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const {
+  generateKomponenPenilaianSeminarProposalFTI,
+} = require("../services/generateKomponenPenilaianSeminarProposalFTI");
+const {
+  generateHasilPenilaianAkhirSeminarProposalFTI,
+} = require("../services/generateHasilPenilaianAkhirSeminarProposalFTI");
+const {
+  generateNotulenSeminarProposalFTI,
+} = require("../services/generateNotulenSeminarProposalFTI");
+const {
+  generateBeritaAcaraHasilSeminarProposalFTI,
+} = require("../services/generateBeritaAcaraHasilSeminarProposalFTI");
+const {
+  JENIS,
   requireJenis,
   resolveJenis,
   getLatestSidang,
 } = require("../services/sidangScope.service");
+
+// A Seminar Bisnis Digital sidang ("Seminar Proposal") has one penguji, so 3 penilaian and 1
+// notulen, and its verdict is JUDUL_DITERIMA / JUDUL_DITOLAK instead of the Skripsi verdicts.
+function isSeminarSidang(sidang) {
+  return sidang.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+}
+
+function sidangLabel(sidang) {
+  return isSeminarSidang(sidang) ? "seminar proposal" : "sidang skripsi";
+}
+
+function notulenRolesFor(sidang) {
+  return isSeminarSidang(sidang) ? ["PENGUJI_1"] : ["PENGUJI_1", "PENGUJI_2"];
+}
+
+const HASIL_SIDANG_BY_JENIS = {
+  [JENIS.SKRIPSI]: ["LULUS", "TIDAK_LULUS", "GAGAL"],
+  [JENIS.SEMINAR_BISNIS_DIGITAL]: ["JUDUL_DITERIMA", "JUDUL_DITOLAK"],
+};
+
+const HASIL_SEMINAR_LABEL = {
+  JUDUL_DITERIMA: "Diterima",
+  JUDUL_DITOLAK: "Tidak Diterima",
+};
 
 const MIME_PDF = "application/pdf";
 
@@ -106,7 +143,7 @@ async function getSidangBySkripsiId(conn, skripsiId, jenis) {
     `SELECT
        s.id, s.skripsi_id, s.jenis, s.pengajuan_sidang_id, s.nomor_surat,
        m.nama AS nama_mahasiswa, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
-       psk_k.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji,
+       psk_k.tanggal_disposisi, s.status, s.hasil_sidang, s.catatan_penguji, s.judul_baru,
        s.created_at, s.updated_at, s.completed_at,
        ps.ujian_ke,
        m.npm,
@@ -412,11 +449,13 @@ exports.startSidang = async (req, res, next) => {
         db,
         studentUserRow.id,
         "SIDANG_STARTED",
-        "Sidang skripsi Anda telah dimulai.",
+        isSeminarSidang(sidang)
+          ? "Seminar proposal Anda telah dimulai."
+          : "Sidang skripsi Anda telah dimulai.",
         studentSidangLink,
       );
     }
-    const lecturerMsg = `Sidang skripsi ${sidang.nama_mahasiswa} telah dimulai.`;
+    const lecturerMsg = `${isSeminarSidang(sidang) ? "Seminar proposal" : "Sidang skripsi"} ${sidang.nama_mahasiswa} telah dimulai.`;
     for (const lecNidn of [
       sidang.pembimbing1_nidn,
       sidang.pembimbing2_nidn,
@@ -519,7 +558,7 @@ exports.submitNotulen = async (req, res, next) => {
         conn,
         pembimbing1UserId,
         "SIDANG_NOTULEN_SUBMITTED",
-        `${callerNama} telah mengumpulkan notulen sidang ${sidang.nama_mahasiswa}.`,
+        `${callerNama} telah mengumpulkan notulen ${sidangLabel(sidang)} ${sidang.nama_mahasiswa}.`,
         `/pembimbing/sidang/${skripsiId}`,
       );
     }
@@ -686,8 +725,11 @@ exports.submitPenilaian = async (req, res, next) => {
             ? sidang.penguji1_nama
             : sidang.penguji2_nama;
 
+    const generateKomponenPenilaian = isSeminarSidang(sidang)
+      ? generateKomponenPenilaianSeminarProposalFTI
+      : generateKomponenPenilaianUjianSkripsiKomprehensifFTI;
     const outputBuffer =
-      await generateKomponenPenilaianUjianSkripsiKomprehensifFTI({
+      await generateKomponenPenilaian({
         mahasiswa: {
           nama: sidang.nama_mahasiswa,
           npm: sidang.npm,
@@ -698,7 +740,10 @@ exports.submitPenilaian = async (req, res, next) => {
         tanggalUjian: tanggalFormatted,
         tanggalDokumen: tanggalFormatted,
         penilai: {
-          role: ROLE_LABEL[role],
+          role:
+            isSeminarSidang(sidang) && role === "PENGUJI_1"
+              ? "Penguji"
+              : ROLE_LABEL[role],
           nama: participantNama,
           signatureBase64: sigRow?.signature_image ?? null,
         },
@@ -783,7 +828,7 @@ exports.submitPenilaian = async (req, res, next) => {
           conn,
           pembimbing1UserId,
           "SIDANG_PENILAIAN_SUBMITTED",
-          `${callerNama} telah mengumpulkan penilaian sidang ${sidang.nama_mahasiswa}.`,
+          `${callerNama} telah mengumpulkan penilaian ${sidangLabel(sidang)} ${sidang.nama_mahasiswa}.`,
           `/pembimbing/sidang/${skripsiId}`,
         );
       }
@@ -821,19 +866,49 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       });
     }
 
-    const { hasilSidang, catatanPenguji } = req.body;
+    const { hasilSidang, catatanPenguji, judulBaru } = req.body;
     if (!hasilSidang) {
       return res
         .status(400)
         .json({ ok: false, message: "hasilSidang wajib diisi" });
     }
-    if (!["LULUS", "TIDAK_LULUS", "GAGAL"].includes(hasilSidang)) {
+    const jenis = await resolveJenis(conn, skripsiId);
+    const allowedHasil = HASIL_SIDANG_BY_JENIS[jenis];
+    if (!allowedHasil.includes(hasilSidang)) {
       return res.status(400).json({
         ok: false,
-        message: "hasilSidang harus LULUS, TIDAK_LULUS, atau GAGAL",
+        message: `hasilSidang harus ${allowedHasil.join(", ")}`,
       });
     }
-    const jenis = await resolveJenis(conn, skripsiId);
+
+    // "Judul perlu diubah": an optional new title, only for a Seminar whose title is accepted.
+    // Stored on the sidang and applied to skripsi.judul when the SK Skripsi is issued.
+    let judulBaruValue = null;
+    if (judulBaru !== undefined && judulBaru !== null && judulBaru !== "") {
+      if (jenis !== JENIS.SEMINAR_BISNIS_DIGITAL) {
+        return res.status(400).json({
+          ok: false,
+          message: "Perubahan judul hanya untuk Seminar Bisnis Digital",
+        });
+      }
+      if (hasilSidang !== "JUDUL_DITERIMA") {
+        return res.status(400).json({
+          ok: false,
+          message: "Judul baru hanya dapat diisi jika judul diterima",
+        });
+      }
+      judulBaruValue = String(judulBaru).trim();
+      if (!judulBaruValue) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Judul baru tidak boleh kosong" });
+      }
+      if (judulBaruValue.length > 255) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Judul baru maksimal 255 karakter" });
+      }
+    }
 
     await conn.beginTransaction();
     txStarted = true;
@@ -894,7 +969,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       [sidang.id],
     );
     const submittedNotulenRoles = new Set(notulenGateRows.map((r) => r.role));
-    const missingNotulen = ["PENGUJI_1", "PENGUJI_2"].filter(
+    const missingNotulen = notulenRolesFor(sidang).filter(
       (r) => !submittedNotulenRoles.has(r),
     );
     if (missingNotulen.length > 0) {
@@ -915,11 +990,25 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     const nilaiPg1 = byRole["PENGUJI_1"] ?? 0;
     const nilaiPg2 = byRole["PENGUJI_2"] ?? 0;
     const totalNilai = nilaiP1 + nilaiP2 + nilaiPg1 + nilaiPg2;
-    const rata = totalNilai / 4;
+    // One penilaian row per participant: 4 for Skripsi, 3 for a Seminar (no Penguji 2).
+    const rata = totalNilai / penilaianRows.length;
     const grade = computeGrade(rata);
 
     // Verdict must match the computed rata — mirrors the frontend's disabled radios.
-    if (rata >= 60 && hasilSidang !== "LULUS") {
+    if (isSeminarSidang(sidang)) {
+      const expected = rata >= 60 ? "JUDUL_DITERIMA" : "JUDUL_DITOLAK";
+      if (hasilSidang !== expected) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message:
+            rata >= 60
+              ? "Rata-rata >= 60 (grade A–C), judul harus diterima."
+              : "Rata-rata < 60 (grade D), judul harus ditolak.",
+        });
+      }
+    } else if (rata >= 60 && hasilSidang !== "LULUS") {
       await conn.rollback();
       txStarted = false;
       return res.status(400).json({
@@ -969,7 +1058,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     ];
     const ujianKeStr = `${ujianKeNum} (${UJIAN_KE_LABEL[ujianKeNum] ?? ujianKeNum})`;
 
-    const hasilBuffer = await generateHasilPenilaianAkhirUjianSkripsiFTI({
+    const hasilData = {
       mahasiswa: {
         nama: sidang.nama_mahasiswa,
         npm: sidang.npm,
@@ -978,17 +1067,31 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       },
       ujianKe: ujianKeStr,
       tanggal: tanggalFormatted,
-      timPenguji: {
-        pembimbingPertama: {
-          nama: sidang.pembimbing1_nama,
-          nilai: nilaiP1,
-          signatureBase64: sigRow?.signature_image ?? null,
-        },
-        pembimbingKedua: { nama: sidang.pembimbing2_nama, nilai: nilaiP2 },
-        pengujiUtama: { nama: sidang.penguji1_nama, nilai: nilaiPg1 },
-        anggotaPenguji: { nama: sidang.penguji2_nama, nilai: nilaiPg2 },
-      },
-    });
+    };
+    const pembimbingPertama = {
+      nama: sidang.pembimbing1_nama,
+      nilai: nilaiP1,
+      signatureBase64: sigRow?.signature_image ?? null,
+    };
+    const pembimbingKedua = { nama: sidang.pembimbing2_nama, nilai: nilaiP2 };
+    const hasilBuffer = isSeminarSidang(sidang)
+      ? await generateHasilPenilaianAkhirSeminarProposalFTI({
+          ...hasilData,
+          timPenguji: {
+            pembimbingPertama,
+            pembimbingKedua,
+            penguji: { nama: sidang.penguji1_nama, nilai: nilaiPg1 },
+          },
+        })
+      : await generateHasilPenilaianAkhirUjianSkripsiFTI({
+          ...hasilData,
+          timPenguji: {
+            pembimbingPertama,
+            pembimbingKedua,
+            pengujiUtama: { nama: sidang.penguji1_nama, nilai: nilaiPg1 },
+            anggotaPenguji: { nama: sidang.penguji2_nama, nilai: nilaiPg2 },
+          },
+        });
     const hasilBase64 = Buffer.from(hasilBuffer).toString("base64");
 
     // Upsert sidang_hasil_penilaian
@@ -1016,8 +1119,8 @@ exports.submitHasilPenilaian = async (req, res, next) => {
 
     // sync'd copy of sidang_hasil_penilaian.hasil_sidang — written together in one transaction
     await conn.query(
-      `UPDATE sidang SET hasil_sidang = ?, catatan_penguji = ?, updated_at = NOW() WHERE id = ?`,
-      [hasilSidang, catatanPenguji ?? null, sidang.id],
+      `UPDATE sidang SET hasil_sidang = ?, catatan_penguji = ?, judul_baru = ?, updated_at = NOW() WHERE id = ?`,
+      [hasilSidang, catatanPenguji ?? null, judulBaruValue, sidang.id],
     );
 
     // Generate notulen DOCXs now that hasil_sidang is authoritative
@@ -1037,8 +1140,9 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       [sidang.id],
     );
 
-    // GAGAL: plagiarism detected — invalidate skripsi, no revision phase
-    if (hasilSidang === "GAGAL") {
+    // GAGAL (plagiarism) or a rejected Seminar title: invalidate the skripsi, no revision phase —
+    // the student restarts from Pengajuan Outline.
+    if (hasilSidang === "GAGAL" || hasilSidang === "JUDUL_DITOLAK") {
       await conn.query(
         `UPDATE skripsi SET status = 'GAGAL', updated_at = NOW() WHERE id = (SELECT skripsi_id FROM sidang WHERE id = ?)`,
         [sidang.id],
@@ -1051,10 +1155,31 @@ exports.submitHasilPenilaian = async (req, res, next) => {
         await insertNotification(
           conn,
           studentUserRow.id,
-          "SIDANG_GAGAL",
-          "Skripsi Anda dinyatakan GAGAL karena terindikasi plagiat. Anda dapat mengulang dari awal pada semester berikutnya.",
+          hasilSidang === "GAGAL" ? "SIDANG_GAGAL" : "SIDANG_JUDUL_DITOLAK",
+          hasilSidang === "GAGAL"
+            ? "Skripsi Anda dinyatakan GAGAL karena terindikasi plagiat. Anda dapat mengulang dari awal pada semester berikutnya."
+            : `Judul Anda tidak diterima dalam seminar proposal (nilai ${rata.toFixed(2)}, grade ${grade}). Silakan mengulang dari pengajuan outline.`,
           `/student/sidang`,
         );
+      }
+      if (hasilSidang === "JUDUL_DITOLAK") {
+        const lecturerMsg = `Seminar proposal ${sidang.nama_mahasiswa} telah selesai: judul tidak diterima (nilai: ${rata.toFixed(2)}, grade: ${grade}).`;
+        for (const lecNidn of [
+          sidang.pembimbing1_nidn,
+          sidang.pembimbing2_nidn,
+          sidang.penguji1_nidn,
+        ]) {
+          const lecId = await resolveUserId(conn, lecNidn);
+          if (lecId) {
+            await insertNotification(
+              conn,
+              lecId,
+              "SIDANG_JUDUL_DITOLAK",
+              lecturerMsg,
+              `/pembimbing/sidang/${skripsiId}`,
+            );
+          }
+        }
       }
       await conn.commit();
       txStarted = false;
@@ -1077,20 +1202,29 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       );
     }
 
-    // Notify student + all 4 participants of LULUS / TIDAK_LULUS result
+    // Notify student + all participants of the LULUS / TIDAK_LULUS / JUDUL_DITERIMA result
     const notifType =
-      hasilSidang === "LULUS" ? "SIDANG_LULUS" : "SIDANG_TIDAK_LULUS";
+      hasilSidang === "JUDUL_DITERIMA"
+        ? "SIDANG_JUDUL_DITERIMA"
+        : hasilSidang === "LULUS"
+          ? "SIDANG_LULUS"
+          : "SIDANG_TIDAK_LULUS";
     const studentSidangLink = `/student/sidang`;
     const lecturerSidangLink = `/pembimbing/sidang/${skripsiId}`;
+    const judulBaruNote = judulBaruValue
+      ? ` Judul perlu diubah menjadi: "${judulBaruValue}".`
+      : "";
     const [[studentRow]] = await conn.query(
       `SELECT id FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
       [sidang.npm],
     );
     if (studentRow) {
       const studentMsg =
-        hasilSidang === "LULUS"
-          ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi dengan nilai ${rata.toFixed(2)} (${grade}).`
-          : "Anda dinyatakan TIDAK LULUS dalam sidang skripsi. Anda dapat mengikuti ujian ulang.";
+        hasilSidang === "JUDUL_DITERIMA"
+          ? `Selamat! Judul Anda diterima dalam seminar proposal dengan nilai ${rata.toFixed(2)} (${grade}). Silakan lanjut ke revisi.${judulBaruNote}`
+          : hasilSidang === "LULUS"
+            ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi dengan nilai ${rata.toFixed(2)} (${grade}).`
+            : "Anda dinyatakan TIDAK LULUS dalam sidang skripsi. Anda dapat mengikuti ujian ulang.";
       await insertNotification(
         conn,
         studentRow.id,
@@ -1100,9 +1234,11 @@ exports.submitHasilPenilaian = async (req, res, next) => {
       );
     }
     const lecturerMsg =
-      hasilSidang === "LULUS"
-        ? `Sidang skripsi ${sidang.nama_mahasiswa} telah selesai dengan hasil LULUS (nilai: ${rata.toFixed(2)}, grade: ${grade}).`
-        : `Sidang skripsi ${sidang.nama_mahasiswa} telah selesai dengan hasil TIDAK LULUS.`;
+      hasilSidang === "JUDUL_DITERIMA"
+        ? `Seminar proposal ${sidang.nama_mahasiswa} telah selesai: judul diterima (nilai: ${rata.toFixed(2)}, grade: ${grade}).${judulBaruNote}`
+        : hasilSidang === "LULUS"
+          ? `Sidang skripsi ${sidang.nama_mahasiswa} telah selesai dengan hasil LULUS (nilai: ${rata.toFixed(2)}, grade: ${grade}).`
+          : `Sidang skripsi ${sidang.nama_mahasiswa} telah selesai dengan hasil TIDAK LULUS.`;
     for (const lecNidn of [
       sidang.pembimbing1_nidn,
       sidang.pembimbing2_nidn,
@@ -1152,29 +1288,41 @@ async function generateAndStoreNotulen(conn, sidang, hasilSidang) {
 
   for (const row of notulenRows) {
     const role = row.role;
+    const mahasiswa = {
+      npm: sidang.npm,
+      nama: sidang.nama_mahasiswa,
+      programStudi: sidang.program_studi_nama,
+      judulSkripsi: sidang.judul_skripsi,
+    };
+    const pembimbing = {
+      pertama: sidang.pembimbing1_nama,
+      kedua: sidang.pembimbing2_nama,
+    };
+    const namaPenguji =
+      role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama;
 
-    const outputBuffer = await generateNotulenPengujiFTI({
-      mahasiswa: {
-        npm: sidang.npm,
-        nama: sidang.nama_mahasiswa,
-        programStudi: sidang.program_studi_nama,
-        judulSkripsi: sidang.judul_skripsi,
-      },
-      pembimbing: {
-        pertama: sidang.pembimbing1_nama,
-        kedua: sidang.pembimbing2_nama,
-      },
-      tanggalSidang: tanggalFormatted,
-      hasilSidang: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
-      penguji: {
-        role: NOTULEN_ROLE_LABEL[role],
-        nama:
-          role === "PENGUJI_1" ? sidang.penguji1_nama : sidang.penguji2_nama,
-        // Signed only when the penguji approves the student's revision (revisiPascaSidang.reviewRevisi)
-        signatureBase64: null,
-      },
-      note: row.note,
-    });
+    // Signed only when the penguji approves the student's revision (revisiPascaSidang.reviewRevisi)
+    const outputBuffer = isSeminarSidang(sidang)
+      ? await generateNotulenSeminarProposalFTI({
+          mahasiswa,
+          pembimbing,
+          tanggalSeminar: tanggalFormatted,
+          hasilSeminar: HASIL_SEMINAR_LABEL[hasilSidang],
+          penguji: { nama: namaPenguji, signatureBase64: null },
+          note: row.note,
+        })
+      : await generateNotulenPengujiFTI({
+          mahasiswa,
+          pembimbing,
+          tanggalSidang: tanggalFormatted,
+          hasilSidang: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+          penguji: {
+            role: NOTULEN_ROLE_LABEL[role],
+            nama: namaPenguji,
+            signatureBase64: null,
+          },
+          note: row.note,
+        });
     const fileBase64 = Buffer.from(outputBuffer).toString("base64");
     await conn.query(
       `UPDATE sidang_notulen
@@ -1229,11 +1377,12 @@ async function generateAndStoreBeritaAcara(
     return row?.signature_image ?? null;
   }
 
+  const isSeminar = isSeminarSidang(sidang);
   const [sig1, sig2, sigPg1, sigPg2] = await Promise.all([
     getSig(sidang.pembimbing1_nidn),
     getSig(sidang.pembimbing2_nidn),
     getSig(sidang.penguji1_nidn),
-    getSig(sidang.penguji2_nidn),
+    isSeminar ? null : getSig(sidang.penguji2_nidn),
   ]);
 
   assertSignatures([
@@ -1247,33 +1396,57 @@ async function generateAndStoreBeritaAcara(
       nama: sidang.pembimbing2_nama,
       signatureImage: sig2,
     },
-    { role: "Penguji 1", nama: sidang.penguji1_nama, signatureImage: sigPg1 },
-    { role: "Penguji 2", nama: sidang.penguji2_nama, signatureImage: sigPg2 },
+    isSeminar
+      ? { role: "Penguji", nama: sidang.penguji1_nama, signatureImage: sigPg1 }
+      : { role: "Penguji 1", nama: sidang.penguji1_nama, signatureImage: sigPg1 },
+    ...(isSeminar
+      ? []
+      : [
+          {
+            role: "Penguji 2",
+            nama: sidang.penguji2_nama,
+            signatureImage: sigPg2,
+          },
+        ]),
   ]);
 
-  const outputBuffer =
-    await generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI({
-      hari: hariStr,
-      tanggalUjian: tanggalStr,
-      waktu: waktuStr,
-      mahasiswa: {
-        nama: sidang.nama_mahasiswa,
-        npm: sidang.npm,
-        programStudi: sidang.program_studi_nama,
-        judulSkripsi: sidang.judul_skripsi,
-      },
-      ujianKe: ujianKeStr,
-      nilaiUjian,
-      hasilUjian: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
-      tanggalDokumen: tanggalStr,
-      catatanMajelisPenguji: catatanPenguji ?? "",
-      majelisPenguji: {
-        ketua: { nama: sidang.pembimbing1_nama, signatureBase64: sig1 },
-        sekretaris: { nama: sidang.pembimbing2_nama, signatureBase64: sig2 },
-        pengujiUtama: { nama: sidang.penguji1_nama, signatureBase64: sigPg1 },
-        anggotaPenguji: { nama: sidang.penguji2_nama, signatureBase64: sigPg2 },
-      },
-    });
+  const beritaAcaraData = {
+    hari: hariStr,
+    tanggalUjian: tanggalStr,
+    waktu: waktuStr,
+    mahasiswa: {
+      nama: sidang.nama_mahasiswa,
+      npm: sidang.npm,
+      programStudi: sidang.program_studi_nama,
+      judulSkripsi: sidang.judul_skripsi,
+    },
+    ujianKe: ujianKeStr,
+    nilaiUjian,
+    tanggalDokumen: tanggalStr,
+    catatanMajelisPenguji: catatanPenguji ?? "",
+  };
+  const ketua = { nama: sidang.pembimbing1_nama, signatureBase64: sig1 };
+  const sekretaris = { nama: sidang.pembimbing2_nama, signatureBase64: sig2 };
+  const outputBuffer = isSeminar
+    ? await generateBeritaAcaraHasilSeminarProposalFTI({
+        ...beritaAcaraData,
+        hasilSeminar: HASIL_SEMINAR_LABEL[hasilSidang],
+        majelisPenguji: {
+          ketua,
+          sekretaris,
+          penguji: { nama: sidang.penguji1_nama, signatureBase64: sigPg1 },
+        },
+      })
+    : await generateBeritaAcaraHasilUjianSkripsiKomprehensifFTI({
+        ...beritaAcaraData,
+        hasilUjian: hasilSidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+        majelisPenguji: {
+          ketua,
+          sekretaris,
+          pengujiUtama: { nama: sidang.penguji1_nama, signatureBase64: sigPg1 },
+          anggotaPenguji: { nama: sidang.penguji2_nama, signatureBase64: sigPg2 },
+        },
+      });
   const fileBase64 = Buffer.from(outputBuffer).toString("base64");
   const fileName = `Berita_Acara_${sidang.npm}.pdf`;
 
@@ -1315,6 +1488,7 @@ exports.getLecturerSidang = async (req, res, next) => {
       `SELECT
         s.id,
         s.skripsi_id,
+        s.jenis,
         m.npm,
         m.nama AS nama_mahasiswa,
         sk.judul AS judul_skripsi,
@@ -1426,7 +1600,7 @@ exports.getKaprodiSidang = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         s.id, s.skripsi_id, s.nomor_surat,
+         s.id, s.skripsi_id, s.jenis, s.nomor_surat,
          m.npm, m.nama AS nama_mahasiswa,
          prog.id   AS program_studi_id,
          prog.nama AS program_studi_nama,
@@ -1737,7 +1911,7 @@ exports.getSekretariatSidang = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         s.id, s.skripsi_id, s.nomor_surat,
+         s.id, s.skripsi_id, s.jenis, s.nomor_surat,
          m.npm, m.nama AS nama_mahasiswa,
          prog.id   AS program_studi_id,
          prog.nama AS program_studi_nama,

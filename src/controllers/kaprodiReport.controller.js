@@ -125,6 +125,26 @@ const STAGE_LABELS = {
   PENGUJI_1: "Penguji 1",
 };
 
+const SEMINAR = "SEMINAR_BISNIS_DIGITAL";
+const JENIS_LABELS = { SKRIPSI: "Skripsi", [SEMINAR]: "Seminar Proposal" };
+const HASIL_SIDANG_LABELS = {
+  LULUS: "Lulus",
+  TIDAK_LULUS: "Tidak Lulus",
+  GAGAL: "Gagal (Plagiat)",
+  JUDUL_DITERIMA: "Judul Diterima",
+  JUDUL_DITOLAK: "Judul Ditolak",
+};
+const LANJUTAN_STATUS_LABELS = {
+  WAITING_KAPRODI: "Menunggu Kaprodi",
+  WAITING_SEKRETARIAT: "Menunggu Sekretariat",
+  COMPLETED: "Selesai",
+};
+
+// A Seminar revisi's single penguji is stored as PENGUJI_1.
+function revisiStageLabel(role, jenis) {
+  return jenis === SEMINAR && role === "PENGUJI_1" ? "Penguji" : STAGE_LABELS[role];
+}
+
 const OUTLINE_STATUS_LABELS = {
   SUBMITTED: "Menunggu Balasan Kaprodi",
   NEED_REVISION: "Menunggu Revisi Mahasiswa",
@@ -668,6 +688,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     const revisiBySidangId = new Map();
     const revisiStagesByRevisiId = new Map();
     const pengumpulanByskripsiId = new Map();
+    const lanjutanBySkripsiId = new Map();
 
     if (skripsiIds.length > 0) {
       const [kartuSkripsiRows] = await db.query(
@@ -692,7 +713,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       }
 
       const [pengajuanSidangRows] = await db.query(
-        `SELECT id, skripsi_id, status, ujian_ke FROM pengajuan_sidang WHERE skripsi_id IN (?) ORDER BY skripsi_id, id DESC`,
+        `SELECT id, skripsi_id, jenis, status, ujian_ke FROM pengajuan_sidang WHERE skripsi_id IN (?) ORDER BY skripsi_id, id DESC`,
         [skripsiIds],
       );
       const latestPengajuanSidangBySkripsiId = latestByKey(pengajuanSidangRows, "skripsi_id");
@@ -710,7 +731,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       }
 
       const [sidangRows] = await db.query(
-        `SELECT id, skripsi_id, status, hasil_sidang FROM sidang WHERE skripsi_id IN (?) ORDER BY skripsi_id, id DESC`,
+        `SELECT id, skripsi_id, jenis, status, hasil_sidang FROM sidang WHERE skripsi_id IN (?) ORDER BY skripsi_id, id DESC`,
         [skripsiIds],
       );
       const latestSidangBySkripsiId = latestByKey(sidangRows, "skripsi_id");
@@ -747,6 +768,12 @@ exports.exportOverallProgressReport = async (req, res, next) => {
         [skripsiIds],
       );
       for (const r of pengumpulanRows) pengumpulanByskripsiId.set(r.skripsi_id, r);
+
+      const [lanjutanRows] = await db.query(
+        `SELECT skripsi_id, status FROM pengajuan_sk_skripsi_lanjutan WHERE skripsi_id IN (?)`,
+        [skripsiIds],
+      );
+      for (const r of lanjutanRows) lanjutanBySkripsiId.set(r.skripsi_id, r);
     }
 
     const dosenNames = await getDosenNamesByNidn(
@@ -851,29 +878,36 @@ exports.exportOverallProgressReport = async (req, res, next) => {
             ? (pengajuanSidangKaprodiByPengajuanSidangId.get(pengajuanSidang.id) ?? null)
             : null;
           const kartuSkripsi = kartuSkripsiByskripsiId.get(skripsi.id) ?? null;
+          const isSeminarSidang = sidang?.jenis === SEMINAR;
+          const lanjutan = lanjutanBySkripsiId.get(skripsi.id) ?? null;
+          // Once the SK Skripsi is issued the Seminar is history: continue with konsultasi (Bab 4).
+          const seminarFinished = isSeminarSidang && lanjutan?.status === "COMPLETED";
 
           if (skripsi.status === "GAGAL") {
-            fase = "Sidang";
-            detailTahap = "Gagal (Plagiat)";
-            status = "GAGAL";
+            fase = isSeminarSidang ? "Seminar Proposal" : "Sidang";
+            detailTahap = HASIL_SIDANG_LABELS[sidang?.hasil_sidang] ?? "Gagal (Plagiat)";
+            status = sidang?.hasil_sidang ?? "GAGAL";
           } else if (pengumpulan) {
             fase = pengumpulan.status === "COMPLETED" ? "Selesai" : "Pengumpulan Berkas Final";
             status = pengumpulan.status;
-          } else if (revisi) {
+          } else if (revisi && !seminarFinished && isSeminarSidang && revisi.is_completed === 1) {
+            fase = "SK Skripsi";
+            status = LANJUTAN_STATUS_LABELS[lanjutan?.status] ?? LANJUTAN_STATUS_LABELS.WAITING_KAPRODI;
+          } else if (revisi && !seminarFinished) {
             const stages = revisiStagesByRevisiId.get(revisi.id) ?? [];
             const isCompleted = revisi.is_completed === 1;
-            const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted);
+            const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted, sidang.jenis);
             const isTransisi = !isCompleted && !stageRow;
-            fase = isCompleted ? "Selesai" : "Revisi Pasca Sidang";
-            detailTahap = isCompleted ? "" : (isTransisi ? "Transisi" : (STAGE_LABELS[activeStage] ?? ""));
+            fase = isCompleted ? "Selesai" : (isSeminarSidang ? "Revisi Pasca Seminar" : "Revisi Pasca Sidang");
+            detailTahap = isCompleted ? "" : (isTransisi ? "Transisi" : (revisiStageLabel(activeStage, sidang.jenis) ?? ""));
             status = isCompleted || isTransisi ? "" : (activeStatus ?? "");
             menunggu = isCompleted || isTransisi ? "" : resolveWaitingOn(activeStatus);
             durasi = stageRow ? formatDurationHours(stageRow.updated_at, now) : "-";
-          } else if (sidang) {
-            fase = "Sidang";
+          } else if (sidang && !seminarFinished) {
+            fase = isSeminarSidang ? "Seminar Proposal" : "Sidang";
             status = sidang.hasil_sidang ?? sidang.status;
-          } else if (pengajuanSidang) {
-            fase = "Pengajuan Sidang";
+          } else if (pengajuanSidang && !(pengajuanSidang.jenis === SEMINAR && seminarFinished)) {
+            fase = pengajuanSidang.jenis === SEMINAR ? "Pengajuan Seminar Proposal" : "Pengajuan Sidang";
             status = pengajuanSidang.status;
             if (pengajuanSidang.ujian_ke > 1) detailTahap = `Ujian Ke-${pengajuanSidang.ujian_ke}`;
           } else if (pengajuanSidangKaprodi) {
@@ -952,12 +986,14 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
          s.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
          ps_sidang.ujian_ke,
+         ps_sidang.jenis,
          ssp.tahun_akademik AS period_tahun_akademik,
          ssp.periode_akademik AS period_periode_akademik
        FROM (
+         -- Latest per skripsi and jenis, so an ex-Seminar student keeps their Seminar row.
          SELECT skripsi_id, MAX(id) AS latest_id
          FROM pengajuan_sidang
-         GROUP BY skripsi_id
+         GROUP BY skripsi_id, jenis
        ) latest
        INNER JOIN pengajuan_sidang ps_sidang ON ps_sidang.id = latest.latest_id
        INNER JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps_sidang.id
@@ -980,6 +1016,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
+      { header: "Jenis", key: "jenis", width: 18 },
       { header: "Ujian Ke", key: "ujian_ke", width: 10 },
       { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
       { header: "Periode Akademik", key: "periode_akademik", width: 16 },
@@ -1004,6 +1041,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
+        jenis: JENIS_LABELS[row.jenis] ?? row.jenis,
         ujian_ke: row.ujian_ke,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
@@ -1048,6 +1086,7 @@ exports.exportSidangReport = async (req, res, next) => {
          sd.nomor_surat,
          sd.status,
          sd.hasil_sidang,
+         sd.jenis,
          sk.npm,
          sk.judul,
          sk.pembimbing1_nidn,
@@ -1065,9 +1104,10 @@ exports.exportSidangReport = async (req, res, next) => {
          ssp.tahun_akademik AS period_tahun_akademik,
          ssp.periode_akademik AS period_periode_akademik
        FROM (
+         -- Latest per skripsi and jenis, so an ex-Seminar student keeps their Seminar row.
          SELECT skripsi_id, MAX(id) AS latest_sidang_id
          FROM sidang
-         GROUP BY skripsi_id
+         GROUP BY skripsi_id, jenis
        ) latest
        INNER JOIN sidang sd ON sd.id = latest.latest_sidang_id
        INNER JOIN skripsi sk ON sk.id = sd.skripsi_id
@@ -1092,6 +1132,7 @@ exports.exportSidangReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
+      { header: "Jenis", key: "jenis", width: 18 },
       { header: "Ujian Ke", key: "ujian_ke", width: 10 },
       { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
       { header: "Periode Akademik", key: "periode_akademik", width: 16 },
@@ -1116,6 +1157,7 @@ exports.exportSidangReport = async (req, res, next) => {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
+        jenis: JENIS_LABELS[row.jenis] ?? row.jenis,
         ujian_ke: row.ujian_ke,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
@@ -1127,7 +1169,7 @@ exports.exportSidangReport = async (req, res, next) => {
         tanggal_sidang: formatDateTime(row.tanggal_sidang),
         waktu_sidang: row.waktu_sidang ?? "",
         tempat_sidang: row.tempat_sidang ?? "",
-        hasil_sidang: row.hasil_sidang ?? "",
+        hasil_sidang: HASIL_SIDANG_LABELS[row.hasil_sidang] ?? row.hasil_sidang ?? "",
         rata: row.rata ?? "",
         grade: row.grade ?? "",
         catatan_penguji: row.catatan_penguji ?? "",
@@ -1163,6 +1205,8 @@ exports.exportRevisiReport = async (req, res, next) => {
       `SELECT
          rps.id AS revisi_id,
          rps.is_completed,
+         s.jenis,
+         CONCAT(sk.id, '-', s.jenis) AS skripsi_jenis_key,
          sk.id AS skripsi_id,
          sk.npm,
          sk.judul,
@@ -1181,7 +1225,8 @@ exports.exportRevisiReport = async (req, res, next) => {
       programStudiIds,
     );
 
-    const rows = [...latestByKey(rawRows, "skripsi_id", "revisi_id").values()];
+    // Latest per skripsi and jenis, so an ex-Seminar student keeps their Seminar revisi row.
+    const rows = [...latestByKey(rawRows, "skripsi_jenis_key", "revisi_id").values()];
 
     const revisiIds = rows.map((r) => r.revisi_id);
     const stagesByRevisi = new Map();
@@ -1210,6 +1255,7 @@ exports.exportRevisiReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
+      { header: "Jenis", key: "jenis", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Penguji 1", key: "penguji1", width: 24 },
@@ -1228,7 +1274,7 @@ exports.exportRevisiReport = async (req, res, next) => {
     for (const row of rows) {
       const stages = stagesByRevisi.get(row.revisi_id) ?? [];
       const isCompleted = row.is_completed === 1;
-      const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted);
+      const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted, row.jenis);
       const isTransisi = !isCompleted && !stageRow;
       const signerNidn = activeStage ? getNidnForRevisiRole(row, activeStage) : null;
 
@@ -1236,11 +1282,12 @@ exports.exportRevisiReport = async (req, res, next) => {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
+        jenis: JENIS_LABELS[row.jenis] ?? row.jenis,
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
         penguji2: dosenNames.get(row.penguji2_nidn) ?? "",
-        tahap_aktif: isCompleted ? "Selesai" : (isTransisi ? "Transisi" : (STAGE_LABELS[activeStage] ?? "")),
+        tahap_aktif: isCompleted ? "Selesai" : (isTransisi ? "Transisi" : (revisiStageLabel(activeStage, row.jenis) ?? "")),
         signer_aktif: isCompleted || isTransisi ? "" : (dosenNames.get(signerNidn) ?? ""),
         status: isCompleted ? "Selesai" : (isTransisi ? "" : (activeStatus ?? "")),
         menunggu: isCompleted || isTransisi ? "" : resolveWaitingOn(activeStatus),

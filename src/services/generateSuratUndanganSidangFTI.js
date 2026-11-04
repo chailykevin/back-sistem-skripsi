@@ -5,12 +5,12 @@ const { renderPdf } = require("./shared/pdf.js");
 const templatePath = path.join(__dirname, "../templates/surat-undangan-sidang-fti/template.html");
 const cssPath = path.join(__dirname, "../templates/surat-undangan-sidang-fti/template.css");
 
-function formatWaktuSidang(waktuSidang) {
+function formatWaktuSidang(waktuSidang, durationMinutes = 120) {
   const match = String(waktuSidang ?? "").match(/^(\d{1,2}):(\d{2})/);
   if (!match) return "";
 
   const startMinutes = Number(match[1]) * 60 + Number(match[2]);
-  const endMinutes = (startMinutes + 2 * 60) % (24 * 60);
+  const endMinutes = (startMinutes + durationMinutes) % (24 * 60);
   const formatTime = (minutes) => {
     const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
     const mins = String(minutes % 60).padStart(2, "0");
@@ -66,5 +66,6 @@ async function generateSuratUndanganSidangFTI(data) {
 }
 
 module.exports = {
+  formatWaktuSidang,
   generateSuratUndanganSidangFTI,
 };

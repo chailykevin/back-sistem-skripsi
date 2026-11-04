@@ -14,6 +14,7 @@ const {
   generatePernyataanPenyelesaianSkripsiFTI,
 } = require("../services/generatePernyataanPenyelesaianSkripsiFTI.js");
 const { JENIS } = require("../services/sidangScope.service");
+const { nextNomorSk } = require("../services/skNumber.service");
 const {
   generateSuratKeteranganFTI,
 } = require("../services/generateSuratKeteranganFTI.js");
@@ -23,7 +24,7 @@ const {
 } = require("../services/generateSuratPengantarPenelitianFTI.js");
 const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
-const { BULAN_ROMAWI, formatTanggal } = require("../utils/dates");
+const { formatTanggal } = require("../utils/dates");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -142,30 +143,14 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
     },
   ]);
 
-  // Monthly sequence per prodi, separate for Skep-Skripsi and Skep-BD. Locking the prodi row
-  // serializes concurrent verifications, and the count is a locking read (FOR SHARE) so it sees
-  // numbers committed while we waited — a plain read would use an older snapshot and duplicate one.
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1; // 1-based
-  await conn.query(`SELECT id FROM program_studi WHERE id = ? FOR UPDATE`, [
-    kartu.program_studi_id,
-  ]);
-  const [[{ seq }]] = await conn.query(
-    `SELECT COUNT(*) AS seq
-     FROM pengajuan_sk_penelitian psk
-     JOIN outline o ON o.id = psk.outline_id
-     WHERE o.program_studi_id = ?
-       AND psk.jenis_sk = ?
-       AND psk.nomor_surat IS NOT NULL
-       AND YEAR(psk.completed_at) = ?
-       AND MONTH(psk.completed_at) = ?
-     FOR SHARE`,
-    [kartu.program_studi_id, jenisSk, year, month],
-  );
-  const seqNum = Number(seq) + 1;
-  const kodeSurat = isSeminar ? "Skep-BD" : "Skep-Skripsi";
-  const nomorSurat = `${String(seqNum).padStart(3, "0")}/${ps.f_kode}/${ps.ps_kode}/${kodeSurat}/${BULAN_ROMAWI[month - 1]}/${year}`;
+  const nomorSurat = await nextNomorSk(conn, {
+    programStudiId: kartu.program_studi_id,
+    jenisSk,
+    fakultasKode: ps.f_kode,
+    prodiKode: ps.ps_kode,
+    date: now,
+  });
 
   // Update nomor_surat on the SK record
   await conn.query(
@@ -1393,6 +1378,7 @@ exports.listSkForSekretariat = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          sk.id,
+         sk.jenis_sk,
          sk.outline_id,
          sk.status,
          sk.catatan_sekretariat,
@@ -1465,6 +1451,7 @@ exports.listSkForKaprodi = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          sk.id,
+         sk.jenis_sk,
          sk.outline_id,
          sk.status,
          sk.catatan_sekretariat,
@@ -1535,6 +1522,8 @@ exports.listSkForDekan = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          sk.id,
+         'SK_PENELITIAN' AS sumber,
+         sk.jenis_sk,
          sk.outline_id,
          sk.status,
          sk.submitted_at,
@@ -1570,6 +1559,49 @@ exports.listSkForDekan = async (req, res, next) => {
        ORDER BY sk.submitted_at DESC`,
       filterByStatus ? [userRow.nidn, statusParam] : [userRow.nidn],
     );
+
+    // SK Skripsi issued through the Seminar Bisnis Digital bridge are also signed by the Dekan.
+    // Their file is downloaded from GET /sk-skripsi-lanjutan/:skripsiId/file (sumber tells them apart).
+    if (!filterByStatus || statusParam === "COMPLETED") {
+      const [lanjutanRows] = await db.query(
+        `SELECT
+           l.id,
+           'SK_SKRIPSI_LANJUTAN' AS sumber,
+           'SKRIPSI' AS jenis_sk,
+           s.outline_id,
+           'COMPLETED' AS status,
+           l.forwarded_at AS submitted_at,
+           l.completed_at,
+           l.created_at,
+           m.nama AS nama_mahasiswa,
+           l.judul_skripsi,
+           ps.nama AS program_studi_nama,
+           s.program_studi_id,
+           s.id AS skripsi_id,
+           1 AS has_sk_document,
+           EXISTS(
+             SELECT 1 FROM revisi_pasca_sidang rps
+             JOIN sidang sd ON sd.id = rps.sidang_id
+             JOIN revisi_pasca_sidang_files rf ON rf.revisi_id = rps.id AND rf.file_type = 'HALAMAN_PENGESAHAN_DEKAN'
+             WHERE sd.jenis = 'SKRIPSI' AND sd.skripsi_id = s.id
+           ) AS has_halaman_pengesahan
+         FROM pengajuan_sk_skripsi_lanjutan l
+         JOIN skripsi s ON s.id = l.skripsi_id
+         JOIN mahasiswa m ON m.npm = s.npm
+         JOIN program_studi ps ON ps.id = s.program_studi_id
+         WHERE l.status = 'COMPLETED'
+           AND ps.fakultas_id = (
+             SELECT id FROM fakultas WHERE COALESCE(dekan_nidn, dekan_staff_usr_id) = ?
+           )`,
+        [userRow.nidn],
+      );
+      rows.push(...lanjutanRows);
+      rows.sort(
+        (a, b) =>
+          new Date(b.submitted_at ?? 0).getTime() -
+          new Date(a.submitted_at ?? 0).getTime(),
+      );
+    }
 
     return res.json({ ok: true, data: rows });
   } catch (err) {

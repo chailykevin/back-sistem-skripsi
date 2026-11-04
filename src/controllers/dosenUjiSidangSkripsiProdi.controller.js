@@ -2,6 +2,7 @@ const db = require("../db");
 const service = require("../services/dosenUjiSidangSkripsiProdi.service");
 const { parsePagination, buildPagination } = require("../utils/pagination");
 const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { JENIS, resolveJenis } = require("../services/sidangScope.service");
 
 function parseOptionalPositiveInteger(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -13,6 +14,35 @@ function parseRole(value) {
   if (value === undefined || value === null || value === "") return null;
   const role = String(value).trim().toUpperCase();
   return service.PENGUJI_ROLES.includes(role) ? role : NaN;
+}
+
+// Omitted = SKRIPSI, so callers that predate the Seminar list keep working unchanged.
+function parseJenis(value) {
+  if (value === undefined || value === null || value === "") return JENIS.SKRIPSI;
+  const jenis = String(value).trim().toUpperCase();
+  return Object.values(JENIS).includes(jenis) ? jenis : NaN;
+}
+
+function respondInvalidJenis(res) {
+  return res.status(400).json({
+    ok: false,
+    message: "jenis harus 'SKRIPSI' atau 'SEMINAR_BISNIS_DIGITAL'",
+  });
+}
+
+// Seminar rows: role PENGUJI_1 only, and only for the Bisnis Digital prodi. Returns an error message or null.
+async function getSeminarRowError(programStudiId, role) {
+  if (!service.rolesFor(JENIS.SEMINAR_BISNIS_DIGITAL).includes(role)) {
+    return "Seminar Bisnis Digital hanya memiliki satu penguji (PENGUJI_1)";
+  }
+  const [[prodi]] = await db.query(
+    `SELECT kode FROM program_studi WHERE id = ? LIMIT 1`,
+    [programStudiId],
+  );
+  if (prodi?.kode !== service.SEMINAR_PROGRAM_STUDI_KODE) {
+    return "Daftar penguji Seminar hanya untuk Program Studi Bisnis Digital";
+  }
+  return null;
 }
 
 function getRequestedProgramStudiId(req) {
@@ -85,6 +115,8 @@ exports.listAll = async (req, res, next) => {
     );
 
     const role = parseRole(req.query?.role);
+    const jenis = parseJenis(req.query?.jenis);
+    if (Number.isNaN(jenis)) return respondInvalidJenis(res);
 
     if (Number.isNaN(homeProgramStudiId) || Number.isNaN(programStudiId)) {
       return res.status(400).json({
@@ -101,6 +133,7 @@ exports.listAll = async (req, res, next) => {
 
     const { dosen, programStudi, totalItems } = await service.getManagementData(
       {
+        jenis,
         q,
         homeProgramStudiId,
         programStudiId,
@@ -131,7 +164,11 @@ exports.listByProgramStudi = async (req, res, next) => {
         message: "role harus 'PENGUJI_1' atau 'PENGUJI_2'",
       });
     }
-    const data = await service.listByProgramStudiId(programStudiId, { role });
+    const jenis = parseJenis(req.query?.jenis);
+    if (Number.isNaN(jenis)) return respondInvalidJenis(res);
+    const data = await service.listByProgramStudiId(programStudiId, jenis, {
+      role,
+    });
     return res.json({ ok: true, data });
   } catch (err) {
     next(err);
@@ -154,9 +191,17 @@ exports.add = async (req, res, next) => {
         message: "role harus 'PENGUJI_1' atau 'PENGUJI_2'",
       });
     }
+    const jenis = parseJenis(req.body?.jenis);
+    if (Number.isNaN(jenis)) return respondInvalidJenis(res);
+    if (jenis === JENIS.SEMINAR_BISNIS_DIGITAL) {
+      const seminarError = await getSeminarRowError(programStudiId, role);
+      if (seminarError) {
+        return res.status(400).json({ ok: false, message: seminarError });
+      }
+    }
     const [result] = await db.query(
-      `INSERT INTO dosen_uji_sidang_skripsi_prodi (dosen_nidn, program_studi_id, role) VALUES (?, ?, ?)`,
-      [dosenNidn, programStudiId, role],
+      `INSERT INTO dosen_uji_sidang_skripsi_prodi (dosen_nidn, program_studi_id, role, jenis) VALUES (?, ?, ?, ?)`,
+      [dosenNidn, programStudiId, role, jenis],
     );
     return res.status(201).json({
       ok: true,
@@ -165,6 +210,7 @@ exports.add = async (req, res, next) => {
         dosenNidn,
         programStudiId,
         role,
+        jenis,
       },
     });
   } catch (err) {
@@ -193,6 +239,19 @@ exports.update = async (req, res, next) => {
         ok: false,
         message: "role harus 'PENGUJI_1' atau 'PENGUJI_2'",
       });
+    }
+    if (role && !service.rolesFor(JENIS.SEMINAR_BISNIS_DIGITAL).includes(role)) {
+      const [[existing]] = await db.query(
+        `SELECT jenis FROM dosen_uji_sidang_skripsi_prodi
+          WHERE id_dosen_uji_sidang_skripsi_prodi = ? AND program_studi_id = ? LIMIT 1`,
+        [id, programStudiId],
+      );
+      if (existing?.jenis === JENIS.SEMINAR_BISNIS_DIGITAL) {
+        return res.status(400).json({
+          ok: false,
+          message: "Seminar Bisnis Digital hanya memiliki satu penguji (PENGUJI_1)",
+        });
+      }
     }
     const [result] = await db.query(
       `UPDATE dosen_uji_sidang_skripsi_prodi SET dosen_nidn = ?, role = COALESCE(?, role)
@@ -288,10 +347,11 @@ exports.listEligible = async (req, res, next) => {
         .json({ ok: false, message: "Anda tidak memiliki akses ke skripsi ini" });
     }
 
-    const data = await service.listEligibleByRole(skripsi.program_studi_id, [
-      skripsi.pembimbing1_nidn,
-      skripsi.pembimbing2_nidn,
-    ]);
+    const data = await service.listEligibleByRole(
+      skripsi.program_studi_id,
+      await resolveJenis(db, skripsiId),
+      [skripsi.pembimbing1_nidn, skripsi.pembimbing2_nidn],
+    );
     return res.json({ ok: true, data });
   } catch (err) {
     next(err);

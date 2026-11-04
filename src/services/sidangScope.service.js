@@ -8,6 +8,10 @@ const JENIS = {
 };
 const VALID_JENIS = Object.values(JENIS);
 
+// program_studi.kode of Bisnis Digital: the only prodi with a Seminar, and the only one whose
+// students don't propose penguji (no Lembar Usulan Penguji; Kaprodi assigns them at disposisi).
+const BISNIS_DIGITAL_PROGRAM_STUDI_KODE = "BD";
+
 const NON_EDITABLE_PENGAJUAN_STATUSES = [
   "VERIFIED",
   "WAITING_FOR_DISPOSISI",
@@ -25,12 +29,18 @@ function requireJenis(jenis) {
 
 // Inside a transaction that relies on a locking read seeing fresh data, call this before
 // beginTransaction(): as the transaction's first plain read it would fix the snapshot too early.
+// A Seminar record stays SEMINAR_BISNIS_DIGITAL until its SK Skripsi is issued through the bridge
+// (pengajuan_sk_skripsi_lanjutan COMPLETED); from then on it follows the Skripsi flow.
 async function resolveJenis(queryable, skripsiId) {
   const [[row]] = await queryable.query(
-    `SELECT jalur FROM skripsi WHERE id = ? LIMIT 1`,
+    `SELECT s.jalur, l.status AS lanjutan_status
+     FROM skripsi s
+     LEFT JOIN pengajuan_sk_skripsi_lanjutan l ON l.skripsi_id = s.id
+     WHERE s.id = ? LIMIT 1`,
     [skripsiId],
   );
-  return row?.jalur === JENIS.SEMINAR_BISNIS_DIGITAL
+  return row?.jalur === JENIS.SEMINAR_BISNIS_DIGITAL &&
+    row.lanjutan_status !== "COMPLETED"
     ? JENIS.SEMINAR_BISNIS_DIGITAL
     : JENIS.SKRIPSI;
 }
@@ -85,6 +95,7 @@ async function getEditablePengajuanSidang(
 
 module.exports = {
   JENIS,
+  BISNIS_DIGITAL_PROGRAM_STUDI_KODE,
   requireJenis,
   resolveJenis,
   getLatestSidang,

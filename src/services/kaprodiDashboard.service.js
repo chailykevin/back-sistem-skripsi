@@ -18,8 +18,11 @@ const STAGE_KEYS = [
   "PENGAJUAN_SIDANG",
   "SIDANG",
   "REVISI",
+  "SK_SKRIPSI",
   "BERKAS_FINAL",
 ];
+
+const SEMINAR = "SEMINAR_BISNIS_DIGITAL";
 
 const PEMBIMBING_LABELS = { PEMBIMBING_1: "Pembimbing 1", PEMBIMBING_2: "Pembimbing 2" };
 const REVISI_SIGNER_LABELS = {
@@ -28,6 +31,15 @@ const REVISI_SIGNER_LABELS = {
   PEMBIMBING_2: "Pembimbing 2",
   PEMBIMBING_1: "Pembimbing 1",
 };
+
+// Seminar Bisnis Digital steps share the Pengajuan Sidang / Sidang / Revisi columns; the detail says which.
+function seminarPrefix(row) {
+  return row?.jenis === SEMINAR ? "Seminar proposal · " : "";
+}
+
+function revisiSignerLabel(role, jenis) {
+  return jenis === SEMINAR && role === "PENGUJI_1" ? "Penguji" : REVISI_SIGNER_LABELS[role];
+}
 const CHAPTER_LABELS = { BAB_1: "Bab 1", BAB_2: "Bab 2", BAB_3: "Bab 3", BAB_4: "Bab 4", BAB_5: "Bab 5" };
 const BERKAS_FINAL_UNITS = { PERPUSTAKAAN: "Perpustakaan", LPPM: "LPPM" };
 
@@ -56,7 +68,7 @@ function startOfDay(value) {
 
 async function loadPipelineData(programStudiIds) {
   const [mahasiswaRows] = await db.query(
-    `SELECT npm, nama FROM mahasiswa WHERE program_studi_id IN (?)`,
+    `SELECT npm, nama, tahap_tugas_akhir FROM mahasiswa WHERE program_studi_id IN (?)`,
     [programStudiIds],
   );
   const [outlineRows] = await db.query(
@@ -66,11 +78,13 @@ async function loadPipelineData(programStudiIds) {
     [programStudiIds],
   );
   const latestOutlineByNpm = latestByKey(outlineRows, "npm");
+  const tahapByNpm = new Map(mahasiswaRows.map((m) => [m.npm, m.tahap_tugas_akhir]));
   const outlineIds = [...latestOutlineByNpm.values()].map((o) => o.id);
   const npms = [...latestOutlineByNpm.keys()];
 
   const data = {
     mahasiswaRows,
+    tahapByNpm,
     latestOutlineByNpm,
     disposisiByOutlineId: new Map(),
     kartuOutlineByOutlineId: new Map(),
@@ -87,6 +101,7 @@ async function loadPipelineData(programStudiIds) {
     revisiBySidangId: new Map(),
     revisiStagesByRevisiId: new Map(),
     pengumpulanBySkripsiId: new Map(),
+    lanjutanBySkripsiId: new Map(),
     confirmationsByPengumpulanId: new Map(),
     dosenNames: new Map(),
   };
@@ -124,7 +139,7 @@ async function loadPipelineData(programStudiIds) {
   }
 
   const [skripsiRows] = await db.query(
-    `SELECT id, npm, outline_id, status, pembimbing1_nidn, pembimbing2_nidn, created_at
+    `SELECT id, npm, outline_id, status, jalur, pembimbing1_nidn, pembimbing2_nidn, created_at
      FROM skripsi
      WHERE npm IN (?)`,
     [npms],
@@ -153,13 +168,13 @@ async function loadPipelineData(programStudiIds) {
     }
 
     const [pengajuanSidangRows] = await db.query(
-      `SELECT id, skripsi_id, status, ujian_ke, updated_at FROM pengajuan_sidang WHERE skripsi_id IN (?)`,
+      `SELECT id, skripsi_id, jenis, status, ujian_ke, updated_at FROM pengajuan_sidang WHERE skripsi_id IN (?)`,
       [skripsiIds],
     );
     data.latestPengajuanSidangBySkripsiId = latestByKey(pengajuanSidangRows, "skripsi_id");
 
     const [sidangRows] = await db.query(
-      `SELECT id, skripsi_id, pengajuan_sidang_id, status, hasil_sidang, updated_at
+      `SELECT id, skripsi_id, jenis, pengajuan_sidang_id, status, hasil_sidang, updated_at
        FROM sidang
        WHERE skripsi_id IN (?)`,
       [skripsiIds],
@@ -211,6 +226,13 @@ async function loadPipelineData(programStudiIds) {
         data.revisiStagesByRevisiId = groupBy(revisiStageRows, "revisi_id");
       }
     }
+
+    const [lanjutanRows] = await db.query(
+      `SELECT skripsi_id, status, created_at, forwarded_at, completed_at
+       FROM pengajuan_sk_skripsi_lanjutan WHERE skripsi_id IN (?)`,
+      [skripsiIds],
+    );
+    for (const r of lanjutanRows) data.lanjutanBySkripsiId.set(r.skripsi_id, r);
 
     const [pengumpulanRows] = await db.query(
       `SELECT id, skripsi_id, status, updated_at FROM pengumpulan_berkas_final WHERE skripsi_id IN (?)`,
@@ -339,6 +361,9 @@ function resolveStudentPosition(npm, data, today) {
   const pengajuanSidang = data.latestPengajuanSidangBySkripsiId.get(skripsi.id) ?? null;
   const revisi = sidang ? (data.revisiBySidangId.get(sidang.id) ?? null) : null;
   const awaitingNewSidang = pengajuanSidang && (!sidang || sidang.pengajuan_sidang_id !== pengajuanSidang.id);
+  const lanjutan = data.lanjutanBySkripsiId.get(skripsi.id) ?? null;
+  // Once the SK Skripsi is issued the Seminar is history and the student is back in konsultasi (Bab 4).
+  const seminarFinished = sidang?.jenis === SEMINAR && lanjutan?.status === "COMPLETED";
 
   if (pengumpulan) {
     const href = `/kaprodi/pengumpulan-berkas-final/${skripsi.id}`;
@@ -371,51 +396,76 @@ function resolveStudentPosition(npm, data, today) {
     const psk = data.pskByPengajuanSidangId.get(pengajuanSidang.id) ?? null;
     const href = `/kaprodi/pengajuan-sidang/${skripsi.id}`;
     const ujianUlang = pengajuanSidang.ujian_ke > 1 ? ` · ujian ke-${pengajuanSidang.ujian_ke}` : "";
+    const pre = seminarPrefix(pengajuanSidang);
     if (pengajuanSidang.status === "REJECTED" || psk?.status === "REJECTED") return null;
+    if (
+      pengajuanSidang.jenis !== SEMINAR &&
+      skripsi.jalur === SEMINAR &&
+      data.tahapByNpm.get(npm) !== "SKRIPSI" &&
+      (!psk || psk.status === "DRAFT")
+    ) {
+      return at("PENGAJUAN_SIDANG", "MAHASISWA", "Belum terdaftar mata kuliah Skripsi di KRS", pengajuanSidang.updated_at, {
+        href,
+      });
+    }
     if (pengajuanSidang.status === "WAITING_FOR_DISPOSISI") {
-      return at("PENGAJUAN_SIDANG", "KAPRODI", `Menunggu disposisi Anda${ujianUlang}`, pengajuanSidang.updated_at, {
+      return at("PENGAJUAN_SIDANG", "KAPRODI", `${pre}Menunggu disposisi Anda${ujianUlang}`, pengajuanSidang.updated_at, {
         href: `${href}/disposisi`,
         action: "disposisiSidang",
       });
     }
     if (psk?.status === "SUBMITTED") {
-      return at("PENGAJUAN_SIDANG", "KAPRODI", `Menunggu review Anda${ujianUlang}`, psk.updated_at, {
+      return at("PENGAJUAN_SIDANG", "KAPRODI", `${pre}Menunggu review Anda${ujianUlang}`, psk.updated_at, {
         href,
         action: "sidang",
       });
     }
     if (psk && ["DRAFT", "NEED_REVISION"].includes(psk.status)) {
       const detail = psk.status === "DRAFT" ? "Melengkapi formulir pengajuan sidang" : "Merevisi sesuai catatan Kaprodi";
-      return at("PENGAJUAN_SIDANG", "MAHASISWA", `${detail}${ujianUlang}`, psk.updated_at, { href });
+      return at("PENGAJUAN_SIDANG", "MAHASISWA", `${pre}${detail}${ujianUlang}`, psk.updated_at, { href });
     }
     if (pengajuanSidang.status === "SUBMITTED") {
-      return at("PENGAJUAN_SIDANG", "UNIT", `Verifikasi berkas${ujianUlang}`, pengajuanSidang.updated_at, {
+      return at("PENGAJUAN_SIDANG", "UNIT", `${pre}Verifikasi berkas${ujianUlang}`, pengajuanSidang.updated_at, {
         holders: [unit("Sekretariat")],
         href,
       });
     }
     if (pengajuanSidang.status === "WAITING_FOR_SURAT") {
-      return at("PENGAJUAN_SIDANG", "UNIT", `Menunggu surat undangan${ujianUlang}`, pengajuanSidang.updated_at, {
+      return at("PENGAJUAN_SIDANG", "UNIT", `${pre}Menunggu surat undangan${ujianUlang}`, pengajuanSidang.updated_at, {
         holders: [unit("Sekretariat")],
         href,
       });
     }
     const detail = pengajuanSidang.status === "NEED_REVISION" ? "Berkas perlu diunggah ulang" : "Melengkapi berkas sidang";
-    return at("PENGAJUAN_SIDANG", "MAHASISWA", `${detail}${ujianUlang}`, pengajuanSidang.updated_at, { href });
+    return at("PENGAJUAN_SIDANG", "MAHASISWA", `${pre}${detail}${ujianUlang}`, pengajuanSidang.updated_at, { href });
   }
 
-  if (revisi) {
+  if (revisi && !seminarFinished) {
     const href = `/kaprodi/revisi-pasca-sidang/${skripsi.id}`;
+    const pre = seminarPrefix(sidang);
     if (revisi.is_completed === 1) {
+      if (sidang.jenis === SEMINAR) {
+        const lanjutanHref = `/kaprodi/sk-skripsi-lanjutan/${skripsi.id}`;
+        if (lanjutan?.status === "WAITING_SEKRETARIAT") {
+          return at("SK_SKRIPSI", "UNIT", "Menunggu penerbitan SK Skripsi", lanjutan.forwarded_at, {
+            holders: [unit("Sekretariat")],
+            href: lanjutanHref,
+          });
+        }
+        return at("SK_SKRIPSI", "KAPRODI", "Menunggu Anda meneruskan ke Sekretariat", lanjutan?.created_at ?? revisi.updated_at, {
+          href: lanjutanHref,
+          action: "skSkripsiLanjutan",
+        });
+      }
       if (sidang.hasil_sidang !== "LULUS") return null;
       return at("BERKAS_FINAL", "MAHASISWA", "Belum memulai pengumpulan berkas final", revisi.updated_at);
     }
     const stages = data.revisiStagesByRevisiId.get(revisi.id) ?? [];
-    const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, false);
+    const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, false, sidang.jenis);
     if (!stageRow) {
-      return at("REVISI", "MAHASISWA", "Belum memulai revisi", maxDate(revisi.updated_at, ...stages.map((s) => s.updated_at)), { href });
+      return at("REVISI", "MAHASISWA", `${pre}Belum memulai revisi`, maxDate(revisi.updated_at, ...stages.map((s) => s.updated_at)), { href });
     }
-    const label = `Tahap ${REVISI_SIGNER_LABELS[activeStage]}`;
+    const label = `${pre}Tahap ${revisiSignerLabel(activeStage, sidang.jenis)}`;
     if (activeStatus === "SUBMITTED") {
       const psk = data.pskByPengajuanSidangId.get(sidang.pengajuan_sidang_id) ?? null;
       const nidn = { ...pembimbingNidn, PENGUJI_1: psk?.penguji1_nidn, PENGUJI_2: psk?.penguji2_nidn }[activeStage];
@@ -424,8 +474,9 @@ function resolveStudentPosition(npm, data, today) {
     return at("REVISI", "MAHASISWA", `${label} · belum unggah revisi`, stageRow.updated_at, { href });
   }
 
-  if (sidang) {
+  if (sidang && !seminarFinished) {
     const href = `/kaprodi/sidang/${skripsi.id}`;
+    const pre = seminarPrefix(sidang);
     if (sidang.status === "COMPLETED") return null;
     const psk = data.pskByPengajuanSidangId.get(sidang.pengajuan_sidang_id) ?? null;
     const participantNidn = {
@@ -438,12 +489,12 @@ function resolveStudentPosition(npm, data, today) {
     if (sidang.status === "SCHEDULED") {
       const tanggal = psk?.tanggal_sidang ? startOfDay(psk.tanggal_sidang) : null;
       if (!tanggal || tanggal >= today) {
-        return at("SIDANG", "TERJADWAL", tanggal ? `Sidang ${formatTanggal(tanggal)}` : "Sidang terjadwal", null, {
+        return at("SIDANG", "TERJADWAL", `${pre}${tanggal ? `Sidang ${formatTanggal(tanggal)}` : "Sidang terjadwal"}`, null, {
           scheduledAt: tanggal,
           href,
         });
       }
-      return at("SIDANG", "DOSEN", `Jadwal ${formatTanggal(tanggal)} terlewat · belum dimulai`, tanggal, {
+      return at("SIDANG", "DOSEN", `${pre}Jadwal ${formatTanggal(tanggal)} terlewat · belum dimulai`, tanggal, {
         holders: pembimbingHolders,
         href,
       });
@@ -465,9 +516,9 @@ function resolveStudentPosition(npm, data, today) {
         .filter((role) => missing.has(role))
         .map((role) => dosen(participantNidn[role]))
         .filter(Boolean);
-      return at("SIDANG", "DOSEN", "Sidang berlangsung · penilaian belum lengkap", lastActionAt, { holders, href });
+      return at("SIDANG", "DOSEN", `${pre}Sidang berlangsung · penilaian belum lengkap`, lastActionAt, { holders, href });
     }
-    return at("SIDANG", "DOSEN", "Menunggu hasil penilaian akhir", lastActionAt, { holders: pembimbingHolders, href });
+    return at("SIDANG", "DOSEN", `${pre}Menunggu hasil penilaian akhir`, lastActionAt, { holders: pembimbingHolders, href });
   }
 
   const kartuSkripsi = data.kartuSkripsiBySkripsiId.get(skripsi.id) ?? null;
@@ -637,10 +688,17 @@ async function getRecap(programStudiIds, term) {
     const stagesByKartu = groupBy(stageRows, "kartu_konsultasi_skripsi_id");
     for (const k of kartuSkripsiRows) {
       const isCompleted = k.is_completed === 1;
-      const { activeStatus } = isCompleted
-        ? { activeStatus: null }
-        : resolveActiveKonsultasiSkripsiStage(stagesByKartu.get(k.id) ?? []);
-      add("KONSULTASI_SKRIPSI", classifyKonsultasi(isCompleted, activeStatus));
+      const stages = stagesByKartu.get(k.id) ?? [];
+      const { activeStatus, stageRow } = isCompleted
+        ? { activeStatus: null, stageRow: null }
+        : resolveActiveKonsultasiSkripsiStage(stages);
+      // A Seminar kartu pauses after Bab 3 (Bab 4 opens with the SK Skripsi): its part is done for now.
+      const seminarPaused =
+        !isCompleted &&
+        !stageRow &&
+        stages.some((st) => st.chapter_group === "BAB_3" && st.stage === "PEMBIMBING_1" && st.current_status === "ACCEPTED") &&
+        !stages.some((st) => st.chapter_group === "BAB_4");
+      add("KONSULTASI_SKRIPSI", seminarPaused ? "done" : classifyKonsultasi(isCompleted, activeStatus));
     }
   }
 
@@ -675,13 +733,13 @@ async function getRecap(programStudiIds, term) {
   );
   for (const r of sidangRows) {
     if (r.status !== "COMPLETED") add("SIDANG", "other");
-    else if (r.hasil_sidang === "GAGAL") add("SIDANG", "rejected");
+    else if (r.hasil_sidang === "GAGAL" || r.hasil_sidang === "JUDUL_DITOLAK") add("SIDANG", "rejected");
     else if (r.hasil_sidang === "TIDAK_LULUS") add("SIDANG", "student");
     else add("SIDANG", "done");
   }
 
   const [revisiRows] = await db.query(
-    `SELECT r.id, r.is_completed
+    `SELECT r.id, r.is_completed, sd.jenis
      FROM revisi_pasca_sidang r
      JOIN sidang sd ON sd.id = r.sidang_id
      JOIN skripsi s ON s.id = sd.skripsi_id
@@ -698,10 +756,24 @@ async function getRecap(programStudiIds, term) {
     const stagesByRevisi = groupBy(stageRows, "revisi_id");
     for (const r of revisiRows) {
       const isCompleted = r.is_completed === 1;
-      const { activeStatus } = resolveActiveRevisiStage(stagesByRevisi.get(r.id) ?? [], isCompleted);
+      const { activeStatus } = resolveActiveRevisiStage(stagesByRevisi.get(r.id) ?? [], isCompleted, r.jenis);
       add("REVISI", isCompleted ? "done" : activeStatus === "SUBMITTED" ? "other" : "student");
     }
   }
+
+  // Seminar → Skripsi bridge, matched to the term of the Seminar's pengajuan.
+  const [lanjutanRows] = await db.query(
+    `SELECT l.status
+     FROM pengajuan_sk_skripsi_lanjutan l
+     JOIN skripsi s ON s.id = l.skripsi_id
+     JOIN sidang sd ON sd.id = l.seminar_sidang_id
+     LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
+     LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
+     WHERE s.program_studi_id IN (?)${ssp.sql}`,
+    [programStudiIds, ...ssp.params],
+  );
+  const LANJUTAN_BUCKET = { WAITING_KAPRODI: "you", WAITING_SEKRETARIAT: "other", COMPLETED: "done" };
+  for (const r of lanjutanRows) add("SK_SKRIPSI", LANJUTAN_BUCKET[r.status]);
 
   const [pengumpulanRows] = await db.query(
     `SELECT pbf.status

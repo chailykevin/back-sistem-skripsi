@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Halaman Pengesahan Proposal Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="title">
+        <div>HALAMAN PENGESAHAN</div>
+        <div>PROPOSAL SKRIPSI</div>
+      </header>
+
+      <section class="fields">
+        <div class="field judul"><span>Judul</span><span>:</span><span>{{judulSkripsi}}</span></div>
+        <div class="field"><span>Mahasiswa</span><span>:</span><span>{{namaMahasiswa}}</span></div>
+        <div class="field"><span>NPM</span><span>:</span><span>{{npm}}</span></div>
+      </section>
+
+      <h2>TELAH DISEMINARKAN PADA:</h2>
+      <section class="fields">
+        <div class="field"><span>Hari</span><span>:</span><span>{{hari}}</span></div>
+        <div class="field"><span>Tanggal</span><span>:</span><span>{{tanggal}}</span></div>
+      </section>
+
+      <h2 class="majelis-heading">MAJELIS PENGUJI:</h2>
+      <section class="examiners">
+        <div class="examiner">
+          <span class="examiner-number">1.</span>
+          <div><div class="examiner-name">{{namaPembimbingUtama}}</div><div>Dosen Pembimbing Utama</div></div>
+          <div class="signature-space">{{signaturePembimbingUtama}}</div>
+        </div>
+        <div class="examiner">
+          <span class="examiner-number">2.</span>
+          <div><div class="examiner-name">{{namaPembimbingKedua}}</div><div>Dosen Pembimbing Kedua</div></div>
+          <div class="signature-space">{{signaturePembimbingKedua}}</div>
+        </div>
+        <div class="examiner">
+          <span class="examiner-number">3.</span>
+          <div><div class="examiner-name">{{namaPengujiUtama}}</div><div>Penguji Utama</div></div>
+          <div class="signature-space">{{signaturePengujiUtama}}</div>
+        </div>
+      </section>
+
+      <footer>
+        <div>PROGRAM STUDI {{programStudi}}</div>
+        <div>FAKULTAS TEKNOLOGI INFORMASI</div>
+        <div>UNIVERSITAS WIDYA DHARMA PONTIANAK</div>
+        <div>{{tahunPenulisan}}</div>
+      </footer>
+    </main>
+  </body>
+</html>

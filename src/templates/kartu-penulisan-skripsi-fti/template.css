@@ -15,6 +15,8 @@ h1 { margin: 5mm 0 1mm; text-align: center; font-size: 12pt; font-weight: bold; 
 .student-details > div { display: grid; grid-template-columns: 48mm 5mm 1fr; min-height: 7.2mm; line-height: 1.15; }
 .student-details > .student-first-row { grid-template-columns: 48mm 5mm 1fr 14mm 5mm 29mm; }
 .student-details > .thesis-title { min-height: 14mm; }
+.student-details.with-proposal > div { grid-template-columns: 62mm 5mm 1fr; }
+.student-details.with-proposal > .student-first-row { grid-template-columns: 62mm 5mm 1fr 14mm 5mm 29mm; }
 .writing-date { text-decoration: underline; }
 .approvals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; margin-top: 8mm; text-align: center; line-height: 1.15; }
 .signature-space { display: flex; align-items: center; justify-content: center; height: 10mm; margin: 0 auto; }
