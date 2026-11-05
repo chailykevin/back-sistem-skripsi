@@ -880,8 +880,9 @@ exports.exportOverallProgressReport = async (req, res, next) => {
           const kartuSkripsi = kartuSkripsiByskripsiId.get(skripsi.id) ?? null;
           const isSeminarSidang = sidang?.jenis === SEMINAR;
           const lanjutan = lanjutanBySkripsiId.get(skripsi.id) ?? null;
-          // Once the SK Skripsi is issued the Seminar is history: continue with konsultasi (Bab 4).
-          const seminarFinished = isSeminarSidang && lanjutan?.status === "COMPLETED";
+          // The SK Skripsi request exists from the moment the Seminar revisi completes: the Seminar is
+          // history and the student continues with konsultasi (Bab 4) while the SK is processed.
+          const seminarFinished = isSeminarSidang && Boolean(lanjutan);
 
           if (skripsi.status === "GAGAL") {
             fase = isSeminarSidang ? "Seminar Proposal" : "Sidang";
@@ -890,7 +891,13 @@ exports.exportOverallProgressReport = async (req, res, next) => {
           } else if (pengumpulan) {
             fase = pengumpulan.status === "COMPLETED" ? "Selesai" : "Pengumpulan Berkas Final";
             status = pengumpulan.status;
-          } else if (revisi && !seminarFinished && isSeminarSidang && revisi.is_completed === 1) {
+          } else if (
+            lanjutan &&
+            lanjutan.status !== "COMPLETED" &&
+            pengajuanSidang?.jenis !== SEMINAR &&
+            pengajuanSidang?.status === "DRAFT"
+          ) {
+            // Bab 5 is done and the pending SK Skripsi is what blocks Pengajuan Sidang Skripsi.
             fase = "SK Skripsi";
             status = LANJUTAN_STATUS_LABELS[lanjutan?.status] ?? LANJUTAN_STATUS_LABELS.WAITING_KAPRODI;
           } else if (revisi && !seminarFinished) {

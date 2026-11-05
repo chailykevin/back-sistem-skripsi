@@ -39,6 +39,7 @@ const {
   JENIS,
   requireJenis,
   resolveJenis,
+  resolveReadJenis,
   getLatestSidang,
 } = require("../services/sidangScope.service");
 
@@ -181,8 +182,9 @@ async function lockLatestSidang(conn, skripsiId, jenis) {
 }
 
 // The four file downloads share this lookup: identity and participant NIDNs for the access check.
-async function getSidangForFileAccess(skripsiId) {
-  const jenis = await resolveJenis(db, skripsiId);
+// ?jenis= reads a finished phase (the Seminar documents after the record moved on to Skripsi).
+async function getSidangForFileAccess(skripsiId, requestedJenis) {
+  const jenis = await resolveReadJenis(db, skripsiId, requestedJenis);
   const [[sidang]] = await db.query(
     `SELECT s.id, s.skripsi_id, s.pengajuan_sidang_id, s.status,
             m.npm, m.nama AS nama_mahasiswa, sk.program_studi_id,
@@ -210,7 +212,7 @@ exports.getSidang = async (req, res, next) => {
     const sidang = await getSidangBySkripsiId(
       db,
       skripsiId,
-      await resolveJenis(db, skripsiId),
+      await resolveReadJenis(db, skripsiId, req.query?.jenis),
     );
     if (!sidang) {
       return res
@@ -1678,7 +1680,7 @@ exports.getBeritaAcara = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const sidang = await getSidangForFileAccess(skripsiId);
+    const sidang = await getSidangForFileAccess(skripsiId, req.query?.jenis);
     if (!sidang) {
       return res
         .status(404)
@@ -1725,7 +1727,7 @@ exports.getHasilPenilaianFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const sidang = await getSidangForFileAccess(skripsiId);
+    const sidang = await getSidangForFileAccess(skripsiId, req.query?.jenis);
     if (!sidang) {
       return res
         .status(404)
@@ -1794,7 +1796,7 @@ exports.getPenilaianFile = async (req, res, next) => {
       });
     }
 
-    const sidang = await getSidangForFileAccess(skripsiId);
+    const sidang = await getSidangForFileAccess(skripsiId, req.query?.jenis);
     if (!sidang) {
       return res
         .status(404)
@@ -1849,7 +1851,7 @@ exports.getNotulenFile = async (req, res, next) => {
       });
     }
 
-    const sidang = await getSidangForFileAccess(skripsiId);
+    const sidang = await getSidangForFileAccess(skripsiId, req.query?.jenis);
     if (!sidang) {
       return res
         .status(404)

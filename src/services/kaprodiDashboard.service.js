@@ -362,8 +362,27 @@ function resolveStudentPosition(npm, data, today) {
   const revisi = sidang ? (data.revisiBySidangId.get(sidang.id) ?? null) : null;
   const awaitingNewSidang = pengajuanSidang && (!sidang || sidang.pengajuan_sidang_id !== pengajuanSidang.id);
   const lanjutan = data.lanjutanBySkripsiId.get(skripsi.id) ?? null;
-  // Once the SK Skripsi is issued the Seminar is history and the student is back in konsultasi (Bab 4).
-  const seminarFinished = sidang?.jenis === SEMINAR && lanjutan?.status === "COMPLETED";
+  // The SK Skripsi request exists from the moment the Seminar revisi completes: the Seminar is history
+  // and the student is back in konsultasi (Bab 4) while the SK is processed in parallel.
+  const seminarFinished = sidang?.jenis === SEMINAR && Boolean(lanjutan);
+  const skSkripsiPending = Boolean(lanjutan) && lanjutan.status !== "COMPLETED";
+  const skSkripsiNote = skSkripsiPending
+    ? ` · SK Skripsi ${lanjutan.status === "WAITING_SEKRETARIAT" ? "menunggu Sekretariat" : "menunggu Anda"}`
+    : "";
+  // Only once the SK is what blocks Pengajuan Sidang Skripsi does the student sit in the SK column.
+  const skSkripsiStage = () => {
+    const lanjutanHref = `/kaprodi/sk-skripsi-lanjutan/${skripsi.id}`;
+    if (lanjutan.status === "WAITING_SEKRETARIAT") {
+      return at("SK_SKRIPSI", "UNIT", "Menunggu penerbitan SK Skripsi", lanjutan.forwarded_at, {
+        holders: [unit("Sekretariat")],
+        href: lanjutanHref,
+      });
+    }
+    return at("SK_SKRIPSI", "KAPRODI", "Menunggu Anda meneruskan ke Sekretariat", lanjutan.created_at, {
+      href: lanjutanHref,
+      action: "skSkripsiLanjutan",
+    });
+  };
 
   if (pengumpulan) {
     const href = `/kaprodi/pengumpulan-berkas-final/${skripsi.id}`;
@@ -398,12 +417,10 @@ function resolveStudentPosition(npm, data, today) {
     const ujianUlang = pengajuanSidang.ujian_ke > 1 ? ` · ujian ke-${pengajuanSidang.ujian_ke}` : "";
     const pre = seminarPrefix(pengajuanSidang);
     if (pengajuanSidang.status === "REJECTED" || psk?.status === "REJECTED") return null;
-    if (
-      pengajuanSidang.jenis !== SEMINAR &&
-      skripsi.jalur === SEMINAR &&
-      data.tahapByNpm.get(npm) !== "SKRIPSI" &&
-      (!psk || psk.status === "DRAFT")
-    ) {
+    const skripsiGateApplies =
+      pengajuanSidang.jenis !== SEMINAR && skripsi.jalur === SEMINAR && (!psk || psk.status === "DRAFT");
+    if (skripsiGateApplies && skSkripsiPending) return skSkripsiStage();
+    if (skripsiGateApplies && data.tahapByNpm.get(npm) !== "SKRIPSI") {
       return at("PENGAJUAN_SIDANG", "MAHASISWA", "Belum terdaftar mata kuliah Skripsi di KRS", pengajuanSidang.updated_at, {
         href,
       });
@@ -444,19 +461,6 @@ function resolveStudentPosition(npm, data, today) {
     const href = `/kaprodi/revisi-pasca-sidang/${skripsi.id}`;
     const pre = seminarPrefix(sidang);
     if (revisi.is_completed === 1) {
-      if (sidang.jenis === SEMINAR) {
-        const lanjutanHref = `/kaprodi/sk-skripsi-lanjutan/${skripsi.id}`;
-        if (lanjutan?.status === "WAITING_SEKRETARIAT") {
-          return at("SK_SKRIPSI", "UNIT", "Menunggu penerbitan SK Skripsi", lanjutan.forwarded_at, {
-            holders: [unit("Sekretariat")],
-            href: lanjutanHref,
-          });
-        }
-        return at("SK_SKRIPSI", "KAPRODI", "Menunggu Anda meneruskan ke Sekretariat", lanjutan?.created_at ?? revisi.updated_at, {
-          href: lanjutanHref,
-          action: "skSkripsiLanjutan",
-        });
-      }
       if (sidang.hasil_sidang !== "LULUS") return null;
       return at("BERKAS_FINAL", "MAHASISWA", "Belum memulai pengumpulan berkas final", revisi.updated_at);
     }
@@ -529,6 +533,7 @@ function resolveStudentPosition(npm, data, today) {
     });
   }
   if (kartuSkripsi.is_completed === 1) {
+    if (skSkripsiPending) return skSkripsiStage();
     return at("PENGAJUAN_SIDANG", "MAHASISWA", "Belum mengajukan sidang", kartuSkripsi.completed_at, {
       href: `/kaprodi/pengajuan-sidang/${skripsi.id}`,
     });
@@ -539,19 +544,19 @@ function resolveStudentPosition(npm, data, today) {
     return at(
       "KONSULTASI_SKRIPSI",
       "MAHASISWA",
-      "Belum unggah bab berikutnya",
+      `Belum unggah bab berikutnya${skSkripsiNote}`,
       maxDate(skripsi.created_at, ...stages.map((s) => s.updated_at)),
       { href: skripsiConsultHref },
     );
   }
-  const label = `${CHAPTER_LABELS[chapterGroup]} · ${WAITING_ON_DOSEN_STATUSES.has(activeStatus) ? "review " : ""}${PEMBIMBING_LABELS[activeStage]}`;
+  const label = `${CHAPTER_LABELS[chapterGroup]} · ${WAITING_ON_DOSEN_STATUSES.has(activeStatus) ? "review " : ""}${PEMBIMBING_LABELS[activeStage]}${skSkripsiNote}`;
   if (WAITING_ON_DOSEN_STATUSES.has(activeStatus)) {
     return at("KONSULTASI_SKRIPSI", "DOSEN", label, stageRow.updated_at, {
       holders: [dosen(pembimbingNidn[activeStage])].filter(Boolean),
       href: skripsiConsultHref,
     });
   }
-  return at("KONSULTASI_SKRIPSI", "MAHASISWA", `${CHAPTER_LABELS[chapterGroup]} · belum unggah revisi`, stageRow.updated_at, {
+  return at("KONSULTASI_SKRIPSI", "MAHASISWA", `${CHAPTER_LABELS[chapterGroup]} · belum unggah revisi${skSkripsiNote}`, stageRow.updated_at, {
     href: skripsiConsultHref,
   });
 }

@@ -12,6 +12,9 @@ const { formatTanggal } = require("../utils/dates");
 const { JENIS } = require("../services/sidangScope.service");
 const { nextNomorSk } = require("../services/skNumber.service");
 const {
+  attachSidangSystemFiles,
+} = require("../services/pengajuanSidangSystemFiles.service");
+const {
   generateSuratKeputusanSkripsiFTI,
 } = require("../services/generateSuratKeputusanSkripsiFTI.js");
 
@@ -267,8 +270,9 @@ exports.forward = async (req, res, next) => {
   }
 };
 
-// POST /sk-skripsi-lanjutan/:skripsiId/issue — Sekretariat issues the SK Skripsi (Skep-Skripsi series):
-// applies the new title to skripsi.judul if the Seminar set one, and opens Bab 4.
+// POST /sk-skripsi-lanjutan/:skripsiId/issue — Sekretariat issues the SK Skripsi (Skep-Skripsi series).
+// Bab 4 and the new title already took effect when the Seminar revisi completed (finishSeminarPhase);
+// the SK only unblocks Pengajuan Sidang Skripsi, so it is attached to a Skripsi draft if Bab 5 made one.
 exports.issue = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -286,7 +290,7 @@ exports.issue = async (req, res, next) => {
 
     const [[row]] = await conn.query(
       `SELECT l.id, l.status, l.judul_seminar, l.judul_skripsi,
-              sk.npm, sk.program_studi_id, sk.pembimbing2_nidn,
+              sk.npm, sk.program_studi_id,
               m.nama AS nama_mahasiswa,
               ps.nama AS program_studi_nama, ps.kode AS ps_kode,
               f.kode AS f_kode, f.dekan_staff_usr_id,
@@ -372,35 +376,14 @@ exports.issue = async (req, res, next) => {
       ],
     );
 
-    // "Judul perlu diubah": the new title applies from the SK Skripsi on (Bab 4–5, kartu, Sidang Skripsi).
-    if (judul !== row.judul_seminar) {
-      await conn.query(
-        `UPDATE skripsi SET judul = ?, updated_at = NOW() WHERE id = ?`,
-        [judul, skripsiId],
-      );
-    }
-
-    // Open Bab 4: the review flow creates each next stage, but Bab 3 ended the Seminar phase.
-    const [[kartu]] = await conn.query(
-      `SELECT id FROM kartu_konsultasi_skripsi WHERE skripsi_id = ? LIMIT 1`,
+    const [[skripsiDraft]] = await conn.query(
+      `SELECT id FROM pengajuan_sidang
+       WHERE skripsi_id = ? AND jenis = 'SKRIPSI' AND status = 'DRAFT'
+       ORDER BY id DESC LIMIT 1`,
       [skripsiId],
     );
-    if (kartu) {
-      const [[bab4]] = await conn.query(
-        `SELECT id FROM konsultasi_skripsi_stage
-         WHERE kartu_konsultasi_skripsi_id = ? AND chapter_group = 'BAB_4' AND stage = 'PEMBIMBING_2'
-         LIMIT 1`,
-        [kartu.id],
-      );
-      if (!bab4) {
-        await conn.query(
-          `INSERT INTO konsultasi_skripsi_stage (
-             kartu_konsultasi_skripsi_id, chapter_group, stage,
-             pembimbing_nidn, current_status, current_submission_no, started_at
-           ) VALUES (?, 'BAB_4', 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP)`,
-          [kartu.id, row.pembimbing2_nidn],
-        );
-      }
+    if (skripsiDraft) {
+      await attachSidangSystemFiles(conn, skripsiDraft.id, skripsiId);
     }
 
     const [[studentRow]] = await conn.query(
@@ -412,8 +395,8 @@ exports.issue = async (req, res, next) => {
         conn,
         studentRow.id,
         "SK_SKRIPSI_LANJUTAN_ISSUED",
-        "SK Skripsi Anda telah terbit. Konsultasi Bab 4 sudah dibuka.",
-        "/student/skripsi-consultations",
+        "SK Skripsi Anda telah terbit.",
+        "/student/pengajuan-sidang",
       );
     }
 

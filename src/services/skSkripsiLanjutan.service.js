@@ -45,4 +45,57 @@ async function createSkSkripsiLanjutanRequest(conn, { skripsiId, seminarSidangId
   return ins.insertId;
 }
 
-module.exports = { createSkSkripsiLanjutanRequest };
+// The end of the Seminar phase (Pembimbing 1 approves the Seminar revisi, JUDUL_DITERIMA): the SK
+// Skripsi request goes to Kaprodi, the Seminar's new title becomes the skripsi title, and Bab 4
+// opens right away; the SK Skripsi is processed in parallel and only gates Pengajuan Sidang Skripsi.
+// Call it after anything that must still print the original title (the Halaman Pengesahan Seminar).
+async function finishSeminarPhase(conn, { skripsiId, seminarSidangId }) {
+  await createSkSkripsiLanjutanRequest(conn, { skripsiId, seminarSidangId });
+
+  const [[row]] = await conn.query(
+    `SELECT s.npm, s.judul, s.pembimbing2_nidn, sd.judul_baru,
+            k.id AS kartu_id, u.id AS student_user_id
+     FROM skripsi s
+     JOIN sidang sd ON sd.id = ?
+     LEFT JOIN kartu_konsultasi_skripsi k ON k.skripsi_id = s.id
+     LEFT JOIN users u ON u.npm = s.npm AND u.is_active = 1
+     WHERE s.id = ? LIMIT 1`,
+    [seminarSidangId, skripsiId],
+  );
+
+  if (row.judul_baru && row.judul_baru !== row.judul) {
+    await conn.query(
+      `UPDATE skripsi SET judul = ?, updated_at = NOW() WHERE id = ?`,
+      [row.judul_baru, skripsiId],
+    );
+  }
+
+  // Open Bab 4: the review flow creates each next stage, but Bab 3 ended the Seminar phase.
+  if (row.kartu_id) {
+    await conn.query(
+      `INSERT INTO konsultasi_skripsi_stage (
+         kartu_konsultasi_skripsi_id, chapter_group, stage,
+         pembimbing_nidn, current_status, current_submission_no, started_at
+       )
+       SELECT ?, 'BAB_4', 'PEMBIMBING_2', ?, 'WAITING_SUBMISSION', 0, CURRENT_TIMESTAMP
+       FROM DUAL
+       WHERE NOT EXISTS (
+         SELECT 1 FROM konsultasi_skripsi_stage
+         WHERE kartu_konsultasi_skripsi_id = ? AND chapter_group = 'BAB_4' AND stage = 'PEMBIMBING_2'
+       )`,
+      [row.kartu_id, row.pembimbing2_nidn, row.kartu_id],
+    );
+  }
+
+  if (row.student_user_id) {
+    await insertNotification(
+      conn,
+      row.student_user_id,
+      "KONSULTASI_BAB_4_DIBUKA",
+      "Revisi seminar proposal selesai. Konsultasi Bab 4 sudah dibuka; SK Skripsi Anda sedang diproses oleh Kaprodi dan Sekretariat.",
+      "/student/skripsi-consultations",
+    );
+  }
+}
+
+module.exports = { finishSeminarPhase };

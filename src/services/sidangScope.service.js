@@ -29,18 +29,18 @@ function requireJenis(jenis) {
 
 // Inside a transaction that relies on a locking read seeing fresh data, call this before
 // beginTransaction(): as the transaction's first plain read it would fix the snapshot too early.
-// A Seminar record stays SEMINAR_BISNIS_DIGITAL until its SK Skripsi is issued through the bridge
-// (pengajuan_sk_skripsi_lanjutan COMPLETED); from then on it follows the Skripsi flow.
+// A Seminar record stays SEMINAR_BISNIS_DIGITAL until its Seminar revisi completes, which is when
+// the SK Skripsi request (pengajuan_sk_skripsi_lanjutan) is created and Bab 4 opens; from then on it
+// follows the Skripsi flow, even while that SK is still being processed.
 async function resolveJenis(queryable, skripsiId) {
   const [[row]] = await queryable.query(
-    `SELECT s.jalur, l.status AS lanjutan_status
+    `SELECT s.jalur, l.id AS lanjutan_id
      FROM skripsi s
      LEFT JOIN pengajuan_sk_skripsi_lanjutan l ON l.skripsi_id = s.id
      WHERE s.id = ? LIMIT 1`,
     [skripsiId],
   );
-  return row?.jalur === JENIS.SEMINAR_BISNIS_DIGITAL &&
-    row.lanjutan_status !== "COMPLETED"
+  return row?.jalur === JENIS.SEMINAR_BISNIS_DIGITAL && !row.lanjutan_id
     ? JENIS.SEMINAR_BISNIS_DIGITAL
     : JENIS.SKRIPSI;
 }
@@ -93,11 +93,28 @@ async function getEditablePengajuanSidang(
   return row ?? null;
 }
 
+// Read-only endpoints may look at a finished phase through ?jenis= (e.g. the Seminar sidang and revisi
+// after the record moved on to Skripsi); omitted means the record's current jenis. Writes never take
+// jenis from the client: they use resolveJenis.
+async function resolveReadJenis(queryable, skripsiId, requested) {
+  if (requested === undefined || requested === null || requested === "") {
+    return resolveJenis(queryable, skripsiId);
+  }
+  if (!Object.values(JENIS).includes(requested)) {
+    throw Object.assign(
+      new Error("jenis harus 'SKRIPSI' atau 'SEMINAR_BISNIS_DIGITAL'"),
+      { statusCode: 400 },
+    );
+  }
+  return requested;
+}
+
 module.exports = {
   JENIS,
   BISNIS_DIGITAL_PROGRAM_STUDI_KODE,
   requireJenis,
   resolveJenis,
+  resolveReadJenis,
   getLatestSidang,
   countSidang,
   getActivePengajuanSidang,

@@ -21,13 +21,13 @@ const {
 
 const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 
-// A Seminar Bisnis Digital record pauses after Bab 3 for its Seminar sidang; Bab 4 opens once the
-// SK Skripsi is issued, when resolveJenis switches the record to SKRIPSI.
+// A Seminar Bisnis Digital record pauses after Bab 3 for its Seminar sidang; Bab 4 opens when the
+// Seminar revisi completes (finishSeminarPhase), when resolveJenis switches the record to SKRIPSI.
 function lastChapterGroupFor(jenis) {
   return jenis === JENIS.SEMINAR_BISNIS_DIGITAL ? "BAB_3" : "BAB_5";
 }
 
-function isAwaitingSkSkripsi(jenis, stages) {
+function isPausedForSeminar(jenis, stages) {
   return (
     jenis === JENIS.SEMINAR_BISNIS_DIGITAL &&
     stages.some(
@@ -545,10 +545,11 @@ exports.getMyDetail = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT k.*, sk.npm, sk.judul AS judul_skripsi, sk.program_studi_id,
+      `SELECT k.*, sk.npm, sk.judul AS judul_skripsi, sk.program_studi_id, sk.jalur,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
-              d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
+              d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
+              (k.file_content IS NOT NULL) AS has_kartu_file
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
@@ -613,7 +614,7 @@ exports.getMyDetail = async (req, res, next) => {
         reviews,
         isCompleted: Boolean(kartu.is_completed),
         jenis,
-        awaitingSkSkripsi: isAwaitingSkSkripsi(jenis, stages),
+        pausedForSeminar: isPausedForSeminar(jenis, stages),
       },
     });
   } catch (err) {
@@ -696,8 +697,8 @@ exports.submitMyChapter = async (req, res, next) => {
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: isAwaitingSkSkripsi(jenis, stageRows)
-          ? "Konsultasi Bab 1–3 sudah selesai. Bab 4 dibuka setelah SK Skripsi diterbitkan."
+        message: isPausedForSeminar(jenis, stageRows)
+          ? "Konsultasi Bab 1–3 sudah selesai. Bab 4 dibuka setelah revisi seminar proposal selesai."
           : "No active stage to submit to",
       });
     }

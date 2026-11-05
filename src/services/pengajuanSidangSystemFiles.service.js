@@ -35,17 +35,18 @@ async function attachSidangSystemFiles(conn, pengajuanSidangId, skripsiId) {
      ORDER BY f.created_at DESC LIMIT 1`;
 
   // A Sidang Skripsi of a student who went through the Seminar uses the SK Skripsi issued through
-  // the bridge; the SK on pengajuan_sk_penelitian is the Seminar SK.
+  // the bridge; the SK on pengajuan_sk_penelitian is the Seminar SK. Until that SK is issued nothing
+  // is attached (Bab 5 can finish first); issuing it attaches it to the draft.
   const [[lanjutanSkRow]] = await conn.query(
-    `SELECT l.file_content, l.file_name, l.mime_type
+    `SELECT l.status, l.file_content, l.file_name, l.mime_type
      FROM pengajuan_sk_skripsi_lanjutan l
      JOIN pengajuan_sidang ps ON ps.id = ? AND ps.jenis = 'SKRIPSI'
-     WHERE l.skripsi_id = ? AND l.status = 'COMPLETED' AND l.file_content IS NOT NULL
+     WHERE l.skripsi_id = ?
      LIMIT 1`,
     [pengajuanSidangId, skripsiId],
   );
   const [[skPembimbingRow]] = lanjutanSkRow
-    ? [[lanjutanSkRow]]
+    ? [[lanjutanSkRow.status === "COMPLETED" && lanjutanSkRow.file_content ? lanjutanSkRow : null]]
     : await conn.query(skFileQuery, [skripsiId, "SK_PENUNJUKAN_PEMBIMBING"]);
   if (skPembimbingRow) {
     await upsertSystemFile(conn, pengajuanSidangId, "SK_PENUNJUKAN_PEMBIMBING", {

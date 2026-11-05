@@ -134,23 +134,31 @@ async function getSkripsiReadyForSidang(conn, skripsiId, npm, jenis) {
 }
 
 // A student who went through the Seminar may start Pengajuan Sidang Skripsi only once the SIMIKO sync
-// shows they registered Skripsi (BDPB802). Returns the refusal message, or null when allowed.
+// shows they registered Skripsi (BDPB802) and their SK Skripsi has been issued through the bridge
+// (Bab 4–5 may run before either). Returns the refusal message, or null when allowed.
 async function getSkripsiRegistrationBlock(queryable, skripsiId, jenis) {
   if (jenis !== JENIS.SKRIPSI) return null;
   const [[row]] = await queryable.query(
-    `SELECT s.jalur, m.tahap_tugas_akhir
+    `SELECT s.jalur, m.tahap_tugas_akhir, l.status AS lanjutan_status
      FROM skripsi s
      JOIN mahasiswa m ON m.npm = s.npm
+     LEFT JOIN pengajuan_sk_skripsi_lanjutan l ON l.skripsi_id = s.id
      WHERE s.id = ? LIMIT 1`,
     [skripsiId],
   );
-  if (
-    row?.jalur !== JENIS.SEMINAR_BISNIS_DIGITAL ||
-    row.tahap_tugas_akhir === JENIS.SKRIPSI
-  ) {
-    return null;
+  if (row?.jalur !== JENIS.SEMINAR_BISNIS_DIGITAL) return null;
+  const notRegistered = row.tahap_tugas_akhir !== JENIS.SKRIPSI;
+  const skPending = row.lanjutan_status !== "COMPLETED";
+  if (notRegistered && skPending) {
+    return "Pengajuan Sidang Skripsi dibuka setelah Anda terdaftar mata kuliah Skripsi di KRS dan SK Skripsi Anda diterbitkan.";
   }
-  return "Pengajuan Sidang Skripsi dibuka setelah Anda terdaftar mata kuliah Skripsi di KRS.";
+  if (notRegistered) {
+    return "Pengajuan Sidang Skripsi dibuka setelah Anda terdaftar mata kuliah Skripsi di KRS.";
+  }
+  if (skPending) {
+    return "Pengajuan Sidang Skripsi dibuka setelah SK Skripsi Anda diterbitkan oleh Sekretariat.";
+  }
+  return null;
 }
 
 const PENGUJI_BY_KAPRODI_MESSAGE =

@@ -30,11 +30,10 @@ const {
 const {
   JENIS,
   resolveJenis,
+  resolveReadJenis,
   countSidang,
 } = require("../services/sidangScope.service");
-const {
-  createSkSkripsiLanjutanRequest,
-} = require("../services/skSkripsiLanjutan.service");
+const { finishSeminarPhase } = require("../services/skSkripsiLanjutan.service");
 const { revisiStageOrderFor } = require("../utils/workflowStage");
 
 // A Seminar Bisnis Digital has a single penguji (stored as PENGUJI_1), so its chain has 3 stages.
@@ -884,7 +883,7 @@ exports.reviewRevisi = async (req, res, next) => {
               Buffer.from(halamanBuffer).toString("base64"),
             ],
           );
-          await createSkSkripsiLanjutanRequest(conn, {
+          await finishSeminarPhase(conn, {
             skripsiId,
             seminarSidangId: revisi.sidang_id,
           });
@@ -994,7 +993,7 @@ exports.getRevisi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const jenis = await resolveJenis(db, skripsiId);
+    const jenis = await resolveReadJenis(db, skripsiId, req.query?.jenis);
     const [[revisi]] = await db.query(
       `SELECT rps.*,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
@@ -1400,7 +1399,10 @@ exports.getSubmissionFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const revisi = await getRevisiForFileAccess(skripsiId);
+    const revisi = await getRevisiForFileAccess(
+      skripsiId,
+      await resolveReadJenis(db, skripsiId, req.query?.jenis),
+    );
     if (!revisi) {
       return res
         .status(404)
