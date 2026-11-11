@@ -38,7 +38,7 @@ async function createSkSkripsiLanjutanRequest(conn, { skripsiId, seminarSidangId
       conn,
       ku.id,
       "SK_SKRIPSI_LANJUTAN_WAITING_KAPRODI",
-      `Revisi seminar proposal ${row.nama_mahasiswa} telah selesai. Teruskan ke Sekretariat untuk penerbitan SK Skripsi.`,
+      `Revisi seminar proposal ${row.nama_mahasiswa} telah selesai. Teruskan ke Sekretariat untuk penerbitan SK Penulisan Skripsi.`,
       `/kaprodi/sk-skripsi-lanjutan/${skripsiId}`,
     );
   }
@@ -92,7 +92,7 @@ async function finishSeminarPhase(conn, { skripsiId, seminarSidangId }) {
       conn,
       row.student_user_id,
       "KONSULTASI_BAB_4_DIBUKA",
-      "Revisi seminar proposal selesai. Konsultasi Bab 4 sudah dibuka; SK Skripsi Anda sedang diproses oleh Kaprodi dan Sekretariat.",
+      "Revisi seminar proposal selesai. Konsultasi Bab 4 sudah dibuka; SK Penulisan Skripsi Anda sedang diproses oleh Kaprodi dan Sekretariat.",
       "/student/skripsi-consultations",
     );
   }

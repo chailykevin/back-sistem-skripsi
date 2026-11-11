@@ -155,13 +155,13 @@ async function getSkripsiRegistrationBlock(queryable, skripsiId, jenis) {
   const notRegistered = row.tahap_tugas_akhir !== JENIS.SKRIPSI;
   const skPending = row.lanjutan_status !== "COMPLETED";
   if (notRegistered && skPending) {
-    return "Pengajuan Sidang Skripsi dibuka setelah Anda terdaftar mata kuliah Skripsi di KRS dan SK Skripsi Anda diterbitkan.";
+    return "Pengajuan Sidang Skripsi dibuka setelah Anda terdaftar mata kuliah Skripsi di KRS dan SK Penulisan Skripsi Anda diterbitkan.";
   }
   if (notRegistered) {
     return "Pengajuan Sidang Skripsi dibuka setelah Anda terdaftar mata kuliah Skripsi di KRS.";
   }
   if (skPending) {
-    return "Pengajuan Sidang Skripsi dibuka setelah SK Skripsi Anda diterbitkan oleh Sekretariat.";
+    return "Pengajuan Sidang Skripsi dibuka setelah SK Penulisan Skripsi Anda diterbitkan oleh Sekretariat.";
   }
   return null;
 }

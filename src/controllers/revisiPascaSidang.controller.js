@@ -945,7 +945,7 @@ exports.reviewRevisi = async (req, res, next) => {
         const studentUserId = await getUserIdByNpm(conn, revisi.mahasiswa_npm);
         const completionMessage =
           revisi.hasil_sidang === "JUDUL_DITERIMA"
-            ? "Revisi pasca seminar proposal Anda telah selesai. Halaman pengesahan proposal skripsi telah digenerate. Selanjutnya Kaprodi meneruskan ke Sekretariat untuk penerbitan SK Skripsi."
+            ? "Revisi pasca seminar proposal Anda telah selesai. Halaman pengesahan proposal skripsi telah digenerate. Selanjutnya Kaprodi meneruskan ke Sekretariat untuk penerbitan SK Penulisan Skripsi."
             : revisi.hasil_sidang === "LULUS"
               ? "Revisi pasca sidang Anda telah selesai. Halaman pengesahan telah digenerate."
               : "Revisi pasca sidang Anda telah selesai. Silakan daftar ujian ulang.";
@@ -1084,8 +1084,16 @@ exports.getRevisi = async (req, res, next) => {
       reviewsByStage[rev.stage_id].push(revData);
     }
 
+    const signerNames = {
+      PENGUJI_2: revisi.penguji2_nama,
+      PENGUJI_1: revisi.penguji1_nama,
+      PEMBIMBING_2: revisi.pembimbing2_nama,
+      PEMBIMBING_1: revisi.pembimbing1_nama,
+    };
     const stagesWithData = stages.map((stage) => ({
       ...stage,
+      nidn: getNidnForRole(revisi, stage.signer_role),
+      nama: signerNames[stage.signer_role] ?? null,
       submissions: subsByStage[stage.id] ?? [],
       reviews: reviewsByStage[stage.id] ?? [],
     }));

@@ -579,6 +579,7 @@ exports.getSkPenelitian = async (req, res, next) => {
          sk.*,
          o.npm,
          m.nama AS nama_mahasiswa,
+         m.tahap_tugas_akhir,
          o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama
        FROM pengajuan_sk_penelitian sk

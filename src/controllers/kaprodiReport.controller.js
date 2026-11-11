@@ -898,7 +898,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
             pengajuanSidang?.status === "DRAFT"
           ) {
             // Bab 5 is done and the pending SK Skripsi is what blocks Pengajuan Sidang Skripsi.
-            fase = "SK Skripsi";
+            fase = "SK Penulisan Skripsi";
             status = LANJUTAN_STATUS_LABELS[lanjutan?.status] ?? LANJUTAN_STATUS_LABELS.WAITING_KAPRODI;
           } else if (revisi && !seminarFinished) {
             const stages = revisiStagesByRevisiId.get(revisi.id) ?? [];

@@ -367,13 +367,13 @@ function resolveStudentPosition(npm, data, today) {
   const seminarFinished = sidang?.jenis === SEMINAR && Boolean(lanjutan);
   const skSkripsiPending = Boolean(lanjutan) && lanjutan.status !== "COMPLETED";
   const skSkripsiNote = skSkripsiPending
-    ? ` · SK Skripsi ${lanjutan.status === "WAITING_SEKRETARIAT" ? "menunggu Sekretariat" : "menunggu Anda"}`
+    ? ` · SK Penulisan Skripsi ${lanjutan.status === "WAITING_SEKRETARIAT" ? "menunggu Sekretariat" : "menunggu Anda"}`
     : "";
   // Only once the SK is what blocks Pengajuan Sidang Skripsi does the student sit in the SK column.
   const skSkripsiStage = () => {
     const lanjutanHref = `/kaprodi/sk-skripsi-lanjutan/${skripsi.id}`;
     if (lanjutan.status === "WAITING_SEKRETARIAT") {
-      return at("SK_SKRIPSI", "UNIT", "Menunggu penerbitan SK Skripsi", lanjutan.forwarded_at, {
+      return at("SK_SKRIPSI", "UNIT", "Menunggu penerbitan SK Penulisan Skripsi", lanjutan.forwarded_at, {
         holders: [unit("Sekretariat")],
         href: lanjutanHref,
       });

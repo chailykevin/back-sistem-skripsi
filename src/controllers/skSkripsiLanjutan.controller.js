@@ -29,10 +29,12 @@ const LIST_SELECT = `
     l.id, l.skripsi_id, l.status, l.judul_seminar, l.judul_skripsi, l.nomor_surat,
     l.forwarded_at, l.completed_at, l.created_at,
     sk.npm, m.nama AS nama_mahasiswa, sk.program_studi_id, ps.nama AS program_studi_nama,
+    o.submission_period_id,
     d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
     sd.hasil_sidang AS hasil_seminar, shp.rata AS rata_seminar, shp.grade AS grade_seminar
   FROM pengajuan_sk_skripsi_lanjutan l
   JOIN skripsi sk ON sk.id = l.skripsi_id
+  LEFT JOIN outline o ON o.id = sk.outline_id
   JOIN mahasiswa m ON m.npm = sk.npm
   JOIN program_studi ps ON ps.id = sk.program_studi_id
   JOIN sidang sd ON sd.id = l.seminar_sidang_id
@@ -149,7 +151,7 @@ exports.getDetail = async (req, res, next) => {
     if (!row) {
       return res
         .status(404)
-        .json({ ok: false, message: "Pengajuan SK Skripsi tidak ditemukan" });
+        .json({ ok: false, message: "Pengajuan SK Penulisan Skripsi tidak ditemukan" });
     }
     if (!(await canRead(req, row))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
@@ -208,7 +210,7 @@ exports.forward = async (req, res, next) => {
       txStarted = false;
       return res
         .status(404)
-        .json({ ok: false, message: "Pengajuan SK Skripsi tidak ditemukan" });
+        .json({ ok: false, message: "Pengajuan SK Penulisan Skripsi tidak ditemukan" });
     }
     if (!prodiIds.includes(Number(row.program_studi_id))) {
       await conn.rollback();
@@ -241,7 +243,7 @@ exports.forward = async (req, res, next) => {
         conn,
         sek.id,
         "SK_SKRIPSI_LANJUTAN_WAITING_SEKRETARIAT",
-        `Kaprodi meneruskan permohonan SK Skripsi mahasiswa ${row.nama_mahasiswa}.`,
+        `Kaprodi meneruskan permohonan SK Penulisan Skripsi mahasiswa ${row.nama_mahasiswa}.`,
         `/sekretariat/sk-skripsi-lanjutan/${skripsiId}`,
       );
     }
@@ -254,7 +256,7 @@ exports.forward = async (req, res, next) => {
         conn,
         studentRow.id,
         "SK_SKRIPSI_LANJUTAN_FORWARDED",
-        "Kaprodi telah meneruskan permohonan SK Skripsi Anda ke Sekretariat.",
+        "Kaprodi telah meneruskan permohonan SK Penulisan Skripsi Anda ke Sekretariat.",
         "/student/skripsi-consultations",
       );
     }
@@ -312,7 +314,7 @@ exports.issue = async (req, res, next) => {
       txStarted = false;
       return res
         .status(404)
-        .json({ ok: false, message: "Pengajuan SK Skripsi tidak ditemukan" });
+        .json({ ok: false, message: "Pengajuan SK Penulisan Skripsi tidak ditemukan" });
     }
     if (row.status !== "WAITING_SEKRETARIAT") {
       await conn.rollback();
@@ -321,7 +323,7 @@ exports.issue = async (req, res, next) => {
         ok: false,
         message:
           row.status === "COMPLETED"
-            ? "SK Skripsi sudah diterbitkan"
+            ? "SK Penulisan Skripsi sudah diterbitkan"
             : "Pengajuan belum diteruskan oleh Kaprodi",
       });
     }
@@ -397,7 +399,7 @@ exports.issue = async (req, res, next) => {
         conn,
         studentRow.id,
         "SK_SKRIPSI_LANJUTAN_ISSUED",
-        "SK Skripsi Anda telah terbit.",
+        "SK Penulisan Skripsi Anda telah terbit.",
         "/student/pengajuan-sidang",
       );
     }
@@ -406,7 +408,7 @@ exports.issue = async (req, res, next) => {
     txStarted = false;
     return res.json({
       ok: true,
-      message: "SK Skripsi diterbitkan",
+      message: "SK Penulisan Skripsi diterbitkan",
       data: { nomorSurat, judul },
     });
   } catch (err) {
@@ -437,7 +439,7 @@ exports.getFile = async (req, res, next) => {
     if (!row) {
       return res
         .status(404)
-        .json({ ok: false, message: "Pengajuan SK Skripsi tidak ditemukan" });
+        .json({ ok: false, message: "Pengajuan SK Penulisan Skripsi tidak ditemukan" });
     }
     if (!(await canRead(req, row, { includeSkReaders: true }))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
@@ -445,7 +447,7 @@ exports.getFile = async (req, res, next) => {
     if (!row.file_content) {
       return res
         .status(404)
-        .json({ ok: false, message: "SK Skripsi belum diterbitkan" });
+        .json({ ok: false, message: "SK Penulisan Skripsi belum diterbitkan" });
     }
     return res.json({
       ok: true,
