@@ -9,6 +9,7 @@ const {
   generateHalamanPersetujuanJudulDesainSkripsiFTI,
 } = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { getCurrentOutlineId } = require("../services/outline.service");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
@@ -632,6 +633,7 @@ exports.listMine = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
+    const currentOutlineId = await getCurrentOutlineId(npm);
     const [kartuRows] = await db.query(
       `SELECT
          k.id AS kartu_id,
@@ -642,9 +644,9 @@ exports.listMine = async (req, res, next) => {
          k.created_at
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
-       WHERE o.npm = ?
+       WHERE o.npm = ? AND k.outline_id = ?
        ORDER BY k.created_at DESC`,
-      [npm],
+      [npm, currentOutlineId],
     );
 
     if (kartuRows.length === 0) {
@@ -654,9 +656,9 @@ exports.listMine = async (req, res, next) => {
                 pdp.status AS pengajuan_status
          FROM outline o
          LEFT JOIN pengajuan_disposisi_pembimbing pdp ON pdp.outline_id = o.id AND pdp.npm = o.npm
-         WHERE o.npm = ?
+         WHERE o.npm = ? AND o.id = ?
          ORDER BY pdp.id DESC LIMIT 1`,
-        [npm],
+        [npm, currentOutlineId],
       );
       const elig = eligRows[0] ?? null;
       const canInit =

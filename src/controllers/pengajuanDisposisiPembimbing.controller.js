@@ -3,6 +3,7 @@ const { insertNotification } = require("../utils/notify");
 const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
 const { getStudentNpm } = require("../utils/identity");
+const { getCurrentOutlineId } = require("../services/outline.service");
 const { assertSignatures } = require("../utils/signature");
 const { BULAN_ROMAWI } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
@@ -444,6 +445,7 @@ exports.getLatestMine = async (req, res, next) => {
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
+    const currentOutlineId = await getCurrentOutlineId(npm);
     const [rows] = await db.query(
       `SELECT
          pj.*,
@@ -464,10 +466,10 @@ exports.getLatestMine = async (req, res, next) => {
        LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
        LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
        LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
-       WHERE pj.npm = ?
+       WHERE pj.npm = ? AND pj.outline_id = ?
        ORDER BY pj.updated_at DESC, pj.id DESC
        LIMIT 1`,
-      [npm],
+      [npm, currentOutlineId],
     );
 
     if (!rows || rows.length === 0) {

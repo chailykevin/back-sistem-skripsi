@@ -74,20 +74,76 @@ async function createOutline(
   }
 }
 
-async function getExistingOutlinesByNpm(npm) {
-  return await db.query(
-    `SELECT id, status
-           FROM outline
-           WHERE npm = ?`,
+// An outline whose skripsi ended GAGAL (Sidang Skripsi GAGAL or Seminar JUDUL_DITOLAK) no
+// longer blocks: the student starts over with a new outline, gated by getRestartStatus.
+async function hasNonRejectedOutline(npm) {
+  const [rows] = await db.query(
+    `SELECT o.id
+     FROM outline o
+     LEFT JOIN skripsi sk ON sk.outline_id = o.id AND sk.status = 'GAGAL'
+     WHERE o.npm = ? AND o.status <> 'REJECTED' AND sk.id IS NULL
+     LIMIT 1`,
     [npm],
   );
+  return rows.length > 0;
 }
 
-async function hasNonRejectedOutline(npm) {
-  const [existingOutlines] = await getExistingOutlinesByNpm(npm);
-  return existingOutlines.some(
-    (outline) => String(outline.status || "").toUpperCase() !== "REJECTED",
+// The student's current cycle is their newest outline; student-facing "latest/me" reads
+// scope to it so a restart doesn't surface the failed cycle's disposisi, kartu or skripsi.
+async function getCurrentOutlineId(npm) {
+  const [[row]] = await db.query(
+    `SELECT id FROM outline WHERE npm = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [npm],
   );
+  return row?.id ?? null;
+}
+
+async function getLatestFailure(npm) {
+  const [[row]] = await db.query(
+    `SELECT sk.id AS skripsi_id, sk.outline_id, s.hasil_sidang, shp.submitted_at AS verdict_at
+     FROM skripsi sk
+     JOIN sidang s ON s.skripsi_id = sk.id AND s.hasil_sidang IN ('GAGAL', 'JUDUL_DITOLAK')
+     JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id AND shp.submitted_at IS NOT NULL
+     WHERE sk.npm = ? AND sk.status = 'GAGAL'
+     ORDER BY shp.submitted_at DESC, s.id DESC
+     LIMIT 1`,
+    [npm],
+  );
+  return row ?? null;
+}
+
+// After a failure the new outline may only be submitted in an outline period that opened
+// after the verdict; nextPeriod is the earliest such period that hasn't closed yet.
+async function getRestartStatus(npm) {
+  const failure = await getLatestFailure(npm);
+  if (!failure) return null;
+
+  const [[period]] = await db.query(
+    `SELECT tahun_akademik, periode_akademik, open_at, close_at,
+            (CURRENT_TIMESTAMP >= open_at) AS is_open_now
+     FROM outline_submission_period
+     WHERE open_at > ? AND close_at >= CURRENT_TIMESTAMP
+     ORDER BY open_at ASC
+     LIMIT 1`,
+    [failure.verdict_at],
+  );
+  const nextPeriod = period
+    ? {
+        tahunAkademik: period.tahun_akademik,
+        periodeAkademik: period.periode_akademik,
+        openAt: period.open_at,
+        closeAt: period.close_at,
+        isOpenNow: Boolean(period.is_open_now),
+      }
+    : null;
+
+  return {
+    outlineId: failure.outline_id,
+    hasilSidang: failure.hasil_sidang,
+    verdictAt: failure.verdict_at,
+    allowed: Boolean(nextPeriod?.isOpenNow),
+    nextPeriod,
+  };
 }
 
 async function hasActiveSkripsi(npm) {
@@ -193,7 +249,7 @@ async function getLatestOutlineByNpm(npm) {
       )
      LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
      WHERE o.npm = ?
-     ORDER BY o.updated_at DESC
+     ORDER BY o.created_at DESC, o.id DESC
      LIMIT 1`,
     [npm],
   );
@@ -492,8 +548,9 @@ async function resubmitOutline(
 
 module.exports = {
   createOutline,
-  getExistingOutlinesByNpm,
   hasNonRejectedOutline,
+  getCurrentOutlineId,
+  getRestartStatus,
   hasActiveSkripsi,
   getOutlineDetailById,
   getRejectedOutlinesByNpm,

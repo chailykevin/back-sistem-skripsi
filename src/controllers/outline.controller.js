@@ -84,6 +84,15 @@ exports.create = async (req, res, next) => {
       });
     }
 
+    const restart = await outlineService.getRestartStatus(npm);
+    if (restart && !restart.allowed) {
+      return res.status(409).json({
+        ok: false,
+        message:
+          "Outline baru dapat diajukan pada periode pengajuan outline berikutnya setelah hasil sidang Anda.",
+      });
+    }
+
     const submissionPeriodId = req.openPeriod?.id ?? null;
 
     const namaMahasiswa = await mahasiswaService.getMahasiswaNameByNpm(npm);
@@ -171,7 +180,14 @@ exports.getLatestMine = async (req, res, next) => {
       return res.json({ ok: true, data: null, message: "Outline not found" });
     }
 
-    return res.json({ ok: true, data: outline });
+    // Only while the failed outline is still the newest: once a new one exists the
+    // student is in a fresh cycle and the normal outline states apply.
+    const restart = await outlineService.getRestartStatus(npm);
+    const { outlineId: failedOutlineId, ...restartInfo } = restart ?? {};
+    return res.json({
+      ok: true,
+      data: { ...outline, restart: restart && failedOutlineId === outline.id ? restartInfo : null },
+    });
   } catch (err) {
     next(err);
   }

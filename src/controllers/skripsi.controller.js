@@ -1,6 +1,7 @@
 "use strict";
 const db = require("../db");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { getCurrentOutlineId } = require("../services/outline.service");
 
 const SELECT_COLS = `s.id, s.npm, s.judul, s.status, s.jalur, s.outline_id, s.program_studi_id,
   ps.nama AS program_studi_nama,
@@ -28,9 +29,10 @@ exports.getMySkripsi = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "Mahasiswa tidak valid" });
 
+    const currentOutlineId = await getCurrentOutlineId(npm);
     const [rows] = await db.query(
-      `SELECT ${SELECT_COLS} ${SELECT_JOINS} WHERE s.npm = ? ORDER BY s.created_at DESC`,
-      [npm],
+      `SELECT ${SELECT_COLS} ${SELECT_JOINS} WHERE s.npm = ? AND s.outline_id = ? ORDER BY s.created_at DESC`,
+      [npm, currentOutlineId],
     );
     return res.json({ ok: true, data: rows });
   } catch (err) {
