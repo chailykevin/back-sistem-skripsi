@@ -1,0 +1,33 @@
+/* Source DOCX: "Surat pengajuan Seminar" — A4, no masthead. The student's half and Kaprodi's disposisi
+   half share one page, split by a dashed line that runs the full page width. */
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { color: #000; font-family: "Times New Roman", serif; font-size: 11pt; line-height: 1.25; }
+.page { width: 210mm; min-height: 297mm; padding: 18mm 25mm 12mm; }
+
+p { margin: 0 0 1.5mm; text-align: justify; }
+.date { text-align: right; margin-bottom: 5mm; }
+.recipient { margin-bottom: 5mm; }
+.perihal { margin-bottom: 5mm; font-weight: bold; }
+
+.fields > div { display: grid; grid-template-columns: 38mm 5mm 1fr; margin-bottom: 1mm; }
+.fields.indented { margin: 0 0 2mm 6mm; }
+.value { min-height: 5mm; border-bottom: 1px solid #000; overflow-wrap: anywhere; }
+/* The form rules two lines for the title: the title line, and a blank one under it. */
+.judul { min-height: 5.5mm; margin-bottom: 0; line-height: 5.5mm; border-bottom: 1px solid #000; text-align: left; overflow-wrap: anywhere; }
+.judul-line { height: 5.5mm; margin-bottom: 3mm; border-bottom: 1px solid #000; }
+
+.signer { width: 72mm; margin-left: auto; text-align: center; }
+.pemohon { margin-top: 4mm; }
+.signature-space { position: relative; height: 15mm; }
+.signature-space > .signature-image { position: absolute; inset: 0; margin: auto; width: 40mm; max-width: 100%; height: 100%; object-fit: contain; mix-blend-mode: multiply; }
+.signer-name { border-bottom: 1px solid #000; min-height: 5mm; }
+
+.cut { width: 210mm; margin: 5mm -25mm; border: 0; border-top: 2px dashed #000; }
+
+.disposisi h2 { margin: 0 0 4mm; font-size: 11pt; font-weight: bold; text-decoration: underline; }
+.kaprodi { margin-top: 3mm; }
+.kaprodi-name { font-weight: bold; text-decoration: underline; text-transform: uppercase; min-height: 5mm; }
+
+footer { margin-top: 4mm; padding-top: 1mm; border-top: 1px solid #000; font-size: 10pt; font-style: italic; font-weight: bold; line-height: 1.15; }

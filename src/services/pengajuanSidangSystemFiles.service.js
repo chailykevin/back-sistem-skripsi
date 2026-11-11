@@ -55,6 +55,13 @@ async function attachSidangSystemFiles(conn, pengajuanSidangId, skripsiId) {
     });
   }
 
+  const [[pengajuan]] = await conn.query(
+    `SELECT jenis FROM pengajuan_sidang WHERE id = ? LIMIT 1`,
+    [pengajuanSidangId],
+  );
+  // Not on the Seminar's file list.
+  if (pengajuan?.jenis === "SEMINAR_BISNIS_DIGITAL") return;
+
   const [[suratPenyelesaianRow]] = await conn.query(skFileQuery, [
     skripsiId,
     "SURAT_PENYELESAIAN_SKRIPSI",

@@ -162,10 +162,12 @@ exports.getDetail = async (req, res, next) => {
        WHERE l.skripsi_id = ? LIMIT 1`,
       [skripsiId],
     );
+    // Students never receive scores, here as anywhere else.
+    const { rata_seminar, grade_seminar, ...studentRow } = row;
     return res.json({
       ok: true,
       data: {
-        ...row,
+        ...(req.user.hasRole("STUDENT") ? studentRow : row),
         judul_berubah: row.judul_skripsi !== row.judul_seminar,
         has_halaman_pengesahan_seminar: !!halaman,
         has_sk_skripsi: row.status === "COMPLETED",

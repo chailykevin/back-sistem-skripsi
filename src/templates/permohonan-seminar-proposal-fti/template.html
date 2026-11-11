@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Permohonan Seminar Bisnis Digital</title>
+  </head>
+  <body>
+    <main class="page">
+      <div class="date">Pontianak, {{tanggal}}</div>
+
+      <section class="recipient">
+        <div>Kepada Yth.</div>
+        <div>Kaprodi {{programStudi}}</div>
+        <div>Fakultas Teknologi Informasi</div>
+        <div>Universitas Widya Dharma Pontianak</div>
+        <div>Di Tempat.</div>
+      </section>
+
+      <p class="perihal">Perihal: Permohonan Seminar {{programStudi}}</p>
+
+      <p>Saya yang bertandatangan di bawah ini:</p>
+      <section class="fields indented">
+        <div><span>Nama</span><span>:</span><span class="value">{{namaMahasiswa}}</span></div>
+        <div><span>NPM</span><span>:</span><span class="value">{{npm}}</span></div>
+        <div><span>Tempat, Tanggal Lahir</span><span>:</span><span class="value">{{tempatTanggalLahir}}</span></div>
+        <div><span>Alamat</span><span>:</span><span class="value">{{alamat}}</span></div>
+        <div><span>No. HP</span><span>:</span><span class="value">{{noHp}}</span></div>
+        <div><span>No. WA</span><span>:</span><span class="value">{{noWa}}</span></div>
+      </section>
+
+      <p>Menyatakan telah menyelesaikan penyusunan proposal skripsi dengan judul:</p>
+      <p class="judul">{{judulSkripsi}}</p>
+      <div class="judul-line"></div>
+
+      <p>Dengan ini mengajukan permohonan untuk melaksanakan Seminar {{programStudi}}.</p>
+      <p>Demikian surat permohonan ini saya sampaikan, atas perhatiannya saya ucapkan terima kasih.</p>
+
+      <section class="signer pemohon">
+        <div>Pemohon,</div>
+        <div class="signature-space">{{signatureMahasiswa}}</div>
+        <div class="signer-name">{{namaMahasiswa}}</div>
+      </section>
+
+      <hr class="cut" />
+
+      <section class="disposisi">
+        <h2>DISPOSISI KETUA PROGRAM STUDI {{programStudiUppercase}}</h2>
+        <div class="fields">
+          <div><span>Tanggal Disposisi</span><span>:</span><span class="value">{{tanggalDisposisi}}</span></div>
+          <div><span>Penguji</span><span>:</span><span class="value">{{penguji}}</span></div>
+          <div><span>Hari, Tanggal</span><span>:</span><span class="value">{{hariTanggal}}</span></div>
+          <div><span>Waktu</span><span>:</span><span class="value">{{waktu}}</span></div>
+        </div>
+
+        <div class="signer kaprodi">
+          <div>Disetujui oleh:</div>
+          <div>Ketua Program Studi {{programStudi}}</div>
+          <div class="signature-space">{{signatureKaprodi}}</div>
+          <div class="kaprodi-name">{{namaKaprodi}}</div>
+        </div>
+      </section>
+
+      <footer>
+        <div>NB:</div>
+        <div>Diketik dengan rapi</div>
+        <div>Harus melampirkan Data Perkembangan Akademik terupdate</div>
+      </footer>
+    </main>
+  </body>
+</html>

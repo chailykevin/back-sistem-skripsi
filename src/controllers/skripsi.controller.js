@@ -2,7 +2,7 @@
 const db = require("../db");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 
-const SELECT_COLS = `s.id, s.npm, s.judul, s.status, s.jalur, s.program_studi_id,
+const SELECT_COLS = `s.id, s.npm, s.judul, s.status, s.jalur, s.outline_id, s.program_studi_id,
   ps.nama AS program_studi_nama,
   s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
   s.pembimbing2_nidn, d2.nama AS pembimbing2_nama,

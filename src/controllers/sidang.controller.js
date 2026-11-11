@@ -139,6 +139,8 @@ const NOTULEN_ROLE_LABEL = {
   PENGUJI_2: "Anggota Penguji",
 };
 
+// skripsi.judul takes the Seminar's new title when the Seminar revisi completes; the bridge row
+// keeps the title that Seminar examined.
 async function getSidangBySkripsiId(conn, skripsiId, jenis) {
   const [[sidang]] = await conn.query(
     `SELECT
@@ -150,7 +152,7 @@ async function getSidangBySkripsiId(conn, skripsiId, jenis) {
        m.npm,
        prog.id   AS program_studi_id,
        prog.nama AS program_studi_nama,
-       sk.judul  AS judul_skripsi,
+       COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi,
        sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
        sk.pembimbing2_nidn, d2.nama   AS pembimbing2_nama,
        psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
@@ -166,6 +168,7 @@ async function getSidangBySkripsiId(conn, skripsiId, jenis) {
             ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
      LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
      LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+     LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
      WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
     [skripsiId, requireJenis(jenis)],
   );
@@ -884,7 +887,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     }
 
     // "Judul perlu diubah": an optional new title, only for a Seminar whose title is accepted.
-    // Stored on the sidang and applied to skripsi.judul when the SK Skripsi is issued.
+    // Stored on the sidang and applied to skripsi.judul when the Seminar revisi completes.
     let judulBaruValue = null;
     if (judulBaru !== undefined && judulBaru !== null && judulBaru !== "") {
       if (jenis !== JENIS.SEMINAR_BISNIS_DIGITAL) {
@@ -1493,7 +1496,7 @@ exports.getLecturerSidang = async (req, res, next) => {
         s.jenis,
         m.npm,
         m.nama AS nama_mahasiswa,
-        sk.judul AS judul_skripsi,
+        COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi,
         s.status,
         psk_k.tanggal_sidang,
         psk_k.waktu_sidang,
@@ -1515,6 +1518,7 @@ exports.getLecturerSidang = async (req, res, next) => {
       LEFT JOIN pengajuan_sidang_kaprodi psk_k
              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
       LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
+      LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
       LEFT JOIN sidang_penilaian sp
         ON sp.sidang_id = s.id
         AND sp.role = CASE
@@ -1580,6 +1584,10 @@ exports.getKaprodiSidang = async (req, res, next) => {
       periodConditions.push("ssp.periode_akademik = ?");
       periodParams.push(String(periodeAkademik));
     }
+    if (["SKRIPSI", "SEMINAR_BISNIS_DIGITAL"].includes(req.query.jenis)) {
+      periodConditions.push("s.jenis = ?");
+      periodParams.push(req.query.jenis);
+    }
     const searchCondition = q
       ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ?)"
       : "";
@@ -1606,7 +1614,7 @@ exports.getKaprodiSidang = async (req, res, next) => {
          m.npm, m.nama AS nama_mahasiswa,
          prog.id   AS program_studi_id,
          prog.nama AS program_studi_nama,
-         sk.judul  AS judul_skripsi,
+         COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi,
          ps.ujian_ke,
          s.status, psk_k.tanggal_sidang, psk_k.waktu_sidang, psk_k.tempat_sidang,
          sk.pembimbing1_nidn, d1.nama   AS pembimbing1_nama,
@@ -1627,6 +1635,7 @@ exports.getKaprodiSidang = async (req, res, next) => {
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
        LEFT JOIN pengajuan_sidang ps ON ps.id = s.pengajuan_sidang_id
        LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = s.id
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
        WHERE prog.id IN (${placeholders})
          AND (? IS NULL OR s.status = ?)

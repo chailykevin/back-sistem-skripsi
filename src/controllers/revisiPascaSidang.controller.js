@@ -999,14 +999,14 @@ exports.getRevisi = async (req, res, next) => {
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               m.nama AS nama_mahasiswa, m.npm AS mahasiswa_npm,
-              sk.judul AS judul_skripsi,
+              COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi,
               sk.program_studi_id,
               ps.nama AS program_studi_nama,
               d1.nama AS pembimbing1_nama,
               d2.nama AS pembimbing2_nama,
               dq1.nama AS penguji1_nama,
               dq2.nama AS penguji2_nama,
-              s.status AS sidang_status, s.hasil_sidang
+              s.status AS sidang_status, s.hasil_sidang, s.judul_baru
        FROM revisi_pasca_sidang rps
        JOIN sidang s ON s.id = rps.sidang_id
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1018,6 +1018,7 @@ exports.getRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen dq1 ON dq1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen dq2 ON dq2.nidn = psk_k.penguji2_nidn
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId, jenis],
     );
@@ -1104,6 +1105,7 @@ exports.getRevisi = async (req, res, next) => {
       ok: true,
       data: {
         revisi: { ...revisiBase, npm: mahasiswa_npm },
+        jenis,
         activeStage: activeStage
           ? {
               signerRole: activeStage.signer_role,
@@ -1137,7 +1139,8 @@ exports.getLecturerRevisi = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          rps.id, rps.is_completed,
-         s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi, psk_k.tanggal_sidang,
+         s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa,
+         COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi, psk_k.tanggal_sidang,
          sk.pembimbing1_nidn, sk.pembimbing2_nidn,
          psk_k.penguji1_nidn, psk_k.penguji2_nidn,
          CASE
@@ -1152,6 +1155,7 @@ exports.getLecturerRevisi = async (req, res, next) => {
        JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk_k
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        WHERE psk_k.penguji2_nidn = ? OR psk_k.penguji1_nidn = ?
           OR sk.pembimbing2_nidn = ? OR sk.pembimbing1_nidn = ?
        ORDER BY rps.created_at DESC`,
@@ -1241,10 +1245,17 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     }
 
     const placeholders = programStudiIds.map(() => "?").join(",");
-    const searchCondition = q
-      ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ?)"
-      : "";
-    const searchParams = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    const jenisFilter = ["SKRIPSI", "SEMINAR_BISNIS_DIGITAL"].includes(req.query.jenis)
+      ? req.query.jenis
+      : null;
+    const searchCondition = [
+      q ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ?)" : "",
+      jenisFilter ? "AND s.jenis = ?" : "",
+    ].join(" ");
+    const searchParams = [
+      ...(q ? [`%${q}%`, `%${q}%`, `%${q}%`] : []),
+      ...(jenisFilter ? [jenisFilter] : []),
+    ];
     const activeStageStatus = `(SELECT rs.current_status
       FROM revisi_pasca_sidang_stages rs
       WHERE rs.revisi_id = rps.id AND rs.current_status != 'APPROVED'
@@ -1271,7 +1282,8 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          rps.id, rps.is_completed,
-         s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa, sk.judul AS judul_skripsi, psk_k.tanggal_sidang,
+         s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa,
+         COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi, psk_k.tanggal_sidang,
          sk.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
          sk.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
          psk_k.penguji1_nidn, d_pg1.nama AS penguji1_nama,
@@ -1287,6 +1299,7 @@ exports.getKaprodiRevisi = async (req, res, next) => {
               ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
        LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        WHERE prog.id IN (${placeholders}) ${searchCondition} ${statusCondition}
        ORDER BY rps.created_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}`,
       pagination.enabled
