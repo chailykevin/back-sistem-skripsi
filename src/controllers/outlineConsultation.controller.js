@@ -9,6 +9,7 @@ const {
   generateHalamanPersetujuanJudulDesainSkripsiFTI,
 } = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const { getSkSubmissionPeriod } = require("../services/outlineSubmissionPeriod.service");
 const { getCurrentOutlineId } = require("../services/outline.service");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 
@@ -329,6 +330,13 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     return { skippedReason: "already_exists" };
   }
 
+  // Outside a valid period the review still goes through; the student submits the SK from the
+  // SK page once a period opens.
+  const { period, message: periodMessage } = await getSkSubmissionPeriod(conn);
+  if (!period) {
+    return { skippedReason: "period_closed", message: periodMessage };
+  }
+
   const [transkripRows] = await conn.query(
     `SELECT pf.file_content, pf.file_name
      FROM pengajuan_disposisi_pembimbing_file pf
@@ -484,8 +492,9 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
   };
 
   const [ins] = await conn.query(
-    `INSERT INTO pengajuan_sk_penelitian (outline_id, status, submitted_at) VALUES (?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
-    [outlineId],
+    `INSERT INTO pengajuan_sk_penelitian (outline_id, submission_period_id, status, submitted_at)
+     VALUES (?, ?, 'SUBMITTED', CURRENT_TIMESTAMP)`,
+    [outlineId, period.id],
   );
   const skId = ins.insertId;
 
@@ -2657,6 +2666,14 @@ exports.reviewStageByLecturer = async (req, res, next) => {
               "/sekretariat/sk-penelitian",
             );
           }
+        } else if (autoSkResult?.skippedReason === "period_closed") {
+          await insertNotification(
+            conn,
+            studentUserId,
+            "SK_PENELITIAN_WAITING_PERIOD",
+            `${autoSkResult.message} Ajukan SK Anda dari halaman SK saat periode dibuka.`,
+            "/student/sk-penelitian",
+          );
         }
       }
     }

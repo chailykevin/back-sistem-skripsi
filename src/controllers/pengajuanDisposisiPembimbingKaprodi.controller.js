@@ -7,6 +7,7 @@ const {
   generateFormulirPengajuanDisposisiPembimbingSkripsiFTI,
 } = require("../services/generateFormulirPengajuanDisposisiPembimbingSkripsiFTI.js");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
+const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { BULAN_ID } = require("../utils/dates");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
@@ -94,20 +95,93 @@ async function upsertFileByType(
   );
 }
 
+// Generates the approved Formulir Pengajuan Disposisi Pembimbing (Keputusan: Diterima, with the
+// final pembimbing) and stores it; blocking on the student and Kaprodi signatures.
+async function generateAndStoreFormulir(conn, id, catatan) {
+  const [reviewDocRows] = await conn.query(
+    `SELECT
+       pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
+       pj.alamat_perusahaan,
+       pj.submitted_at,
+       pj.syarat_transkrip,
+       m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
+       ps.nama AS program_studi_nama, ps.kaprodi_staff_usr_id,
+       o.judul AS judul_skripsi,
+       d1.nama AS pembimbing1_diajukan_nama,
+       d2.nama AS pembimbing2_diajukan_nama,
+       d3.nama AS pembimbing1_ditetapkan_nama,
+       d4.nama AS pembimbing2_ditetapkan_nama,
+       u_student.signature_image AS student_signature,
+       staf.nama AS kaprodi_nama
+     FROM pengajuan_disposisi_pembimbing pj
+     JOIN mahasiswa m ON m.npm = pj.npm
+     JOIN program_studi ps ON ps.id = pj.program_studi_id
+     JOIN outline o ON o.id = pj.outline_id
+     LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
+     LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
+     LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
+     LEFT JOIN users u_student ON u_student.npm = pj.npm AND u_student.is_active = 1
+     LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
+     WHERE pj.id = ?
+     LIMIT 1`,
+    [id],
+  );
+  const rd = reviewDocRows[0] ?? {};
+  const kaprodiSignature = await getStaffSignature(conn, rd.kaprodi_staff_usr_id);
+
+  assertSignatures([
+    { role: "Mahasiswa", nama: rd.nama_mahasiswa, signatureImage: rd.student_signature },
+    { role: "Kaprodi", nama: rd.kaprodi_nama, signatureImage: kaprodiSignature },
+  ]);
+
+  const formulirBase64 = await generateFormulirDoc({
+    npm: rd.npm,
+    namaMahasiswa: rd.nama_mahasiswa,
+    programStudiNama: rd.program_studi_nama,
+    noHp: rd.no_hp,
+    sks: rd.mahasiswa_sks,
+    judulSkripsi: rd.judul_skripsi,
+    pembimbing1DiajukanNama: rd.pembimbing1_diajukan_nama ?? "",
+    pembimbing2DiajukanNama: rd.pembimbing2_diajukan_nama ?? "",
+    perluSuratPengantar: Boolean(rd.perlu_surat_pengantar),
+    namaPerusahaan: rd.nama_perusahaan ?? null,
+    alamatPerusahaan: rd.alamat_perusahaan ?? null,
+    studentSignature: rd.student_signature,
+    submittedAt: rd.submitted_at ? new Date(rd.submitted_at) : new Date(),
+    programStudiNamaUpper: rd.program_studi_nama
+      ? String(rd.program_studi_nama).toUpperCase()
+      : "",
+    disposisiDate: new Date(),
+    keputusan: "Diterima",
+    dosenPembimbing1: rd.pembimbing1_ditetapkan_nama ?? "",
+    dosenPembimbing2: rd.pembimbing2_ditetapkan_nama ?? "",
+    catatan,
+    syaratTranskrip: Boolean(rd.syarat_transkrip),
+    namaKaprodi: rd.kaprodi_nama ?? "",
+    kaprodiSignature,
+  });
+
+  await upsertFileByType(
+    conn,
+    id,
+    "PENGAJUAN_DISPOSISI_PEMBIMBING",
+    formulirBase64,
+    buildFormulirFileName(rd.npm, rd.nama_mahasiswa),
+  );
+}
+
+// Program studi the caller heads as Kaprodi (staff account); empty for anyone else.
+async function getCallerKaprodiProgramStudiIds(req) {
+  if (!req.user.hasRole("KAPRODI")) return [];
+  return getKaprodiProgramStudiIds(await getStaffUsrId(req.user.id));
+}
+
 exports.listForKaprodi = async (req, res, next) => {
   try {
-    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
-      return res.status(403).json({ ok: false, message: "Only Kaprodi" });
-    }
-
-    // Ambil nidn dosen dari user
-    const [urows] = await db.query(
-      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
-    );
-    const nidn = urows[0]?.nidn;
-    if (!nidn) {
-      return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+    const programStudiIds = await getCallerKaprodiProgramStudiIds(req);
+    if (programStudiIds.length === 0) {
+      return res.status(403).json({ ok: false, message: "Hanya Kaprodi yang dapat mengakses fitur ini" });
     }
 
     const tahunAkademik = req.query.tahunAkademik
@@ -120,8 +194,8 @@ exports.listForKaprodi = async (req, res, next) => {
     const q = String(req.query.q ?? "").trim();
     const status = String(req.query.status ?? "").trim();
 
-    const where = ["COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?"];
-    const params = [nidn];
+    const where = ["ps.id IN (?)"];
+    const params = [programStudiIds];
 
     if (tahunAkademik) {
       where.push("osp.tahun_akademik = ?");
@@ -213,13 +287,14 @@ exports.review = async (req, res, next) => {
   let txStarted = false;
   try {
 
-    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
-      return res.status(403).json({ ok: false, message: "Only Kaprodi" });
+    const programStudiIds = await getCallerKaprodiProgramStudiIds(req);
+    if (programStudiIds.length === 0) {
+      return res.status(403).json({ ok: false, message: "Hanya Kaprodi yang dapat mengakses fitur ini" });
     }
 
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
-      return res.status(400).json({ ok: false, message: "Invalid id" });
+      return res.status(400).json({ ok: false, message: "ID pengajuan tidak valid" });
     }
 
     const {
@@ -241,21 +316,20 @@ exports.review = async (req, res, next) => {
 
 
     if (!["APPROVED", "NEED_REVISION"].includes(status)) {
-      return res.status(400).json({ ok: false, message: "Invalid status" });
+      return res.status(400).json({ ok: false, message: "Keputusan review tidak valid" });
     }
 
     if (status === "APPROVED" && (!pembimbing1Val || !pembimbing2Val)) {
       return res.status(400).json({
         ok: false,
-        message:
-          "Pembimbing 1 dan Pembimbing 2 wajib diisi untuk status APPROVED",
+        message: "Pembimbing 1 dan Pembimbing 2 wajib dipilih untuk menyetujui pengajuan",
       });
     }
 
     if (status === "APPROVED" && pembimbing1Val === pembimbing2Val) {
       return res.status(400).json({
         ok: false,
-        message: "Pembimbing 1 and Pembimbing 2 cannot be the same",
+        message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
       });
     }
 
@@ -265,18 +339,8 @@ exports.review = async (req, res, next) => {
     ) {
       return res.status(400).json({
         ok: false,
-        message: "catatanKaprodi is required for NEED_REVISION",
+        message: "Catatan Kaprodi wajib diisi untuk keputusan Perlu Revisi",
       });
-    }
-
-    // Ambil nidn Kaprodi
-    const [urows] = await db.query(
-      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
-    );
-    const kaprodiNidn = urows[0]?.nidn;
-    if (!kaprodiNidn) {
-      return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
     // Pastikan pengajuan ini memang milik prodinya Kaprodi
@@ -285,19 +349,27 @@ exports.review = async (req, res, next) => {
       SELECT pj.id, pj.program_studi_id, pj.syarat_transkrip
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN mahasiswa m ON m.npm = pj.npm
-      INNER JOIN program_studi ps ON ps.id = m.program_studi_id
       WHERE pj.id = ?
-        AND COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?
+        AND m.program_studi_id IN (?)
         AND pj.status = 'SUBMITTED'
       LIMIT 1
       `,
-      [id, kaprodiNidn],
+      [id, programStudiIds],
     );
 
     if (check.length === 0) {
       return res.status(404).json({
         ok: false,
         message: "Pengajuan tidak ditemukan / bukan wewenang Anda",
+      });
+    }
+
+    // Approving means the transkrip was checked and needs no revision.
+    const effectiveSyaratTranskrip = toBit(syaratTranskrip, check[0].syarat_transkrip ?? 0);
+    if (status === "APPROVED" && !effectiveSyaratTranskrip) {
+      return res.status(400).json({
+        ok: false,
+        message: "Transkrip nilai harus dicentang (valid) sebelum pengajuan disetujui",
       });
     }
 
@@ -318,6 +390,21 @@ exports.review = async (req, res, next) => {
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
+
+    // The check above ran outside the transaction; re-check under a row lock so a double-clicked
+    // or concurrent review can't decide the same submission twice (duplicate PDF + notifications).
+    const [[locked]] = await conn.query(
+      `SELECT status FROM pengajuan_disposisi_pembimbing WHERE id = ? FOR UPDATE`,
+      [id],
+    );
+    if (locked?.status !== "SUBMITTED") {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan ini sudah direview",
+      });
+    }
 
     let consultationInitialized = false;
 
@@ -374,8 +461,7 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message:
-            "Failed to resolve snapshot data for consultation initialization",
+          message: "Data pengajuan tidak ditemukan untuk memulai konsultasi outline",
         });
       }
       if (!snap.program_studi_id) {
@@ -383,7 +469,7 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message: "Missing required snapshot data: program_studi_id",
+          message: "Data pengajuan belum lengkap: program studi",
         });
       }
       if (
@@ -394,7 +480,7 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message: "Missing required snapshot data: program_studi_nama",
+          message: "Data pengajuan belum lengkap: nama program studi",
         });
       }
       if (
@@ -405,7 +491,7 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message: "Missing required snapshot data: judul_skripsi",
+          message: "Data pengajuan belum lengkap: judul skripsi",
         });
       }
       if (
@@ -416,7 +502,7 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message: "Missing required snapshot data: nama_mahasiswa",
+          message: "Data pengajuan belum lengkap: nama mahasiswa",
         });
       }
       if (
@@ -427,8 +513,7 @@ exports.review = async (req, res, next) => {
         txStarted = false;
         return res.status(409).json({
           ok: false,
-          message:
-            "Missing required snapshot data: pembimbing2_ditetapkan_nidn",
+          message: "Data pengajuan belum lengkap: Pembimbing 2",
         });
       }
 
@@ -482,91 +567,11 @@ exports.review = async (req, res, next) => {
       );
     }
 
-    const [reviewDocRows] = await conn.query(
-      `SELECT
-         pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
-         pj.alamat_perusahaan,
-         pj.submitted_at,
-         pj.syarat_transkrip,
-         m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
-         ps.nama AS program_studi_nama, ps.kaprodi_staff_usr_id AS kaprodi_nidn,
-         o.judul AS judul_skripsi,
-         d1.nama AS pembimbing1_diajukan_nama,
-         d2.nama AS pembimbing2_diajukan_nama,
-         d3.nama AS pembimbing1_ditetapkan_nama,
-         d4.nama AS pembimbing2_ditetapkan_nama,
-         u_student.signature_image AS student_signature,
-         staf.nama AS kaprodi_nama
-       FROM pengajuan_disposisi_pembimbing pj
-       JOIN mahasiswa m ON m.npm = pj.npm
-       JOIN program_studi ps ON ps.id = pj.program_studi_id
-       JOIN outline o ON o.id = pj.outline_id
-       LEFT JOIN dosen d1 ON d1.nidn = pj.pembimbing1_diajukan_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = pj.pembimbing2_diajukan_nidn
-       LEFT JOIN dosen d3 ON d3.nidn = pj.pembimbing1_ditetapkan_nidn
-       LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
-       LEFT JOIN users u_student ON u_student.npm = pj.npm AND u_student.is_active = 1
-       LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
-       WHERE pj.id = ?
-       LIMIT 1`,
-      [id],
-    );
-    const rd = reviewDocRows[0] ?? {};
-    rd.kaprodi_signature = await getStaffSignature(conn, rd.kaprodi_nidn);
-
-    const keputusanMap = {
-      APPROVED: "Diterima",
-      NEED_REVISION: "Perlu Revisi",
-      REJECTED: "Ditolak",
-    };
-
-    assertSignatures([
-      {
-        role: "Mahasiswa",
-        nama: rd.nama_mahasiswa,
-        signatureImage: rd.student_signature,
-      },
-      {
-        role: "Kaprodi",
-        nama: rd.kaprodi_nama,
-        signatureImage: rd.kaprodi_signature,
-      },
-    ]);
-
-    const reviewFormulirBase64 = await generateFormulirDoc({
-      npm: rd.npm,
-      namaMahasiswa: rd.nama_mahasiswa,
-      programStudiNama: rd.program_studi_nama,
-      noHp: rd.no_hp,
-      sks: rd.mahasiswa_sks,
-      judulSkripsi: rd.judul_skripsi,
-      pembimbing1DiajukanNama: rd.pembimbing1_diajukan_nama ?? "",
-      pembimbing2DiajukanNama: rd.pembimbing2_diajukan_nama ?? "",
-      perluSuratPengantar: Boolean(rd.perlu_surat_pengantar),
-      namaPerusahaan: rd.nama_perusahaan ?? null,
-      alamatPerusahaan: rd.alamat_perusahaan ?? null,
-      studentSignature: rd.student_signature,
-      submittedAt: rd.submitted_at ? new Date(rd.submitted_at) : new Date(),
-      programStudiNamaUpper: rd.program_studi_nama
-        ? String(rd.program_studi_nama).toUpperCase()
-        : "",
-      disposisiDate: new Date(),
-      keputusan: keputusanMap[status] ?? status,
-      dosenPembimbing1: rd.pembimbing1_ditetapkan_nama ?? "",
-      dosenPembimbing2: rd.pembimbing2_ditetapkan_nama ?? "",
-      catatan: catatanKaprodi ?? null,
-      syaratTranskrip: Boolean(rd.syarat_transkrip),
-      namaKaprodi: rd.kaprodi_nama ?? "",
-      kaprodiSignature: rd.kaprodi_signature,
-    });
-
-    await upsertFileByType(
-      conn,
-      id,
-      "PENGAJUAN_DISPOSISI_PEMBIMBING",
-      reviewFormulirBase64,
-      buildFormulirFileName(rd.npm, rd.nama_mahasiswa),
-    );
+    // The formulir records a final decision (its Keputusan field is Diterima/Ditolak), so it's only
+    // made on approval; Perlu Revisi just returns the note to the student.
+    if (status === "APPROVED") {
+      await generateAndStoreFormulir(conn, id, catatanKaprodi ?? null);
+    }
 
     const [reviewedRows] = await conn.query(
       `SELECT pj.npm, m.nama AS nama_mahasiswa,
@@ -586,13 +591,11 @@ exports.review = async (req, res, next) => {
       if (studentUserId) {
         const typeMap = {
           NEED_REVISION: "TITLE_NEED_REVISION",
-          REJECTED: "TITLE_REJECTED",
           APPROVED: "TITLE_APPROVED",
         };
         const msgMap = {
           NEED_REVISION:
             "Pengajuan disposisi pembimbing Anda memerlukan revisi",
-          REJECTED: "Pengajuan disposisi pembimbing Anda ditolak",
           APPROVED: "Pengajuan disposisi pembimbing Anda disetujui",
         };
         await insertNotification(
@@ -638,8 +641,8 @@ exports.review = async (req, res, next) => {
     return res.json({
       ok: true,
       message: consultationInitialized
-        ? "Review saved and consultation initialized"
-        : "Review saved",
+        ? "Review tersimpan dan konsultasi outline dimulai"
+        : "Review tersimpan",
     });
   } catch (err) {
     console.error("[review] ERROR:", err.message, err.stack);

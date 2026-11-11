@@ -1,26 +1,22 @@
 const db = require("../db");
 const { insertNotification } = require("../utils/notify");
+const { getKaprodiUserIds } = require("../utils/identity");
 const mahasiswaService = require("./mahasiswa.service");
 
 async function notifyKaprodiOfOutline(conn, programStudiId, type, message) {
-  const [kaprodiUserRows] = await conn.query(
-    `SELECT u.id FROM users u
-     JOIN user_roles ur ON ur.user_id = u.id
-     JOIN roles r ON r.id = ur.role_id
-     JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
-     WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
-     LIMIT 1`,
-    [programStudiId],
-  );
-  if (kaprodiUserRows[0]?.id) {
+  for (const userId of await getKaprodiUserIds(conn, programStudiId)) {
     await insertNotification(
       conn,
-      kaprodiUserRows[0].id,
+      userId,
       type,
       message,
       "/kaprodi/pengajuan-outline/outlines",
     );
   }
+}
+
+function conflict(message) {
+  return Object.assign(new Error(message), { statusCode: 409 });
 }
 
 async function createOutline(
@@ -37,6 +33,16 @@ async function createOutline(
   try {
     await conn.beginTransaction();
     txStarted = true;
+
+    // Lock the student's row so two submits at once can't both pass the checks below and
+    // create two active outlines.
+    await conn.query(`SELECT npm FROM mahasiswa WHERE npm = ? FOR UPDATE`, [npm]);
+    if (await hasNonRejectedOutline(npm, conn)) {
+      throw conflict("Anda masih memiliki outline yang sedang berjalan.");
+    }
+    if (await hasActiveSkripsi(npm, conn)) {
+      throw conflict("Anda masih memiliki skripsi yang sedang berjalan.");
+    }
 
     const [insertResult] = await conn.query(
       `INSERT INTO outline
@@ -75,9 +81,9 @@ async function createOutline(
 }
 
 // An outline whose skripsi ended GAGAL (Sidang Skripsi GAGAL or Seminar JUDUL_DITOLAK) no
-// longer blocks: the student starts over with a new outline, gated by getRestartStatus.
-async function hasNonRejectedOutline(npm) {
-  const [rows] = await db.query(
+// longer blocks: the student starts over with a new outline right away.
+async function hasNonRejectedOutline(npm, queryable = db) {
+  const [rows] = await queryable.query(
     `SELECT o.id
      FROM outline o
      LEFT JOIN skripsi sk ON sk.outline_id = o.id AND sk.status = 'GAGAL'
@@ -112,42 +118,20 @@ async function getLatestFailure(npm) {
   return row ?? null;
 }
 
-// After a failure the new outline may only be submitted in an outline period that opened
-// after the verdict; nextPeriod is the earliest such period that hasn't closed yet.
+// After a failure the student submits a new outline right away; this only tells the pages
+// which verdict to explain while the failed outline is still the newest.
 async function getRestartStatus(npm) {
   const failure = await getLatestFailure(npm);
   if (!failure) return null;
-
-  const [[period]] = await db.query(
-    `SELECT tahun_akademik, periode_akademik, open_at, close_at,
-            (CURRENT_TIMESTAMP >= open_at) AS is_open_now
-     FROM outline_submission_period
-     WHERE open_at > ? AND close_at >= CURRENT_TIMESTAMP
-     ORDER BY open_at ASC
-     LIMIT 1`,
-    [failure.verdict_at],
-  );
-  const nextPeriod = period
-    ? {
-        tahunAkademik: period.tahun_akademik,
-        periodeAkademik: period.periode_akademik,
-        openAt: period.open_at,
-        closeAt: period.close_at,
-        isOpenNow: Boolean(period.is_open_now),
-      }
-    : null;
-
   return {
     outlineId: failure.outline_id,
     hasilSidang: failure.hasil_sidang,
     verdictAt: failure.verdict_at,
-    allowed: Boolean(nextPeriod?.isOpenNow),
-    nextPeriod,
   };
 }
 
-async function hasActiveSkripsi(npm) {
-  const [[activeSkripsi]] = await db.query(
+async function hasActiveSkripsi(npm, queryable = db) {
+  const [[activeSkripsi]] = await queryable.query(
     `SELECT id FROM skripsi WHERE npm = ? AND status = 'IN_PROGRESS' LIMIT 1`,
     [npm],
   );
@@ -171,9 +155,9 @@ async function getOutlineDetailById(id, studentNpm) {
        m.sks AS mahasiswa_sks,
        m.program_studi_id,
        ps.nama AS program_studi_nama,
-       sub.file_content AS file_outline_mahasiswa,
+       (sub.file_content IS NOT NULL) AS has_file_outline_mahasiswa,
        sub.file_name AS file_outline_mahasiswa_name,
-       rev.file_content AS file_outline_kaprodi,
+       (rev.file_content IS NOT NULL) AS has_file_outline_kaprodi,
        rev.file_name AS file_outline_kaprodi_name,
        sub.submission_no AS file_revision_no,
        sub.submitted_at AS file_updated_at,
@@ -233,9 +217,9 @@ async function getLatestOutlineByNpm(npm) {
        m.sks AS mahasiswa_sks,
        m.program_studi_id,
        ps.nama AS program_studi_nama,
-       sub.file_content AS file_outline_mahasiswa,
+       (sub.file_content IS NOT NULL) AS has_file_outline_mahasiswa,
        sub.file_name AS file_outline_mahasiswa_name,
-       rev.file_content AS file_outline_kaprodi,
+       (rev.file_content IS NOT NULL) AS has_file_outline_kaprodi,
        rev.file_name AS file_outline_kaprodi_name,
        sub.submission_no AS file_revision_no,
        sub.submitted_at AS file_updated_at
@@ -257,25 +241,14 @@ async function getLatestOutlineByNpm(npm) {
   return rows[0] ?? null;
 }
 
-async function getOutlineNpmInProdi(id, programStudiId) {
-  const [rows] = await db.query(
-    `SELECT o.npm
-     FROM outline o
-     INNER JOIN mahasiswa m ON m.npm = o.npm
-     WHERE o.id = ? AND m.program_studi_id = ?
-     LIMIT 1`,
-    [id, programStudiId],
-  );
-  return rows[0]?.npm ?? null;
-}
 
 async function getOutlineReviewHistory(id) {
   const [rows] = await db.query(
     `SELECT
        sub.submission_no AS revision_no,
-       sub.file_content AS file_outline_mahasiswa,
+       (sub.file_content IS NOT NULL) AS has_file_outline_mahasiswa,
        sub.file_name AS file_outline_mahasiswa_name,
-       rev.file_content AS file_outline_kaprodi,
+       (rev.file_content IS NOT NULL) AS has_file_outline_kaprodi,
        rev.file_name AS file_outline_kaprodi_name,
        rev.decision_note,
        sub.submitted_at AS updated_at,
@@ -292,16 +265,34 @@ async function getOutlineReviewHistory(id) {
   return rows;
 }
 
+// One file of one outline version — the reads above only say whether a file exists, so pages
+// fetch the content on download. `kind` is MAHASISWA (the student's upload) or KAPRODI (the
+// annotated copy on that version's review); no submissionNo means the latest version.
+async function getOutlineFile(outlineId, kind, submissionNo) {
+  const column = kind === "KAPRODI" ? "rev" : "sub";
+  const [rows] = await db.query(
+    `SELECT ${column}.file_content, ${column}.file_name
+     FROM outline_submissions sub
+     LEFT JOIN outline_reviews rev ON rev.submission_id = sub.id
+     WHERE sub.outline_id = ?
+       ${submissionNo ? "AND sub.submission_no = ?" : ""}
+     ORDER BY sub.submission_no DESC
+     LIMIT 1`,
+    submissionNo ? [outlineId, submissionNo] : [outlineId],
+  );
+  return rows[0]?.file_content ? rows[0] : null;
+}
+
 async function listOutlinesForKaprodi({
-  programStudiId,
+  programStudiIds,
   status,
   q,
   tahunAkademik,
   periodeAkademik,
   pagination,
 }) {
-  const where = ["m.program_studi_id = ?"];
-  const params = [programStudiId];
+  const where = ["m.program_studi_id IN (?)"];
+  const params = [programStudiIds];
 
   if (status) {
     where.push("o.status = ?");
@@ -372,21 +363,32 @@ async function listOutlinesForKaprodi({
   return { rows, totalItems: Number(countRow.total) };
 }
 
-async function isOutlineInProdi(id, programStudiId) {
+async function isOutlineInProdi(id, programStudiIds) {
+  if (!programStudiIds?.length) return false;
   const [rows] = await db.query(
     `SELECT o.id
      FROM outline o
      INNER JOIN mahasiswa m ON m.npm = o.npm
-     WHERE o.id = ? AND m.program_studi_id = ?
+     WHERE o.id = ? AND m.program_studi_id IN (?)
      LIMIT 1`,
-    [id, programStudiId],
+    [id, programStudiIds],
   );
   return rows.length > 0;
 }
 
+// Locks the outline row so a concurrent review/resubmit can't slip past the check.
+async function assertOutlineStatus(conn, outlineId, expected, message) {
+  const [[row]] = await conn.query(
+    `SELECT status FROM outline WHERE id = ? LIMIT 1 FOR UPDATE`,
+    [outlineId],
+  );
+  if (row?.status !== expected) {
+    throw Object.assign(new Error(message), { statusCode: 409 });
+  }
+}
+
 async function reviewOutlineByKaprodi(
   outlineId,
-  programStudiId,
   status,
   note,
   kaprodiFile,
@@ -398,10 +400,14 @@ async function reviewOutlineByKaprodi(
     await conn.beginTransaction();
     txStarted = true;
 
-    await conn.query(
-      `UPDATE outline SET status = ?, program_studi_id = ? WHERE id = ?`,
-      [status, programStudiId, outlineId],
-    );
+    // Only a submission waiting for Kaprodi can be decided; re-deciding would overwrite the
+    // review of that submission or undo an ACCEPTED outline that later steps build on.
+    await assertOutlineStatus(conn, outlineId, "SUBMITTED", "Outline ini tidak sedang menunggu review Kaprodi.");
+
+    await conn.query(`UPDATE outline SET status = ? WHERE id = ?`, [
+      status,
+      outlineId,
+    ]);
 
     const [[latestSub]] = await conn.query(
       `SELECT id FROM outline_submissions
@@ -493,6 +499,8 @@ async function resubmitOutline(
     await conn.beginTransaction();
     txStarted = true;
 
+    await assertOutlineStatus(conn, outlineId, "NEED_REVISION", "Outline hanya dapat diajukan ulang saat berstatus Perlu Revisi.");
+
     const sets = [];
     const params = [];
 
@@ -509,21 +517,20 @@ async function resubmitOutline(
 
     await conn.query(sql, params);
 
-    if (fileVal !== null && fileVal.length > 0) {
-      const [[maxRow]] = await conn.query(
-        `SELECT MAX(submission_no) AS max_sub
-         FROM outline_submissions
-         WHERE outline_id = ?`,
-        [outlineId],
-      );
-      const nextSub = Number(maxRow?.max_sub || 0) + 1;
-      await conn.query(
-        `INSERT INTO outline_submissions
-         (outline_id, submission_no, file_content, file_name)
-         VALUES (?, ?, ?, ?)`,
-        [outlineId, nextSub, fileVal, fileNameVal ?? null],
-      );
-    }
+    // Always a new version (the controller requires the file), so the next review gets its own row.
+    const [[maxRow]] = await conn.query(
+      `SELECT MAX(submission_no) AS max_sub
+       FROM outline_submissions
+       WHERE outline_id = ?`,
+      [outlineId],
+    );
+    const nextSub = Number(maxRow?.max_sub || 0) + 1;
+    await conn.query(
+      `INSERT INTO outline_submissions
+       (outline_id, submission_no, file_content, file_name)
+       VALUES (?, ?, ?, ?)`,
+      [outlineId, nextSub, fileVal, fileNameVal ?? null],
+    );
 
     const namaMahasiswa = await mahasiswaService.getMahasiswaNameByNpm(npm);
 
@@ -555,8 +562,8 @@ module.exports = {
   getOutlineDetailById,
   getRejectedOutlinesByNpm,
   getLatestOutlineByNpm,
-  getOutlineNpmInProdi,
   getOutlineReviewHistory,
+  getOutlineFile,
   listOutlinesForKaprodi,
   isOutlineInProdi,
   reviewOutlineByKaprodi,

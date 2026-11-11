@@ -40,6 +40,19 @@ async function getKaprodiProgramStudiIds(staffUsrId) {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
+// Active KAPRODI accounts heading a program studi — the recipients of "new submission" notifications.
+async function getKaprodiUserIds(queryable, programStudiId) {
+  const [rows] = await queryable.query(
+    `SELECT DISTINCT u.id FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id AND ur.is_active = 1
+     JOIN roles r ON r.id = ur.role_id AND r.code = 'KAPRODI'
+     JOIN program_studi ps ON ps.kaprodi_staff_usr_id = u.staff_usr_id
+     WHERE ps.id = ? AND u.is_active = 1`,
+    [programStudiId],
+  );
+  return rows.map((row) => row.id);
+}
+
 async function isKaprodiOfProgramStudi(userId, programStudiId) {
   const programStudiIds = await getKaprodiProgramStudiIds(
     await getStaffUsrId(userId),
@@ -52,5 +65,6 @@ module.exports = {
   getLecturerNidn,
   getStaffUsrId,
   getKaprodiProgramStudiIds,
+  getKaprodiUserIds,
   isKaprodiOfProgramStudi,
 };

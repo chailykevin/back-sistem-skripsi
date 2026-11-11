@@ -25,6 +25,7 @@ const {
 const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
+const { getSkSubmissionPeriod } = require("../services/outlineSubmissionPeriod.service");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -421,6 +422,11 @@ exports.initSkPenelitian = async (req, res, next) => {
         .json({ ok: false, message: "SK Penelitian sudah dibuat" });
     }
 
+    const { message: periodMessage } = await getSkSubmissionPeriod(conn);
+    if (periodMessage) {
+      return res.status(409).json({ ok: false, message: periodMessage });
+    }
+
     await conn.beginTransaction();
     txStarted = true;
 
@@ -652,6 +658,18 @@ exports.submitSkPenelitian = async (req, res, next) => {
       });
     }
 
+    // Only the first submission needs an open period; a returned (NEED_REVISION) SK is fixed any time.
+    let submissionPeriodId = sk.submission_period_id ?? null;
+    if (sk.status === "DRAFT") {
+      const { period, message } = await getSkSubmissionPeriod(conn);
+      if (!period) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({ ok: false, message });
+      }
+      submissionPeriodId = period.id;
+    }
+
     // Resolve kartu_id
     const [kartuRows] = await conn.query(
       `SELECT id FROM kartu_konsultasi_outline WHERE outline_id = ? LIMIT 1`,
@@ -782,9 +800,10 @@ exports.submitSkPenelitian = async (req, res, next) => {
     );
     await conn.query(
       `UPDATE pengajuan_sk_penelitian
-       SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       SET status = 'SUBMITTED', submission_period_id = ?,
+           submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [sk.id],
+      [submissionPeriodId, sk.id],
     );
 
     const [[studentRow]] = await conn.query(
@@ -1389,7 +1408,7 @@ exports.listSkForSekretariat = async (req, res, next) => {
          sk.created_at,
          m.nama AS nama_mahasiswa,
          o.judul AS judul_skripsi,
-         o.submission_period_id,
+         sk.submission_period_id,
          o.program_studi_id,
          ps.nama AS program_studi_nama,
          EXISTS(
@@ -1462,7 +1481,7 @@ exports.listSkForKaprodi = async (req, res, next) => {
          sk.created_at,
          m.nama AS nama_mahasiswa,
          o.judul AS judul_skripsi,
-         o.submission_period_id,
+         sk.submission_period_id,
          o.program_studi_id,
          ps.nama AS program_studi_nama,
          EXISTS(

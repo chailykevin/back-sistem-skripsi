@@ -281,14 +281,20 @@ exports.remove = async (req, res, next) => {
       return res.status(404).json({ ok: false, message: "Outline submission period not found" });
     }
 
-    const [[{ count: outlineCount }]] = await db.query(
-      `SELECT COUNT(*) AS count FROM outline WHERE submission_period_id = ?`,
-      [id]
+    const [[{ outlineCount, skCount }]] = await db.query(
+      `SELECT
+         (SELECT COUNT(*) FROM outline WHERE submission_period_id = ?) AS outlineCount,
+         (SELECT COUNT(*) FROM pengajuan_sk_penelitian WHERE submission_period_id = ?) AS skCount`,
+      [id, id]
     );
-    if (outlineCount > 0) {
+    if (outlineCount > 0 || skCount > 0) {
+      const used = [
+        outlineCount > 0 ? `${outlineCount} pengajuan outline` : null,
+        skCount > 0 ? `${skCount} pengajuan SK Penulisan` : null,
+      ].filter(Boolean).join(" dan ");
       return res.status(409).json({
         ok: false,
-        message: `Tidak dapat menghapus periode ini karena sudah digunakan oleh ${outlineCount} pengajuan outline.`,
+        message: `Tidak dapat menghapus periode ini karena sudah digunakan oleh ${used}.`,
       });
     }
 

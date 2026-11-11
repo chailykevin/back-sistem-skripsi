@@ -1,7 +1,15 @@
 const db = require("../db");
 const outlineService = require("../services/outline.service");
 const mahasiswaService = require("../services/mahasiswa.service");
+const { getOpenPeriod } = require("../services/outlineSubmissionPeriod.service");
+const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { parsePagination, buildPagination } = require("../utils/pagination");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
+const { mimeFromFileName } = require("../utils/mime");
+
+const OUTLINE_NOT_FOUND = "Outline tidak ditemukan";
+const INVALID_OUTLINE_ID = "ID outline tidak valid";
+const NOT_KAPRODI = "Anda tidak terdaftar sebagai Kaprodi";
 
 function validateJudul(judul) {
   if (judul.length < 5) return "Judul minimal 5 karakter";
@@ -9,19 +17,25 @@ function validateJudul(judul) {
   return null;
 }
 
-async function getKaprodiProgramStudi(userId) {
-  const [urows] = await db.query(
-    `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userId],
-  );
-  const nidn = urows[0]?.nidn ?? null;
-  if (!nidn) return null;
+// Program studi the caller heads as Kaprodi (a staff account, see utils/identity.js); empty for
+// anyone else, including lecturers.
+async function getCallerKaprodiProgramStudiIds(req) {
+  if (!req.user.hasRole("KAPRODI")) return [];
+  return getKaprodiProgramStudiIds(await getStaffUsrId(req.user.id));
+}
 
-  const [prodiRows] = await db.query(
-    `SELECT id, nama FROM program_studi WHERE COALESCE(kaprodi_nidn, kaprodi_staff_usr_id) = ? LIMIT 1`,
-    [nidn],
-  );
-  return prodiRows[0] ?? null;
+// The student who owns the outline, or the Kaprodi of its prodi. Returns { studentNpm } for the
+// student (reads are then filtered by npm), {} for an authorized Kaprodi, null otherwise.
+async function resolveOutlineReader(req, outlineId) {
+  if (req.user.hasRole("STUDENT")) {
+    const studentNpm = await mahasiswaService.getNpmByUserId(req.user.id);
+    if (!studentNpm) return null;
+    const owned = await outlineService.isOutlineOwnedByStudent(outlineId, studentNpm);
+    return owned ? { studentNpm } : null;
+  }
+  const programStudiIds = await getCallerKaprodiProgramStudiIds(req);
+  const inProdi = await outlineService.isOutlineInProdi(outlineId, programStudiIds);
+  return inProdi ? {} : null;
 }
 
 exports.create = async (req, res, next) => {
@@ -29,11 +43,12 @@ exports.create = async (req, res, next) => {
     if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only students can upload outline",
+        message: "Hanya mahasiswa yang dapat mengajukan outline",
       });
     }
 
-    const { judul, fileOutline, fileOutlineName } = req.body;
+    const { fileOutline, fileOutlineName } = req.body;
+    const judul = req.body.judul != null ? String(req.body.judul).trim() : "";
 
     if (!judul || !fileOutline) {
       return res.status(400).json({
@@ -42,9 +57,14 @@ exports.create = async (req, res, next) => {
       });
     }
 
-    const judulError = validateJudul(String(judul).trim());
+    const judulError = validateJudul(judul);
     if (judulError) {
       return res.status(400).json({ ok: false, message: judulError });
+    }
+
+    const fileError = validateUpload(fileOutline, fileOutlineName, UPLOAD_RULES.DOCUMENT, "File outline");
+    if (fileError) {
+      return res.status(400).json({ ok: false, message: fileError });
     }
 
     // ambil npm mahasiswa dari user login
@@ -65,35 +85,10 @@ exports.create = async (req, res, next) => {
       });
     }
 
-    // boleh lanjut hanya jika belum pernah submit, atau semua outline lama REJECTED
-    const hasNonRejected = await outlineService.hasNonRejectedOutline(npm);
-
-    if (hasNonRejected) {
-      return res.status(400).json({
-        ok: false,
-        message: "You have an ongoing outline",
-      });
-    }
-
-    // block if student has an active IN_PROGRESS skripsi
-    const activeSkripsi = await outlineService.hasActiveSkripsi(npm);
-    if (activeSkripsi) {
-      return res.status(409).json({
-        ok: false,
-        message: "Anda masih memiliki skripsi yang sedang berjalan.",
-      });
-    }
-
-    const restart = await outlineService.getRestartStatus(npm);
-    if (restart && !restart.allowed) {
-      return res.status(409).json({
-        ok: false,
-        message:
-          "Outline baru dapat diajukan pada periode pengajuan outline berikutnya setelah hasil sidang Anda.",
-      });
-    }
-
-    const submissionPeriodId = req.openPeriod?.id ?? null;
+    // The one-active-outline and no-active-skripsi rules are enforced inside createOutline, under a
+    // lock on the student's row (409). Outlines can be submitted any time (the period gates the SK);
+    // the tag only places the outline in a term for the Kaprodi lists and recap.
+    const submissionPeriodId = (await getOpenPeriod())?.id ?? null;
 
     const namaMahasiswa = await mahasiswaService.getMahasiswaNameByNpm(npm);
 
@@ -120,36 +115,25 @@ exports.getById = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid outline id" });
+      return res.status(400).json({ ok: false, message: INVALID_OUTLINE_ID });
     }
 
-    // Mahasiswa: harus hanya miliknya
-    let studentNpm = null;
-    if (req.user.hasRole("STUDENT")) {
-      studentNpm = await mahasiswaService.getNpmByUserId(req.user.id);
-      if (!studentNpm) {
-        return res
-          .status(400)
-          .json({ ok: false, message: "Mahasiswa tidak valid" });
-      }
+    const reader = await resolveOutlineReader(req, id);
+    if (!reader) {
+      return res.status(404).json({ ok: false, message: OUTLINE_NOT_FOUND });
     }
 
-    const outline = await outlineService.getOutlineDetailById(id, studentNpm);
+    const outline = await outlineService.getOutlineDetailById(id, reader.studentNpm ?? null);
     if (!outline) {
-      return res.status(404).json({ ok: false, message: "Outline not found" });
+      return res.status(404).json({ ok: false, message: OUTLINE_NOT_FOUND });
     }
 
-    if (req.user.hasRole("LECTURER", "KAPRODI")) {
+    if (!reader.studentNpm) {
       const relatedOutlines = await outlineService.getRejectedOutlinesByNpm(
         outline.npm,
         id,
       );
-
-      return res.json({
-        ok: true,
-        data: outline,
-        relatedOutlines,
-      });
+      return res.json({ ok: true, data: outline, relatedOutlines });
     }
 
     return res.json({ ok: true, data: outline });
@@ -163,7 +147,7 @@ exports.getLatestMine = async (req, res, next) => {
     if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only students can access their latest outline",
+        message: "Hanya mahasiswa yang dapat melihat outline terbarunya",
       });
     }
 
@@ -177,7 +161,7 @@ exports.getLatestMine = async (req, res, next) => {
 
     const outline = await outlineService.getLatestOutlineByNpm(npm);
     if (!outline) {
-      return res.json({ ok: true, data: null, message: "Outline not found" });
+      return res.json({ ok: true, data: null, message: OUTLINE_NOT_FOUND });
     }
 
     // Only while the failed outline is still the newest: once a new one exists the
@@ -197,34 +181,11 @@ exports.getReviewHistory = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid outline id" });
+      return res.status(400).json({ ok: false, message: INVALID_OUTLINE_ID });
     }
 
-    // access check
-    if (req.user.hasRole("STUDENT")) {
-      const studentNpm = await mahasiswaService.getNpmByUserId(req.user.id);
-      if (!studentNpm) {
-        return res
-          .status(400)
-          .json({ ok: false, message: "Mahasiswa tidak valid" });
-      }
-    }
-
-    if (req.user.hasRole("LECTURER", "KAPRODI")) {
-      const prodi = await getKaprodiProgramStudi(req.user.id);
-      if (!prodi) {
-        return res.status(403).json({
-          ok: false,
-          message: "You are not assigned as Kaprodi",
-        });
-      }
-
-      const npm = await outlineService.getOutlineNpmInProdi(id, prodi.id);
-      if (!npm) {
-        return res
-          .status(404)
-          .json({ ok: false, message: "Outline not found" });
-      }
+    if (!(await resolveOutlineReader(req, id))) {
+      return res.status(404).json({ ok: false, message: OUTLINE_NOT_FOUND });
     }
 
     const rows = await outlineService.getOutlineReviewHistory(id);
@@ -235,23 +196,58 @@ exports.getReviewHistory = async (req, res, next) => {
   }
 };
 
-exports.listForKaprodi = async (req, res, next) => {
+// GET /:id/files/:kind?submissionNo= — one file on demand (the outline reads only send has_file_*
+// flags). kind: mahasiswa | kaprodi; no submissionNo = latest version. Same access as getById.
+exports.getFile = async (req, res, next) => {
   try {
-    // hanya dosen (LECTURER) yang bisa jadi kaprodi
-    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
-      return res.status(403).json({
-        ok: false,
-        message: "Only lecturers can access this endpoint",
-      });
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, message: INVALID_OUTLINE_ID });
+    }
+    const kind = String(req.params.kind ?? "").toUpperCase();
+    if (kind !== "MAHASISWA" && kind !== "KAPRODI") {
+      return res.status(400).json({ ok: false, message: "Jenis file tidak valid" });
+    }
+    let submissionNo = null;
+    if (req.query.submissionNo !== undefined) {
+      submissionNo = Number(req.query.submissionNo);
+      if (!Number.isInteger(submissionNo) || submissionNo <= 0) {
+        return res.status(400).json({ ok: false, message: "Nomor versi tidak valid" });
+      }
     }
 
-    const prodi = await getKaprodiProgramStudi(req.user.id);
-    if (!prodi) {
-      return res.status(403).json({
-        ok: false,
-        message: "You are not assigned as Kaprodi",
-      });
+    if (!(await resolveOutlineReader(req, id))) {
+      return res.status(404).json({ ok: false, message: OUTLINE_NOT_FOUND });
     }
+
+    const file = await outlineService.getOutlineFile(id, kind, submissionNo);
+    if (!file) {
+      return res.status(404).json({ ok: false, message: "File tidak ditemukan" });
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        file_name: file.file_name,
+        mime_type: mimeFromFileName(file.file_name),
+        file_content: file.file_content,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.listForKaprodi = async (req, res, next) => {
+  try {
+    const programStudiIds = await getCallerKaprodiProgramStudiIds(req);
+    if (programStudiIds.length === 0) {
+      return res.status(403).json({ ok: false, message: NOT_KAPRODI });
+    }
+    const [prodiRows] = await db.query(
+      `SELECT id, nama FROM program_studi WHERE id IN (?) ORDER BY id`,
+      [programStudiIds],
+    );
 
     // optional filter
     const status = req.query.status ? String(req.query.status) : null;
@@ -265,7 +261,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     const pagination = parsePagination(req.query);
     const { rows: outlines, totalItems } = await outlineService.listOutlinesForKaprodi({
-      programStudiId: prodi.id,
+      programStudiIds,
       status,
       q,
       tahunAkademik,
@@ -276,7 +272,8 @@ exports.listForKaprodi = async (req, res, next) => {
     const response = {
       ok: true,
       data: {
-        programStudi: prodi,
+        programStudi: prodiRows[0] ?? null,
+        programStudiList: prodiRows,
         outlines,
       },
     };
@@ -291,24 +288,24 @@ exports.listForKaprodi = async (req, res, next) => {
 
 exports.reviewByKaprodi = async (req, res, next) => {
   try {
-    if (!req.user.hasRole("LECTURER", "KAPRODI")) {
+    if (!req.user.hasRole("KAPRODI")) {
       return res.status(403).json({
         ok: false,
-        message: "Only lecturers can review outlines",
+        message: "Hanya Kaprodi yang dapat mereview outline",
       });
     }
 
     const outlineId = Number(req.params.id);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid outline id" });
+      return res.status(400).json({ ok: false, message: INVALID_OUTLINE_ID });
     }
 
     const { status, decisionNote, kaprodiFileOutline, kaprodiFileOutlineName } =
       req.body;
 
-    const allowed = ["SUBMITTED", "NEED_REVISION", "REJECTED", "ACCEPTED"];
+    const allowed = ["NEED_REVISION", "REJECTED", "ACCEPTED"];
     if (!status || !allowed.includes(status)) {
-      return res.status(400).json({ ok: false, message: "Invalid status" });
+      return res.status(400).json({ ok: false, message: "Keputusan review tidak valid" });
     }
 
     const note = decisionNote ? String(decisionNote).trim() : "";
@@ -316,34 +313,38 @@ exports.reviewByKaprodi = async (req, res, next) => {
     if (noteRequired && note.length === 0) {
       return res.status(400).json({
         ok: false,
-        message: "decisionNote is required for NEED_REVISION or REJECTED",
+        message: "Catatan wajib diisi untuk keputusan Perlu Revisi atau Ditolak",
       });
     }
 
     const kaprodiFile =
-      kaprodiFileOutline !== undefined && kaprodiFileOutline !== null
+      kaprodiFileOutline != null && String(kaprodiFileOutline).length > 0
         ? String(kaprodiFileOutline)
         : null;
-
-    const prodi = await getKaprodiProgramStudi(req.user.id);
-    if (!prodi) {
-      return res.status(403).json({
-        ok: false,
-        message: "You are not assigned as Kaprodi",
-      });
+    if (kaprodiFile) {
+      const fileError = validateUpload(
+        kaprodiFile,
+        kaprodiFileOutlineName,
+        UPLOAD_RULES.DOCUMENT,
+        "File outline Kaprodi",
+      );
+      if (fileError) {
+        return res.status(400).json({ ok: false, message: fileError });
+      }
     }
 
-    const inProdi = await outlineService.isOutlineInProdi(outlineId, prodi.id);
+    const programStudiIds = await getCallerKaprodiProgramStudiIds(req);
+    if (programStudiIds.length === 0) {
+      return res.status(403).json({ ok: false, message: NOT_KAPRODI });
+    }
+
+    const inProdi = await outlineService.isOutlineInProdi(outlineId, programStudiIds);
     if (!inProdi) {
-      return res.status(404).json({
-        ok: false,
-        message: "Outline not found",
-      });
+      return res.status(404).json({ ok: false, message: OUTLINE_NOT_FOUND });
     }
 
     await outlineService.reviewOutlineByKaprodi(
       outlineId,
-      prodi.id,
       status,
       note,
       kaprodiFile,
@@ -352,7 +353,7 @@ exports.reviewByKaprodi = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message: "Outline reviewed",
+      message: "Review outline tersimpan",
     });
   } catch (err) {
     next(err);
@@ -363,32 +364,33 @@ exports.resubmit = async (req, res, next) => {
   if (!req.user.hasRole("STUDENT")) {
     return res.status(403).json({
       ok: false,
-      message: "Only students can resubmit outlines",
+      message: "Hanya mahasiswa yang dapat mengajukan ulang outline",
     });
   }
 
   const outlineId = Number(req.params.id);
   if (!Number.isFinite(outlineId) || outlineId <= 0) {
-    return res.status(400).json({ ok: false, message: "Invalid outline id" });
+    return res.status(400).json({ ok: false, message: INVALID_OUTLINE_ID });
   }
 
   const { judul, fileOutline, fileOutlineName } = req.body;
 
-  const judulVal = judul !== undefined ? String(judul).trim() : null;
-  const fileVal = fileOutline !== undefined ? String(fileOutline) : null;
+  const judulVal = judul != null ? String(judul).trim() : null;
+  const fileVal = fileOutline != null ? String(fileOutline) : null;
   const fileNameVal =
-    fileOutlineName !== undefined ? String(fileOutlineName).trim() : null;
+    fileOutlineName != null ? String(fileOutlineName).trim() : null;
 
-  if (
-    (judulVal === null || judulVal.length === 0) &&
-    (fileVal === null || fileVal.length === 0) &&
-    (fileNameVal === null || fileNameVal.length === 0)
-  ) {
+  // Every resubmit is a new version: Kaprodi's review is stored per version, so a resubmit
+  // without a file would make the next review overwrite the previous round's note and file.
+  if (fileVal === null || fileVal.trim().length === 0) {
     return res.status(400).json({
       ok: false,
-      message:
-        "At least one of judul or fileOutline must be provided",
+      message: "File outline revisi wajib diunggah",
     });
+  }
+  const fileError = validateUpload(fileVal, fileNameVal, UPLOAD_RULES.DOCUMENT, "File outline");
+  if (fileError) {
+    return res.status(400).json({ ok: false, message: fileError });
   }
 
   if (judulVal !== null && judulVal.length > 0) {
@@ -419,10 +421,7 @@ exports.resubmit = async (req, res, next) => {
   // pastikan outline milik mahasiswa ini
   const owned = await outlineService.isOutlineOwnedByStudent(outlineId, npm);
   if (!owned) {
-    return res.status(404).json({
-      ok: false,
-      message: "Outline not found",
-    });
+    return res.status(404).json({ ok: false, message: OUTLINE_NOT_FOUND });
   }
 
   try {
@@ -436,7 +435,7 @@ exports.resubmit = async (req, res, next) => {
     );
     return res.json({
       ok: true,
-      message: "Outline resubmitted",
+      message: "Outline berhasil diajukan ulang",
     });
   } catch (err) {
     next(err);

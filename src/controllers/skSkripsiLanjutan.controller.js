@@ -29,12 +29,12 @@ const LIST_SELECT = `
     l.id, l.skripsi_id, l.status, l.judul_seminar, l.judul_skripsi, l.nomor_surat,
     l.forwarded_at, l.completed_at, l.created_at,
     sk.npm, m.nama AS nama_mahasiswa, sk.program_studi_id, ps.nama AS program_studi_nama,
-    o.submission_period_id,
+    psk.submission_period_id,
     d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
     sd.hasil_sidang AS hasil_seminar, shp.rata AS rata_seminar, shp.grade AS grade_seminar
   FROM pengajuan_sk_skripsi_lanjutan l
   JOIN skripsi sk ON sk.id = l.skripsi_id
-  LEFT JOIN outline o ON o.id = sk.outline_id
+  LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = sk.outline_id
   JOIN mahasiswa m ON m.npm = sk.npm
   JOIN program_studi ps ON ps.id = sk.program_studi_id
   JOIN sidang sd ON sd.id = l.seminar_sidang_id

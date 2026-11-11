@@ -6,6 +6,7 @@ const {
   resolveActiveRevisiStage,
 } = require("../utils/workflowStage");
 const { formatTanggal } = require("../utils/dates");
+const { getOpenPeriod } = require("./outlineSubmissionPeriod.service");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -296,6 +297,10 @@ function resolveStudentPosition(npm, data, today) {
 
     if (kartuOutline) {
       if (kartuOutline.is_completed === 1) {
+        // No period open: nobody can act yet, so it isn't counted as stalled (no lastActionAt).
+        if (!data.skPeriodOpen) {
+          return at("SK_PENELITIAN", "MAHASISWA", "Menunggu periode pengajuan SK dibuka", null);
+        }
         return at("SK_PENELITIAN", "MAHASISWA", "Belum mengajukan SK Penelitian", kartuOutline.completed_at);
       }
       const stages = data.outlineStagesByKartu.get(kartuOutline.id) ?? [];
@@ -565,6 +570,7 @@ async function getPipeline(programStudiIds) {
   const [[{ now }]] = await db.query("SELECT NOW() AS now");
   const today = startOfDay(now);
   const data = await loadPipelineData(programStudiIds);
+  data.skPeriodOpen = Boolean(await getOpenPeriod());
 
   const students = [];
   for (const m of data.mahasiswaRows) {
@@ -630,7 +636,7 @@ async function getRecap(programStudiIds, term) {
      WHERE o.program_studi_id IN (?)${osp.sql}`,
     [programStudiIds, ...osp.params],
   );
-  const DISPOSISI_BUCKET = { SUBMITTED: "you", NEED_REVISION: "student", APPROVED: "done", REJECTED: "rejected" };
+  const DISPOSISI_BUCKET = { SUBMITTED: "you", NEED_REVISION: "student", APPROVED: "done" };
   for (const r of disposisiRows) add("DISPOSISI", DISPOSISI_BUCKET[r.status]);
 
   const [kartuOutlineRows] = await db.query(
@@ -660,7 +666,7 @@ async function getRecap(programStudiIds, term) {
     `SELECT sk.status
      FROM pengajuan_sk_penelitian sk
      JOIN outline o ON o.id = sk.outline_id
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
+     LEFT JOIN outline_submission_period osp ON osp.id = sk.submission_period_id
      WHERE o.program_studi_id IN (?)${osp.sql}`,
     [programStudiIds, ...osp.params],
   );
@@ -678,8 +684,8 @@ async function getRecap(programStudiIds, term) {
     `SELECT k.id, k.is_completed
      FROM kartu_konsultasi_skripsi k
      JOIN skripsi s ON s.id = k.skripsi_id
-     LEFT JOIN outline o ON o.id = s.outline_id
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
+     LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = s.outline_id
+     LEFT JOIN outline_submission_period osp ON osp.id = psk.submission_period_id
      WHERE s.program_studi_id IN (?)${osp.sql}`,
     [programStudiIds, ...osp.params],
   );

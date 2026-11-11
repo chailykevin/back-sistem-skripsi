@@ -161,7 +161,6 @@ const DISPOSISI_STATUS_LABELS = {
   SUBMITTED: "Menunggu Balasan Kaprodi",
   NEED_REVISION: "Menunggu Revisi Mahasiswa",
   APPROVED: "Diterima Kaprodi",
-  REJECTED: "Ditolak Kaprodi",
 };
 
 const DISPOSISI_WAITING_ON = {
@@ -496,8 +495,8 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
        FROM skripsi sk
        INNER JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN kartu_konsultasi_skripsi k ON k.skripsi_id = sk.id
-       LEFT JOIN outline o ON o.id = sk.outline_id
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
+       LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = sk.outline_id
+       LEFT JOIN outline_submission_period osp ON osp.id = psk.submission_period_id
        WHERE ${where.join(" AND ")}
        ORDER BY sk.created_at DESC`,
       [...programStudiIds, ...periodParams],

@@ -2,15 +2,24 @@
 const { insertNotification } = require("../utils/notify");
 const dosenBimbingProdiService = require("../services/dosenBimbingProdi.service");
 const path = require("path");
-const { getStudentNpm } = require("../utils/identity");
+const {
+  getStudentNpm,
+  getStaffUsrId,
+  getKaprodiProgramStudiIds,
+  getKaprodiUserIds,
+} = require("../utils/identity");
 const { getCurrentOutlineId } = require("../services/outline.service");
 const { assertSignatures } = require("../utils/signature");
 const { BULAN_ROMAWI } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
 
 // Next sequence is MAX of the existing numbers for this prodi/month/year rather than a
 // COUNT by submitted_at: resubmit resets submitted_at, and toggling perlu_surat_pengantar
 // off clears a number, both of which made COUNT-based sequences collide.
+// Must run inside the caller's transaction: the prodi row lock (held until commit) serializes
+// concurrent submissions, and the MAX is a locking read so it sees numbers committed while we
+// waited — the same pattern as skNumber.service.js.
 async function generateNomorSkSuratPengantar(conn, programStudiId) {
   const now = new Date();
   const year = now.getFullYear();
@@ -20,7 +29,8 @@ async function generateNomorSkSuratPengantar(conn, programStudiId) {
      FROM program_studi ps
      JOIN fakultas f ON f.id = ps.fakultas_id
      WHERE ps.id = ?
-     LIMIT 1`,
+     LIMIT 1
+     FOR UPDATE OF ps`,
     [programStudiId],
   );
   if (!programStudi?.ps_kode || !programStudi?.f_kode) {
@@ -35,7 +45,8 @@ async function generateNomorSkSuratPengantar(conn, programStudiId) {
     `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(nomor_sk_surat_pengantar, '/', 1) AS UNSIGNED)), 0) AS maxSeq
      FROM pengajuan_disposisi_pembimbing
      WHERE program_studi_id = ?
-       AND nomor_sk_surat_pengantar LIKE ?`,
+       AND nomor_sk_surat_pengantar LIKE ?
+     FOR SHARE`,
     [programStudiId, `%${suffix}`],
   );
   return `${String(Number(maxSeq) + 1).padStart(3, "0")}${suffix}`;
@@ -43,32 +54,6 @@ async function generateNomorSkSuratPengantar(conn, programStudiId) {
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
-function mapNewFileRowsToLegacyKeys(fileRows = [], fallback = {}) {
-  const mapped = {
-    file_pengajuan_disposisi_pembimbing: null,
-    file_pengajuan_disposisi_pembimbing_name: null,
-    file_transkrip: null,
-    file_transkrip_name: null,
-  };
-
-  const byType = {
-    PENGAJUAN_DISPOSISI_PEMBIMBING: [
-      "file_pengajuan_disposisi_pembimbing",
-      "file_pengajuan_disposisi_pembimbing_name",
-    ],
-    TRANSKRIP: ["file_transkrip", "file_transkrip_name"],
-  };
-
-  for (const row of fileRows) {
-    const keyPair = byType[row.file_type];
-    if (!keyPair) continue;
-    const [fileKey, fileNameKey] = keyPair;
-    mapped[fileKey] = row.file_content ?? mapped[fileKey];
-    mapped[fileNameKey] = row.file_name ?? mapped[fileNameKey];
-  }
-
-  return mapped;
-}
 
 async function upsertFileByType(
   conn,
@@ -91,21 +76,25 @@ async function upsertFileByType(
   );
 }
 
+// Adds has_file_* flags and file names, never the content: pages download a file on click through
+// GET /:id/files/:fileType, so a read doesn't ship every file as base64.
 async function hydratePengajuanDisposisiPembimbingReadData(baseRow) {
   if (!baseRow?.id) return baseRow;
 
   const [fileRows] = await db.query(
-    `SELECT file_type, file_content, file_name
+    `SELECT file_type, file_name
      FROM pengajuan_disposisi_pembimbing_file
-     WHERE pengajuan_disposisi_pembimbing_id = ?`,
+     WHERE pengajuan_disposisi_pembimbing_id = ? AND file_content IS NOT NULL`,
     [baseRow.id],
   );
-
-  const fileMapped = mapNewFileRowsToLegacyKeys(fileRows);
+  const byType = new Map(fileRows.map((row) => [row.file_type, row.file_name]));
 
   return {
     ...baseRow,
-    ...fileMapped,
+    has_file_pengajuan_disposisi_pembimbing: byType.has("PENGAJUAN_DISPOSISI_PEMBIMBING"),
+    file_pengajuan_disposisi_pembimbing_name: byType.get("PENGAJUAN_DISPOSISI_PEMBIMBING") ?? null,
+    has_file_transkrip: byType.has("TRANSKRIP"),
+    file_transkrip_name: byType.get("TRANSKRIP") ?? null,
   };
 }
 
@@ -115,7 +104,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
   let txStarted = false;
   try {
     if (!req.user.hasRole("STUDENT")) {
-      return res.status(403).json({ ok: false, message: "Only students" });
+      return res.status(403).json({ ok: false, message: "Hanya mahasiswa yang dapat mengakses fitur ini" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -127,7 +116,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
 
     const outlineId = Number(req.body.outlineId);
     if (!Number.isFinite(outlineId) || outlineId <= 0) {
-      return res.status(400).json({ ok: false, message: "outlineId invalid" });
+      return res.status(400).json({ ok: false, message: "ID outline tidak valid" });
     }
 
     // Pastikan outline milik mahasiswa dan sudah ACCEPTED (sesuai workflow kamu)
@@ -141,7 +130,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     if (orows.length === 0) {
       return res.status(400).json({
         ok: false,
-        message: "Outline not found or not ACCEPTED",
+        message: "Outline tidak ditemukan atau belum diterima Kaprodi",
       });
     }
 
@@ -163,8 +152,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     if (existing.length > 0) {
       return res.status(409).json({
         ok: false,
-        message:
-          "Pengajuan disposisi pembimbing already exists for this outline",
+        message: "Pengajuan disposisi pembimbing untuk outline ini sudah ada",
         data: existing[0],
       });
     }
@@ -180,6 +168,23 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       fileTranskrip,
       fileTranskripName,
     } = req.body || {};
+
+    // Required: SK Penelitian later pulls it as TRANSKRIP_NILAI and refuses to submit without it.
+    if (fileTranskrip == null || String(fileTranskrip).trim().length === 0) {
+      return res.status(400).json({
+        ok: false,
+        message: "File transkrip nilai wajib diunggah",
+      });
+    }
+    const transkripError = validateUpload(
+      fileTranskrip,
+      fileTranskripName,
+      UPLOAD_RULES.SCAN,
+      "File transkrip nilai",
+    );
+    if (transkripError) {
+      return res.status(400).json({ ok: false, message: transkripError });
+    }
 
     const noHpVal = noHp != null ? String(noHp).trim() : "";
     if (!noHpVal || !/^08[0-9]{7,13}$/.test(noHpVal)) {
@@ -208,7 +213,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     if (pembimbing1Val === pembimbing2Val) {
       return res.status(400).json({
         ok: false,
-        message: "Pembimbing 1 and Pembimbing 2 cannot be the same",
+        message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
       });
     }
 
@@ -242,7 +247,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     if (perluSuratPengantar && !namaPerusahaanVal) {
       return res.status(400).json({
         ok: false,
-        message: "namaPerusahaan is required when perluSuratPengantar is true",
+        message: "Nama perusahaan wajib diisi jika memerlukan surat pengantar",
       });
     }
 
@@ -258,8 +263,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     if (perluSuratPengantar && !alamatPerusahaanVal) {
       return res.status(400).json({
         ok: false,
-        message:
-          "alamatPerusahaan is required when perluSuratPengantar is true",
+        message: "Alamat perusahaan wajib diisi jika memerlukan surat pengantar",
       });
     }
 
@@ -333,17 +337,15 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       },
     ]);
 
-    if (fileTranskrip !== undefined && fileTranskrip !== null) {
-      await upsertFileByType(
-        conn,
-        pengajuanDisposisiPembimbingId,
-        "TRANSKRIP",
-        String(fileTranskrip),
-        fileTranskripName !== undefined && fileTranskripName !== null
-          ? String(fileTranskripName).trim()
-          : null,
-      );
-    }
+    await upsertFileByType(
+      conn,
+      pengajuanDisposisiPembimbingId,
+      "TRANSKRIP",
+      String(fileTranskrip),
+      fileTranskripName !== undefined && fileTranskripName !== null
+        ? String(fileTranskripName).trim()
+        : null,
+    );
 
     const [mahasiswaRows] = await conn.query(
       `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
@@ -351,19 +353,10 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     );
     const namaMahasiswa = mahasiswaRows[0]?.nama ?? npm;
 
-    const [kaprodiUserRows] = await conn.query(
-      `SELECT u.id FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
-       WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
-       LIMIT 1`,
-      [programStudiId],
-    );
-    if (kaprodiUserRows[0]?.id) {
+    for (const kaprodiUserId of await getKaprodiUserIds(conn, programStudiId)) {
       await insertNotification(
         conn,
-        kaprodiUserRows[0].id,
+        kaprodiUserId,
         "TITLE_SUBMITTED",
         `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
         "/kaprodi/pengajuan-outline/pengajuan-disposisi-pembimbing",
@@ -375,7 +368,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
 
     return res.status(201).json({
       ok: true,
-      message: "Created",
+      message: "Pengajuan disposisi pembimbing berhasil diajukan",
       data: { id: pengajuanDisposisiPembimbingId },
     });
   } catch (err) {
@@ -384,6 +377,13 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         await conn.rollback();
       }
     } catch (_) {}
+    // A double submit races past the existence check; uq_pengajuan_outline_npm stops the second.
+    if (err?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan disposisi pembimbing untuk outline ini sudah ada",
+      });
+    }
     next(err);
   } finally {
     if (conn) {
@@ -395,7 +395,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
 exports.listMine = async (req, res, next) => {
   try {
     if (!req.user.hasRole("STUDENT")) {
-      return res.status(403).json({ ok: false, message: "Only students" });
+      return res.status(403).json({ ok: false, message: "Hanya mahasiswa yang dapat mengakses fitur ini" });
     }
 
     const npm = await getStudentNpm(req.user.id);
@@ -433,8 +433,7 @@ exports.getLatestMine = async (req, res, next) => {
     if (!req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message:
-          "Only students can access their latest pengajuan disposisi pembimbing",
+        message: "Hanya mahasiswa yang dapat melihat pengajuan disposisi pembimbing terbarunya",
       });
     }
 
@@ -476,7 +475,7 @@ exports.getLatestMine = async (req, res, next) => {
       return res.json({
         ok: true,
         data: null,
-        message: "Pengajuan disposisi pembimbing not found",
+        message: "Pengajuan disposisi pembimbing tidak ditemukan",
       });
     }
 
@@ -491,7 +490,7 @@ exports.getById = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid id" });
+      return res.status(400).json({ ok: false, message: "ID pengajuan tidak valid" });
     }
 
     // STUDENT: hanya boleh lihat miliknya
@@ -560,7 +559,7 @@ exports.getById = async (req, res, next) => {
       );
 
       if (rows.length === 0) {
-        return res.status(404).json({ ok: false, message: "Not found" });
+        return res.status(404).json({ ok: false, message: "Pengajuan disposisi pembimbing tidak ditemukan" });
       }
 
       const hydrated = await hydratePengajuanDisposisiPembimbingReadData(
@@ -569,17 +568,15 @@ exports.getById = async (req, res, next) => {
       return res.json({ ok: true, data: hydrated });
     }
 
-    // LECTURER (Kaprodi): hanya boleh pengajuan dari prodinya
-    if (req.user.hasRole("LECTURER", "KAPRODI")) {
-      const [urows] = await db.query(
-        `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [req.user.id],
+    // Kaprodi: hanya boleh pengajuan dari prodinya
+    if (req.user.hasRole("KAPRODI")) {
+      const programStudiIds = await getKaprodiProgramStudiIds(
+        await getStaffUsrId(req.user.id),
       );
-      const nidn = urows[0]?.nidn;
-      if (!nidn) {
+      if (programStudiIds.length === 0) {
         return res
-          .status(400)
-          .json({ ok: false, message: "Dosen tidak valid" });
+          .status(403)
+          .json({ ok: false, message: "Anda tidak terdaftar sebagai Kaprodi" });
       }
 
       const [rows] = await db.query(
@@ -630,14 +627,14 @@ exports.getById = async (req, res, next) => {
         LEFT JOIN dosen d4 ON d4.nidn = pj.pembimbing2_ditetapkan_nidn
 
         WHERE pj.id = ?
-          AND COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?
+          AND ps.id IN (?)
         LIMIT 1
         `,
-        [id, nidn],
+        [id, programStudiIds],
       );
 
       if (rows.length === 0) {
-        return res.status(404).json({ ok: false, message: "Not found" });
+        return res.status(404).json({ ok: false, message: "Pengajuan disposisi pembimbing tidak ditemukan" });
       }
 
       const hydrated = await hydratePengajuanDisposisiPembimbingReadData(
@@ -646,7 +643,7 @@ exports.getById = async (req, res, next) => {
       return res.json({ ok: true, data: hydrated });
     }
 
-    return res.status(403).json({ ok: false, message: "Forbidden" });
+    return res.status(403).json({ ok: false, message: "Anda tidak memiliki akses" });
   } catch (err) {
     next(err);
   }
@@ -660,11 +657,11 @@ exports.getFile = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
-      return res.status(400).json({ ok: false, message: "Invalid id" });
+      return res.status(400).json({ ok: false, message: "ID pengajuan tidak valid" });
     }
     const fileType = String(req.params.fileType ?? "").toUpperCase();
     if (!DOWNLOADABLE_FILE_TYPES.has(fileType)) {
-      return res.status(400).json({ ok: false, message: "Invalid fileType" });
+      return res.status(400).json({ ok: false, message: "Jenis file tidak valid" });
     }
 
     let scopeSql;
@@ -675,18 +672,14 @@ exports.getFile = async (req, res, next) => {
         return res.status(400).json({ ok: false, message: "Mahasiswa tidak valid" });
       }
       scopeSql = "pj.npm = ?";
-    } else if (req.user.hasRole("LECTURER", "KAPRODI")) {
-      const [urows] = await db.query(
-        `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-        [req.user.id],
-      );
-      scopeParam = urows[0]?.nidn;
-      if (!scopeParam) {
-        return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
+    } else if (req.user.hasRole("KAPRODI")) {
+      scopeParam = await getKaprodiProgramStudiIds(await getStaffUsrId(req.user.id));
+      if (scopeParam.length === 0) {
+        return res.status(403).json({ ok: false, message: "Anda tidak terdaftar sebagai Kaprodi" });
       }
-      scopeSql = "COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = ?";
+      scopeSql = "ps.id IN (?)";
     } else {
-      return res.status(403).json({ ok: false, message: "Forbidden" });
+      return res.status(403).json({ ok: false, message: "Anda tidak memiliki akses" });
     }
 
     const [rows] = await db.query(
@@ -725,7 +718,7 @@ exports.resubmit = async (req, res, next) => {
     if (!req.user || !req.user.hasRole("STUDENT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only students can resubmit pengajuan disposisi pembimbing",
+        message: "Hanya mahasiswa yang dapat mengajukan ulang disposisi pembimbing",
       });
     }
 
@@ -733,7 +726,7 @@ exports.resubmit = async (req, res, next) => {
     if (!Number.isFinite(id) || id <= 0) {
       return res.status(400).json({
         ok: false,
-        message: "Invalid pengajuan disposisi pembimbing id",
+        message: "ID pengajuan tidak valid",
       });
     }
 
@@ -800,20 +793,20 @@ exports.resubmit = async (req, res, next) => {
     if (!hasMeaningfulUpdate) {
       return res.status(400).json({
         ok: false,
-        message: "At least one meaningful field must be provided",
+        message: "Tidak ada perubahan yang diajukan",
       });
     }
 
-    if (
-      pembimbing1Val &&
-      pembimbing2Val &&
-      pembimbing1Val.length > 0 &&
-      pembimbing1Val === pembimbing2Val
-    ) {
-      return res.status(400).json({
-        ok: false,
-        message: "Pembimbing 1 and Pembimbing 2 cannot be the same",
-      });
+    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
+      const transkripError = validateUpload(
+        fileTranskripVal,
+        fileTranskripNameVal,
+        UPLOAD_RULES.SCAN,
+        "File transkrip nilai",
+      );
+      if (transkripError) {
+        return res.status(400).json({ ok: false, message: transkripError });
+      }
     }
 
     if (
@@ -823,7 +816,7 @@ exports.resubmit = async (req, res, next) => {
     ) {
       return res.status(400).json({
         ok: false,
-        message: "namaPerusahaan is required when perluSuratPengantar is true",
+        message: "Nama perusahaan wajib diisi jika memerlukan surat pengantar",
       });
     }
 
@@ -846,8 +839,7 @@ exports.resubmit = async (req, res, next) => {
     ) {
       return res.status(400).json({
         ok: false,
-        message:
-          "alamatPerusahaan is required when perluSuratPengantar is true",
+        message: "Alamat perusahaan wajib diisi jika memerlukan surat pengantar",
       });
     }
 
@@ -906,18 +898,17 @@ exports.resubmit = async (req, res, next) => {
       txStarted = false;
       return res.status(404).json({
         ok: false,
-        message: "Pengajuan disposisi pembimbing not found",
+        message: "Pengajuan disposisi pembimbing tidak ditemukan",
       });
     }
 
     const currentStatus = String(rows[0].status || "").toUpperCase();
-    if (!["REJECTED", "NEED_REVISION"].includes(currentStatus)) {
+    if (currentStatus !== "NEED_REVISION") {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message:
-          "Pengajuan disposisi pembimbing status is not eligible for resubmit",
+        message: "Pengajuan hanya dapat diajukan ulang saat berstatus Perlu Revisi",
       });
     }
 
@@ -929,6 +920,15 @@ exports.resubmit = async (req, res, next) => {
       pembimbing2Val && pembimbing2Val.length > 0
         ? pembimbing2Val
         : rows[0].pembimbing2_diajukan_nidn;
+    // Compared after the update, so changing only one of them can't make both the same dosen.
+    if (effectivePembimbing1 === effectivePembimbing2) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
+      });
+    }
     if (
       !(await dosenBimbingProdiService.areEligible(rows[0].program_studi_id, [
         effectivePembimbing1,
@@ -1055,19 +1055,10 @@ exports.resubmit = async (req, res, next) => {
     const resubNama = resubMahasiswaRows[0]?.nama ?? npm;
     const resubProgramStudiId = resubMahasiswaRows[0]?.program_studi_id ?? null;
     if (resubProgramStudiId) {
-      const [resubKaprodiRows] = await conn.query(
-        `SELECT u.id FROM users u
-         JOIN user_roles ur ON ur.user_id = u.id
-         JOIN roles r ON r.id = ur.role_id
-         JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
-         WHERE r.code = 'KAPRODI' AND ur.program_studi_id = ?
-         LIMIT 1`,
-        [resubProgramStudiId],
-      );
-      if (resubKaprodiRows[0]?.id) {
+      for (const kaprodiUserId of await getKaprodiUserIds(conn, resubProgramStudiId)) {
         await insertNotification(
           conn,
-          resubKaprodiRows[0].id,
+          kaprodiUserId,
           "TITLE_RESUBMITTED",
           `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
           "/kaprodi/pengajuan-outline/pengajuan-disposisi-pembimbing",
@@ -1080,7 +1071,7 @@ exports.resubmit = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message: "Pengajuan disposisi pembimbing resubmitted",
+      message: "Pengajuan disposisi pembimbing berhasil diajukan ulang",
     });
   } catch (err) {
     try {
