@@ -842,14 +842,14 @@ exports.exportOverallProgressReport = async (req, res, next) => {
           const skPenelitian = skByOutlineId.get(outline.id) ?? null;
 
           if (skPenelitian) {
-            fase = "Pengajuan SK Penelitian";
+            fase = "Pengajuan SK Penulisan";
             status = skPenelitian.status;
           } else if (kartuOutline) {
             const stages = outlineStagesByKartu.get(kartuOutline.id) ?? [];
             const isCompleted = kartuOutline.is_completed === 1;
             const { activeStage, activeStatus, stageRow } = resolveActiveKonsultasiOutlineStage(stages, isCompleted);
             setKonsultasiFields("Konsultasi Outline", null, activeStage, activeStatus, stageRow, isCompleted);
-            if (isCompleted) status = "Menunggu Pengajuan SK Penelitian";
+            if (isCompleted) status = "Menunggu Pengajuan SK Penulisan";
           } else if (disposisi) {
             fase = "Pengajuan Disposisi Pembimbing";
             status = DISPOSISI_STATUS_LABELS[disposisi.status] ?? disposisi.status;

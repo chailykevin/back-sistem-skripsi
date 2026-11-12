@@ -179,7 +179,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
     const transkripError = validateUpload(
       fileTranskrip,
       fileTranskripName,
-      UPLOAD_RULES.SCAN,
+      UPLOAD_RULES.TRANSKRIP,
       "File transkrip nilai",
     );
     if (transkripError) {
@@ -801,7 +801,7 @@ exports.resubmit = async (req, res, next) => {
       const transkripError = validateUpload(
         fileTranskripVal,
         fileTranskripNameVal,
-        UPLOAD_RULES.SCAN,
+        UPLOAD_RULES.TRANSKRIP,
         "File transkrip nilai",
       );
       if (transkripError) {

@@ -1,9 +1,5 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
-const path = require("path");
-const {
-  generateHalamanPersetujuanJudulDesainSkripsiFTI,
-} = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
 const {
   generateSuratKeputusanSkripsiFTI,
 } = require("../services/generateSuratKeputusanSkripsiFTI.js");
@@ -22,24 +18,43 @@ const {
   getSuratPengantarPenelitianData,
   generateSuratPengantarPenelitianFTI,
 } = require("../services/generateSuratPengantarPenelitianFTI.js");
-const { getStudentNpm, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
+const {
+  skPenulisanName,
+  getSkPenulisanNameForOutline,
+  buildStudentFileName,
+  generateHalamanPersetujuanFile,
+} = require("../services/skPenulisan.service");
+const {
+  getStudentNpm,
+  getStaffUsrId,
+  getKaprodiProgramStudiIds,
+  isKaprodiOfProgramStudi,
+} = require("../utils/identity");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
+const { mimeFromFileName } = require("../utils/mime");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
 const { getSkSubmissionPeriod } = require("../services/outlineSubmissionPeriod.service");
 
-function buildKartuFileName(npm, namaMahasiswa, suffix) {
-  const safeNpm = String(npm ?? "")
-    .trim()
-    .replace(/[/\\:*?"<>|]+/g, "_");
-  const safeNama = String(namaMahasiswa ?? "")
-    .trim()
-    .replace(/[/\\:*?"<>|]+/g, "_");
-  return `${safeNpm} - ${safeNama} - ${suffix}.pdf`;
+const MIME_PDF = "application/pdf";
+
+async function insertGeneratedFile(conn, skId, fileType, fileName, content) {
+  await conn.query(
+    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = ?`,
+    [skId, fileType],
+  );
+  await conn.query(
+    `INSERT INTO pengajuan_sk_penelitian_files
+       (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+     VALUES (?, ?, ?, ?, ?, 'GENERATED', 'VERIFIED')`,
+    [skId, fileType, fileName, MIME_PDF, Buffer.from(content).toString("base64")],
+  );
 }
 
-async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
+// `now` is also the SK's completed_at, so the monthly SK number and the row it is counted by
+// come from the same clock.
+async function generateSkDocuments(conn, sk, outlineId, jenisSk, now) {
   const isSeminar = jenisSk === JENIS.SEMINAR_BISNIS_DIGITAL;
-  // Fetch kartu konsultasi outline (has mahasiswa info + dospem names + program studi)
   const [[kartu]] = await conn.query(
     `SELECT o.npm, o.judul AS judul_skripsi, o.program_studi_id,
             o.pembimbing1_nidn, o.pembimbing2_nidn,
@@ -62,7 +77,6 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
       statusCode: 400,
     });
 
-  // Fetch pengajuan disposisi pembimbing for perlu_surat_pengantar + nama_perusahaan
   const [[pj]] = await conn.query(
     `SELECT id, perlu_surat_pengantar, nama_perusahaan FROM pengajuan_disposisi_pembimbing WHERE outline_id = ? LIMIT 1`,
     [outlineId],
@@ -70,16 +84,15 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
   if (!pj)
     throw Object.assign(
       new Error("Pengajuan disposisi pembimbing tidak ditemukan"),
-      {
-        statusCode: 400,
-      },
+      { statusCode: 400 },
     );
 
-  // Fetch program studi + fakultas
   const [[ps]] = await conn.query(
-    `SELECT ps.kode AS ps_kode, ps.nama AS ps_nama, f.kode AS f_kode, f.dekan_staff_usr_id AS dekan_nidn
+    `SELECT ps.kode AS ps_kode, ps.kaprodi_staff_usr_id, staf.nama AS nama_kaprodi,
+            f.kode AS f_kode, f.dekan_staff_usr_id
      FROM program_studi ps
      LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+     LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
      WHERE ps.id = ?
      LIMIT 1`,
     [kartu.program_studi_id],
@@ -88,38 +101,23 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
     throw Object.assign(new Error("Program studi tidak ditemukan"), {
       statusCode: 400,
     });
-  if (!ps.f_kode || !ps.dekan_nidn) {
+  if (!ps.f_kode || !ps.dekan_staff_usr_id) {
     throw Object.assign(
       new Error("Dekan belum dikonfigurasi untuk fakultas ini"),
       { statusCode: 400 },
     );
   }
 
-
   const [[dekan]] = await conn.query(
     `SELECT s.nama AS nama_dekan FROM staf s WHERE s.usr_id = ? LIMIT 1`,
-    [ps.dekan_nidn],
+    [ps.dekan_staff_usr_id],
   );
-
   if (!dekan)
     throw Object.assign(new Error("Dekan belum dikonfigurasi"), {
       statusCode: 400,
     });
-  dekan.signature_image = await getStaffSignature(conn, ps.dekan_nidn);
-
-  const [[kaprodi]] = await conn.query(
-    `SELECT ps.kaprodi_staff_usr_id, staf.nama AS nama_kaprodi
-     FROM program_studi ps
-     LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
-     WHERE ps.id = ? LIMIT 1`,
-    [kartu.program_studi_id],
-  );
-  if (kaprodi) {
-    kaprodi.signature_image = await getStaffSignature(
-      conn,
-      kaprodi.kaprodi_staff_usr_id,
-    );
-  }
+  const dekanSignature = await getStaffSignature(conn, ps.dekan_staff_usr_id);
+  const kaprodiSignature = await getStaffSignature(conn, ps.kaprodi_staff_usr_id);
 
   const [[mahasiswaUser]] = await conn.query(
     `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
@@ -127,16 +125,8 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
   );
 
   assertSignatures([
-    {
-      role: "Dekan",
-      nama: dekan.nama_dekan,
-      signatureImage: dekan.signature_image,
-    },
-    {
-      role: "Kaprodi",
-      nama: kaprodi?.nama_kaprodi,
-      signatureImage: kaprodi?.signature_image,
-    },
+    { role: "Dekan", nama: dekan.nama_dekan, signatureImage: dekanSignature },
+    { role: "Kaprodi", nama: ps.nama_kaprodi, signatureImage: kaprodiSignature },
     {
       role: "Mahasiswa",
       nama: kartu.nama_mahasiswa,
@@ -144,7 +134,43 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
     },
   ]);
 
-  const now = new Date();
+  const tanggal = formatTanggal(now);
+
+  // Documents without the SK number are rendered before taking the program_studi lock in
+  // nextNomorSk, so other numbering in this prodi doesn't wait on them.
+  const penyelesaianBuffer = await generatePernyataanPenyelesaianSkripsiFTI({
+    mahasiswa: {
+      nama: kartu.nama_mahasiswa,
+      npm: kartu.npm,
+      alamat: "",
+      noHp: "",
+      judulSkripsi: kartu.judul_skripsi,
+      signatureBase64: mahasiswaUser?.signature_image ?? null,
+    },
+    ketuaProgramStudi: {
+      nama: ps.nama_kaprodi ?? "",
+      programStudi: kartu.program_studi_nama,
+      signatureBase64: kaprodiSignature ?? null,
+    },
+  });
+
+  let keteranganBuffer = null;
+  let pengantarBuffer = null;
+  if (pj.perlu_surat_pengantar) {
+    keteranganBuffer = await generateSuratKeteranganFTI({
+      mahasiswa: {
+        nama: kartu.nama_mahasiswa,
+        npm: kartu.npm,
+        programStudi: kartu.program_studi_nama,
+      },
+      lokasi: pj.nama_perusahaan ?? "",
+      judul: kartu.judul_skripsi,
+    });
+    const dataPengantar = await getSuratPengantarPenelitianData(conn, pj.id);
+    dataPengantar.tanggalSurat = tanggal;
+    pengantarBuffer = await generateSuratPengantarPenelitianFTI(dataPengantar);
+  }
+
   const nomorSurat = await nextNomorSk(conn, {
     programStudiId: kartu.program_studi_id,
     jenisSk,
@@ -152,31 +178,18 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
     prodiKode: ps.ps_kode,
     date: now,
   });
-
-  // Update nomor_surat on the SK record
   await conn.query(
     `UPDATE pengajuan_sk_penelitian SET nomor_surat = ? WHERE id = ?`,
     [nomorSurat, sk.id],
   );
 
-  const tanggal = formatTanggal(now);
-
   const dataSuratKeputusan = {
     nomorSurat,
     programStudi: kartu.program_studi_nama,
-    mahasiswa: {
-      nama: kartu.nama_mahasiswa,
-      npm: kartu.npm,
-    },
-    pembimbing: {
-      pertama: kartu.pembimbing1_nama,
-      kedua: kartu.pembimbing2_nama,
-    },
+    mahasiswa: { nama: kartu.nama_mahasiswa, npm: kartu.npm },
+    pembimbing: { pertama: kartu.pembimbing1_nama, kedua: kartu.pembimbing2_nama },
     tanggal,
-    dekan: {
-      nama: dekan.nama_dekan,
-      signatureBase64: dekan.signature_image,
-    },
+    dekan: { nama: dekan.nama_dekan, signatureBase64: dekanSignature },
   };
   const skBuffer = isSeminar
     ? await generateSuratKeputusanSeminarBisnisDigitalFTI({
@@ -187,127 +200,41 @@ async function generateSkDocuments(conn, sk, outlineId, jenisSk) {
         ...dataSuratKeputusan,
         judulSkripsi: kartu.judul_skripsi,
       });
-  const skBase64 = Buffer.from(skBuffer).toString("base64");
-  const mimePdf = "application/pdf";
-  const mimeDocx =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-  await conn.query(
-    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SK_PENUNJUKAN_PEMBIMBING'`,
-    [sk.id],
+  await insertGeneratedFile(
+    conn,
+    sk.id,
+    "SK_PENUNJUKAN_PEMBIMBING",
+    buildStudentFileName(
+      kartu.npm,
+      kartu.nama_mahasiswa,
+      isSeminar
+        ? "SK Penunjukan Pembimbing Seminar Bisnis Digital"
+        : "SK Penunjukan Pembimbing",
+    ),
+    skBuffer,
   );
-  await conn.query(
-    `INSERT INTO pengajuan_sk_penelitian_files
-       (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-     VALUES (?, 'SK_PENUNJUKAN_PEMBIMBING', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-    [
+  await insertGeneratedFile(
+    conn,
+    sk.id,
+    "SURAT_PENYELESAIAN_SKRIPSI",
+    buildStudentFileName(kartu.npm, kartu.nama_mahasiswa, "Surat Penyelesaian Skripsi"),
+    penyelesaianBuffer,
+  );
+  if (keteranganBuffer) {
+    await insertGeneratedFile(
+      conn,
       sk.id,
-      buildKartuFileName(
-        kartu.npm,
-        kartu.nama_mahasiswa,
-        isSeminar
-          ? "SK Penunjukan Pembimbing Seminar Bisnis Digital"
-          : "SK Penunjukan Pembimbing",
-      ),
-      mimePdf,
-      skBase64,
-    ],
-  );
-
-  // Generate SURAT_PENYELESAIAN_SKRIPSI (always)
-
-  const dataPernyataanPenyelesaianSkripsiFTI = {
-    mahasiswa: {
-      nama: kartu.nama_mahasiswa,
-      npm: kartu.npm,
-      alamat: "",
-      noHp: "",
-      judulSkripsi: kartu.judul_skripsi,
-      signatureBase64: mahasiswaUser?.signature_image ?? null,
-    },
-    ketuaProgramStudi: {
-      nama: kaprodi?.nama_kaprodi ?? "",
-      programStudi: kartu.program_studi_nama,
-      signatureBase64: kaprodi?.signature_image ?? null,
-    },
-  };
-  const penyelesaianBuffer = await generatePernyataanPenyelesaianSkripsiFTI(
-    dataPernyataanPenyelesaianSkripsiFTI,
-  );
-  const penyelesaianBase64 = Buffer.from(penyelesaianBuffer).toString("base64");
-  const mimePenyelesaianPdf = "application/pdf";
-
-  await conn.query(
-    `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
-    [sk.id],
-  );
-  await conn.query(
-    `INSERT INTO pengajuan_sk_penelitian_files
-       (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-     VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-    [
+      "SURAT_KETERANGAN",
+      `Surat_Keterangan_${kartu.npm}.pdf`,
+      keteranganBuffer,
+    );
+    await insertGeneratedFile(
+      conn,
       sk.id,
-      buildKartuFileName(
-        kartu.npm,
-        kartu.nama_mahasiswa,
-        "Surat Penyelesaian Skripsi",
-      ),
-      mimePenyelesaianPdf,
-      penyelesaianBase64,
-    ],
-  );
-
-  // Generate SURAT_KETERANGAN if needed
-  if (pj.perlu_surat_pengantar) {
-
-    const dataSuratKeteranganFTI = {
-      mahasiswa: {
-        nama: kartu.nama_mahasiswa,
-        npm: kartu.npm,
-      },
-      programStudi: kartu.program_studi_nama,
-      lokasi: pj.nama_perusahaan ?? "",
-      judulSkripsi: kartu.judul_skripsi,
-    };
-    const suratBuffer = await generateSuratKeteranganFTI(
-      dataSuratKeteranganFTI,
-    );
-    const suratBase64 = Buffer.from(suratBuffer).toString("base64");
-    const mimeSuratPdf = "application/pdf";
-
-    await conn.query(
-      `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_KETERANGAN'`,
-      [sk.id],
-    );
-    await conn.query(
-      `INSERT INTO pengajuan_sk_penelitian_files
-         (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SURAT_KETERANGAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-      [sk.id, `Surat_Keterangan_${kartu.npm}.pdf`, mimeSuratPdf, suratBase64],
-    );
-
-    const dataSuratPengantarPenelitianFTI =
-      await getSuratPengantarPenelitianData(conn, pj.id);
-    dataSuratPengantarPenelitianFTI.tanggalSurat = tanggal;
-    const pengantarBuffer = await generateSuratPengantarPenelitianFTI(
-      dataSuratPengantarPenelitianFTI,
-    );
-    const pengantarBase64 = Buffer.from(pengantarBuffer).toString("base64");
-
-    await conn.query(
-      `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENGANTAR_PENELITIAN'`,
-      [sk.id],
-    );
-    await conn.query(
-      `INSERT INTO pengajuan_sk_penelitian_files
-         (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-       VALUES (?, 'SURAT_PENGANTAR_PENELITIAN', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-      [
-        sk.id,
-        `Surat_Pengantar_Penelitian_${kartu.npm}.pdf`,
-        mimeSuratPdf,
-        pengantarBase64,
-      ],
+      "SURAT_PENGANTAR_PENELITIAN",
+      `Surat_Pengantar_Penelitian_${kartu.npm}.pdf`,
+      pengantarBuffer,
     );
   }
 }
@@ -327,10 +254,21 @@ const VALID_FILE_TYPES = [
 const VALID_SK_STATUSES = [
   "DRAFT",
   "SUBMITTED",
+  "NEED_REVISION",
   "VERIFIED",
-  "REJECTED",
   "COMPLETED",
 ];
+
+const REQUIRED_FILE_TYPES = [
+  "PENGAJUAN_DISPOSISI_PEMBIMBING",
+  "TRANSKRIP_NILAI",
+  "KARTU_KONSULTASI_OUTLINE",
+  "FILE_OUTLINE",
+  "HALAMAN_PERSETUJUAN",
+];
+// System-generated/approved files are inserted VERIFIED; only these are reviewable or re-uploadable
+const REVIEWABLE_FILE_TYPES = ["TRANSKRIP_NILAI"];
+const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
 
 async function upsertSkFile(
   conn,
@@ -362,6 +300,67 @@ async function upsertSkFile(
   );
 }
 
+function parseOutlineId(req) {
+  const id = Number(req.params.outlineId);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+// Fakultas whose Dekan is this account. The Dekan columns are matched the same way the Dekan list
+// always has: the legacy NIDN if set, else the staff account.
+async function getDekanFakultasIds(userId) {
+  const [rows] = await db.query(
+    `SELECT f.id
+     FROM fakultas f
+     JOIN users u ON u.id = ? AND u.is_active = 1
+     WHERE COALESCE(f.dekan_nidn, f.dekan_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)`,
+    [userId],
+  );
+  return rows.map((row) => Number(row.id));
+}
+
+// The owning student, Sekretariat, the Kaprodi of the student's prodi and the Dekan of its fakultas.
+// Returns { found, allowed }: found is false when the outline doesn't exist.
+async function checkSkReadAccess(req, outlineId) {
+  const [[outline]] = await db.query(
+    `SELECT o.npm, o.program_studi_id, ps.fakultas_id
+     FROM outline o
+     JOIN program_studi ps ON ps.id = o.program_studi_id
+     WHERE o.id = ? LIMIT 1`,
+    [outlineId],
+  );
+  if (!outline) return { found: false, allowed: false };
+  if (req.user.hasRole("SEKRETARIAT")) return { found: true, allowed: true };
+  if (req.user.hasRole("STUDENT")) {
+    return {
+      found: true,
+      allowed: (await getStudentNpm(req.user.id)) === outline.npm,
+    };
+  }
+  if (
+    req.user.hasRole("KAPRODI") &&
+    (await isKaprodiOfProgramStudi(req.user.id, outline.program_studi_id))
+  ) {
+    return { found: true, allowed: true };
+  }
+  if (req.user.hasRole("DEKAN")) {
+    const fakultasIds = await getDekanFakultasIds(req.user.id);
+    return { found: true, allowed: fakultasIds.includes(Number(outline.fakultas_id)) };
+  }
+  return { found: true, allowed: false };
+}
+
+async function notifySekretariat(conn, type, message) {
+  const [sekRows] = await conn.query(
+    `SELECT u.id FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE r.code = 'SEKRETARIAT'`,
+  );
+  for (const sek of sekRows) {
+    await insertNotification(conn, sek.id, type, message, "/sekretariat/sk-penelitian");
+  }
+}
+
 exports.initSkPenelitian = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -369,12 +368,12 @@ exports.initSkPenelitian = async (req, res, next) => {
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({
         ok: false,
-        message: "Only students can initialize SK Penelitian",
+        message: "Hanya mahasiswa yang dapat menginisiasi SK Penulisan",
       });
     }
 
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
@@ -396,13 +395,10 @@ exports.initSkPenelitian = async (req, res, next) => {
     }
 
     const [kartuRows] = await conn.query(
-      `SELECT k.id, o.npm, k.outline_id, o.program_studi_id, o.pembimbing1_nidn, o.pembimbing2_nidn,
-              o.judul AS judul_skripsi, k.is_completed
-       FROM kartu_konsultasi_outline k
-       JOIN outline o ON o.id = k.outline_id
-       WHERE k.outline_id = ? AND o.npm = ? AND k.is_completed = 1
+      `SELECT k.id FROM kartu_konsultasi_outline k
+       WHERE k.outline_id = ? AND k.is_completed = 1
        LIMIT 1`,
-      [outlineId, npm],
+      [outlineId],
     );
     if (kartuRows.length === 0) {
       return res.status(400).json({
@@ -410,7 +406,8 @@ exports.initSkPenelitian = async (req, res, next) => {
         message: "Kartu konsultasi outline belum selesai",
       });
     }
-    const kartu = kartuRows[0];
+
+    const skName = await getSkPenulisanNameForOutline(conn, outlineId);
 
     const [existingRows] = await conn.query(
       `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
@@ -419,7 +416,7 @@ exports.initSkPenelitian = async (req, res, next) => {
     if (existingRows.length > 0) {
       return res
         .status(409)
-        .json({ ok: false, message: "SK Penelitian sudah dibuat" });
+        .json({ ok: false, message: `${skName} sudah dibuat` });
     }
 
     const { message: periodMessage } = await getSkSubmissionPeriod(conn);
@@ -436,123 +433,12 @@ exports.initSkPenelitian = async (req, res, next) => {
     );
     const skId = ins.insertId;
 
-    // Generate halaman persetujuan PDF and store directly into sk files
-    const [[mahasiswaRow]] = await conn.query(
-      `SELECT signature_image FROM users WHERE npm = ? LIMIT 1`,
-      [kartu.npm],
-    );
-    const [[p2Row]] = await conn.query(
-      `SELECT dsnTtd AS signature_image
-       FROM widya_miko.m_dosen
-       WHERE dsnId = ?
-       LIMIT 1`,
-      [kartu.pembimbing2_nidn],
-    );
-    const [[p1Row]] = await conn.query(
-      `SELECT dsnTtd AS signature_image
-       FROM widya_miko.m_dosen
-       WHERE dsnId = ?
-       LIMIT 1`,
-      [kartu.pembimbing1_nidn],
-    );
-    const [[kaprodiStaffRow]] = await conn.query(
-      `SELECT kaprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
-      [kartu.program_studi_id],
-    );
-    const kaprodiRow = {
-      signature_image: await getStaffSignature(
-        conn,
-        kaprodiStaffRow?.kaprodi_staff_usr_id,
-      ),
-    };
-    const [[psRow]] = await conn.query(
-      `SELECT ps.nama AS program_studi_nama, COALESCE(staf.nama, d.nama) AS kaprodi_nama,
-              m.nama AS nama_mahasiswa,
-              d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama
-       FROM program_studi ps
-       LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
-       LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
-       JOIN mahasiswa m ON m.npm = ?
-       LEFT JOIN dosen d1 ON d1.nidn = ?
-       LEFT JOIN dosen d2 ON d2.nidn = ?
-       WHERE ps.id = ? LIMIT 1`,
-      [
-        kartu.npm,
-        kartu.pembimbing1_nidn,
-        kartu.pembimbing2_nidn,
-        kartu.program_studi_id,
-      ],
-    );
-    const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
-      mahasiswa: {
-        nama: psRow?.nama_mahasiswa ?? "",
-        npm: kartu.npm,
-        signatureBase64: mahasiswaRow?.signature_image ?? null,
-      },
-      pembimbing: {
-        pertama: {
-          nama: psRow?.pembimbing1_nama ?? "",
-          signatureBase64: p1Row?.signature_image ?? null,
-        },
-        kedua: {
-          nama: psRow?.pembimbing2_nama ?? "",
-          signatureBase64: p2Row?.signature_image ?? null,
-        },
-      },
-      ketuaProgramStudi: {
-        nama: psRow?.kaprodi_nama ?? "",
-        signatureBase64: kaprodiRow?.signature_image ?? null,
-      },
-      programStudi: psRow?.program_studi_nama ?? "",
-      judulSkripsi: kartu.judul_skripsi ?? "",
-      tahun: String(new Date().getFullYear()),
-    };
-
-    assertSignatures([
-      {
-        role: "Mahasiswa",
-        nama: psRow?.nama_mahasiswa,
-        signatureImage: mahasiswaRow?.signature_image,
-      },
-      {
-        role: "Pembimbing 2",
-        nama: psRow?.pembimbing2_nama,
-        signatureImage: p2Row?.signature_image,
-      },
-      {
-        role: "Pembimbing 1",
-        nama: psRow?.pembimbing1_nama,
-        signatureImage: p1Row?.signature_image,
-      },
-      {
-        role: "Kaprodi",
-        nama: psRow?.kaprodi_nama,
-        signatureImage: kaprodiRow?.signature_image,
-      },
-    ]);
-
-    const halamanBuffer =
-      await generateHalamanPersetujuanJudulDesainSkripsiFTI(
-        dataHalamanPersetujuanJudulDesainSkripsiFTI,
-      );
-
-    const mimePdf = "application/pdf";
-    const halamanFileName = buildKartuFileName(
-      kartu.npm,
-      psRow?.nama_mahasiswa,
-      "Halaman Persetujuan Judul",
-    );
-
+    const halaman = await generateHalamanPersetujuanFile(conn, outlineId);
     await conn.query(
       `INSERT INTO pengajuan_sk_penelitian_files
          (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
        VALUES (?, 'HALAMAN_PERSETUJUAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-      [
-        skId,
-        halamanFileName,
-        mimePdf,
-        Buffer.from(halamanBuffer).toString("base64"),
-      ],
+      [skId, halaman.fileName, halaman.mimeType, halaman.content],
     );
 
     await conn.commit();
@@ -560,13 +446,19 @@ exports.initSkPenelitian = async (req, res, next) => {
 
     return res.status(201).json({
       ok: true,
-      message: "SK Penelitian dibuat",
+      message: `${skName} dibuat`,
       data: { id: skId },
     });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
     } catch (_) {}
+    // A double-clicked init loses to the first one on uq_sk_outline_id.
+    if (err?.code === "ER_DUP_ENTRY") {
+      return res
+        .status(409)
+        .json({ ok: false, message: "SK Penulisan sudah dibuat" });
+    }
     next(err);
   } finally {
     conn.release();
@@ -575,9 +467,19 @@ exports.initSkPenelitian = async (req, res, next) => {
 
 exports.getSkPenelitian = async (req, res, next) => {
   try {
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
+    }
+
+    const access = await checkSkReadAccess(req, outlineId);
+    if (!access.found) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
+    }
+    if (!access.allowed) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [skRows] = await db.query(
@@ -590,7 +492,6 @@ exports.getSkPenelitian = async (req, res, next) => {
          ps.nama AS program_studi_nama
        FROM pengajuan_sk_penelitian sk
        JOIN outline o ON o.id = sk.outline_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
        LEFT JOIN mahasiswa m ON m.npm = o.npm
        LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
        WHERE sk.outline_id = ?
@@ -601,7 +502,7 @@ exports.getSkPenelitian = async (req, res, next) => {
     if (!sk) {
       return res
         .status(404)
-        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
     }
 
     const [files] = await db.query(
@@ -625,20 +526,31 @@ exports.submitSkPenelitian = async (req, res, next) => {
     if (req.user.userType !== "STUDENT") {
       return res
         .status(403)
-        .json({ ok: false, message: "Only students can submit SK Penelitian" });
+        .json({ ok: false, message: "Hanya mahasiswa yang dapat mengajukan SK Penulisan" });
     }
 
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
+    }
+
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
 
     await conn.beginTransaction();
     txStarted = true;
 
     const [skRows] = await conn.query(
-      `SELECT * FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1 FOR UPDATE`,
-      [outlineId],
+      `SELECT sk.*
+       FROM pengajuan_sk_penelitian sk
+       JOIN outline o ON o.id = sk.outline_id
+       WHERE sk.outline_id = ? AND o.npm = ?
+       LIMIT 1 FOR UPDATE`,
+      [outlineId, npm],
     );
     const sk = skRows[0] ?? null;
     if (!sk) {
@@ -646,33 +558,30 @@ exports.submitSkPenelitian = async (req, res, next) => {
       txStarted = false;
       return res
         .status(404)
-        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
     }
-    if (sk.status !== "DRAFT" && sk.status !== "NEED_REVISION") {
+    // A returned SK (NEED_REVISION) is fixed through resubmit, which takes the re-uploaded files.
+    if (sk.status !== "DRAFT") {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message:
-          "SK Penelitian hanya bisa disubmit saat status DRAFT atau NEED_REVISION",
+        message: "SK Penulisan hanya bisa diajukan saat berstatus Draft",
       });
     }
 
-    // Only the first submission needs an open period; a returned (NEED_REVISION) SK is fixed any time.
-    let submissionPeriodId = sk.submission_period_id ?? null;
-    if (sk.status === "DRAFT") {
-      const { period, message } = await getSkSubmissionPeriod(conn);
-      if (!period) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(409).json({ ok: false, message });
-      }
-      submissionPeriodId = period.id;
+    const { period, message: periodMessage } = await getSkSubmissionPeriod(conn);
+    if (!period) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({ ok: false, message: periodMessage });
     }
 
-    // Resolve kartu_id
     const [kartuRows] = await conn.query(
-      `SELECT id FROM kartu_konsultasi_outline WHERE outline_id = ? LIMIT 1`,
+      `SELECT id, file_content, file_name, mime_type
+       FROM kartu_konsultasi_outline
+       WHERE outline_id = ?
+       LIMIT 1`,
       [outlineId],
     );
     if (kartuRows.length === 0) {
@@ -683,17 +592,8 @@ exports.submitSkPenelitian = async (req, res, next) => {
         message: "Kartu konsultasi outline tidak ditemukan",
       });
     }
-    const kartuId = kartuRows[0].id;
-
-    // System-pull Kartu Konsultasi Outline DOCX
-    const [kartuFileRows] = await conn.query(
-      `SELECT file_content, file_name, mime_type
-       FROM kartu_konsultasi_outline
-       WHERE id = ? AND file_content IS NOT NULL
-       LIMIT 1`,
-      [kartuId],
-    );
-    if (kartuFileRows.length === 0) {
+    const kartuFile = kartuRows[0];
+    if (!kartuFile.file_content) {
       await conn.rollback();
       txStarted = false;
       return res.status(400).json({
@@ -701,9 +601,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
         message: "File kartu konsultasi outline belum digenerate",
       });
     }
-    const kartuFile = kartuFileRows[0];
 
-    // System-pull File Outline Skripsi (latest submission)
     const [outlineRows] = await conn.query(
       `SELECT s.file_outline, s.file_outline_name
        FROM konsultasi_outline_submission s
@@ -711,7 +609,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
        WHERE st.kartu_konsultasi_outline_id = ?
        ORDER BY s.submitted_at DESC
        LIMIT 1`,
-      [kartuId],
+      [kartuFile.id],
     );
     if (outlineRows.length === 0) {
       await conn.rollback();
@@ -722,7 +620,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
     }
     const outlineRow = outlineRows[0];
 
-    // System-pull Transkrip Nilai
     const [transkripRows] = await conn.query(
       `SELECT pf.file_content, pf.file_name
        FROM pengajuan_disposisi_pembimbing_file pf
@@ -741,7 +638,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
     }
     const transkripRow = transkripRows[0];
 
-    // System-pull Formulir Pengajuan Disposisi Pembimbing (generated at Kaprodi review)
+    // The formulir is generated when Kaprodi approves the disposisi.
     const [formulirRows] = await conn.query(
       `SELECT pf.file_content, pf.file_name
        FROM pengajuan_disposisi_pembimbing_file pf
@@ -764,7 +661,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
       sk.id,
       "PENGAJUAN_DISPOSISI_PEMBIMBING",
       formulirRow.file_name,
-      "application/pdf",
+      MIME_PDF,
       formulirRow.file_content,
       "SYSTEM",
       "VERIFIED",
@@ -774,7 +671,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
       sk.id,
       "TRANSKRIP_NILAI",
       transkripRow.file_name,
-      "application/octet-stream",
+      mimeFromFileName(transkripRow.file_name),
       transkripRow.file_content,
       "SYSTEM",
     );
@@ -783,7 +680,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
       sk.id,
       "KARTU_KONSULTASI_OUTLINE",
       kartuFile.file_name,
-      kartuFile.mime_type ?? "application/octet-stream",
+      kartuFile.mime_type ?? mimeFromFileName(kartuFile.file_name),
       kartuFile.file_content,
       "SYSTEM",
       "VERIFIED",
@@ -793,7 +690,7 @@ exports.submitSkPenelitian = async (req, res, next) => {
       sk.id,
       "FILE_OUTLINE",
       outlineRow.file_outline_name,
-      "application/octet-stream",
+      mimeFromFileName(outlineRow.file_outline_name),
       outlineRow.file_outline,
       "SYSTEM",
       "VERIFIED",
@@ -803,31 +700,24 @@ exports.submitSkPenelitian = async (req, res, next) => {
        SET status = 'SUBMITTED', submission_period_id = ?,
            submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [submissionPeriodId, sk.id],
+      [period.id, sk.id],
     );
 
+    const skName = await getSkPenulisanNameForOutline(conn, outlineId);
     const [[studentRow]] = await conn.query(
-      `SELECT u.npm, m.nama FROM users u LEFT JOIN mahasiswa m ON m.npm = u.npm WHERE u.id = ? LIMIT 1`,
-      [req.user.id],
+      `SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`,
+      [npm],
     );
-    const namaMahasiswa = studentRow?.nama ?? studentRow?.npm ?? "";
-    const [sekRows] = await conn.query(
-      `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`,
+    await notifySekretariat(
+      conn,
+      "SK_SUBMITTED",
+      `Mahasiswa ${studentRow?.nama ?? npm} mengajukan ${skName}`,
     );
-    for (const sek of sekRows) {
-      await insertNotification(
-        conn,
-        sek.id,
-        "SK_SUBMITTED",
-        `Mahasiswa ${namaMahasiswa} mengajukan SK Penelitian`,
-        "/sekretariat/sk-penelitian",
-      );
-    }
 
     await conn.commit();
     txStarted = false;
 
-    return res.json({ ok: true, message: "SK Penelitian berhasil disubmit" });
+    return res.json({ ok: true, message: `${skName} berhasil diajukan` });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
@@ -838,17 +728,6 @@ exports.submitSkPenelitian = async (req, res, next) => {
   }
 };
 
-const REQUIRED_FILE_TYPES = [
-  "PENGAJUAN_DISPOSISI_PEMBIMBING",
-  "TRANSKRIP_NILAI",
-  "KARTU_KONSULTASI_OUTLINE",
-  "FILE_OUTLINE",
-  "HALAMAN_PERSETUJUAN",
-];
-// System-generated/approved files are inserted VERIFIED; only these are reviewable or re-uploadable
-const REVIEWABLE_FILE_TYPES = ["TRANSKRIP_NILAI"];
-const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
-
 exports.reviewSkFile = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -856,12 +735,12 @@ exports.reviewSkFile = async (req, res, next) => {
     if (!req.user.hasRole("SEKRETARIAT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only sekretariat can review SK Penelitian files",
+        message: "Hanya Sekretariat yang dapat mereview berkas SK Penulisan",
       });
     }
 
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
@@ -887,9 +766,7 @@ exports.reviewSkFile = async (req, res, next) => {
     txStarted = true;
 
     const [[sk]] = await conn.query(
-      `SELECT * FROM pengajuan_sk_penelitian
-       WHERE outline_id = ? AND status NOT IN ('COMPLETED','REJECTED')
-       LIMIT 1 FOR UPDATE`,
+      `SELECT id, status FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1 FOR UPDATE`,
       [outlineId],
     );
     if (!sk) {
@@ -897,15 +774,15 @@ exports.reviewSkFile = async (req, res, next) => {
       txStarted = false;
       return res
         .status(404)
-        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
     }
-    if (sk.status !== "SUBMITTED" && sk.status !== "NEED_REVISION") {
+    // While the student is fixing a returned SK, the file decisions that sent it back stay fixed.
+    if (sk.status !== "SUBMITTED") {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message:
-          "Review file hanya bisa dilakukan saat status SUBMITTED atau NEED_REVISION",
+        message: "Review berkas hanya bisa dilakukan saat pengajuan menunggu verifikasi",
       });
     }
 
@@ -948,6 +825,8 @@ exports.reviewSkFile = async (req, res, next) => {
   }
 };
 
+// Sekretariat's final decision: VERIFY or NEED_REVISION. There is no reject (decided 2026-11-12):
+// a rejected SK left the student with an ACCEPTED outline they could neither restart nor re-submit.
 exports.reviewSkPenelitian = async (req, res, next) => {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -955,29 +834,25 @@ exports.reviewSkPenelitian = async (req, res, next) => {
     if (!req.user.hasRole("SEKRETARIAT")) {
       return res.status(403).json({
         ok: false,
-        message: "Only sekretariat can review SK Penelitian",
+        message: "Hanya Sekretariat yang dapat memverifikasi SK Penulisan",
       });
     }
 
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
     const { action, catatanSekretariat } = req.body ?? {};
 
-    if (
-      action !== "VERIFY" &&
-      action !== "REJECT" &&
-      action !== "NEED_REVISION"
-    ) {
+    if (action !== "VERIFY" && action !== "NEED_REVISION") {
       return res.status(400).json({
         ok: false,
-        message: "action harus 'VERIFY', 'REJECT', atau 'NEED_REVISION'",
+        message: "action harus 'VERIFY' atau 'NEED_REVISION'",
       });
     }
     if (
-      (action === "REJECT" || action === "NEED_REVISION") &&
+      action === "NEED_REVISION" &&
       (!catatanSekretariat || !String(catatanSekretariat).trim())
     ) {
       return res
@@ -998,27 +873,48 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       txStarted = false;
       return res
         .status(404)
-        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
     }
     if (sk.status !== "SUBMITTED") {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: "SK Penelitian harus berstatus SUBMITTED untuk difinalisasi",
+        message: "SK Penulisan harus berstatus menunggu verifikasi untuk difinalisasi",
       });
     }
 
     const [skStudentRows] = await conn.query(
       `SELECT u.id FROM users u
-       JOIN mahasiswa m ON m.npm = u.npm
-       JOIN outline o ON o.npm = m.npm AND o.id = ?
+       JOIN outline o ON o.npm = u.npm AND o.id = ?
        LIMIT 1`,
       [outlineId],
     );
     const studentUserIdForSk = skStudentRows[0]?.id ?? null;
 
+    const [fileRows] = await conn.query(
+      `SELECT file_type, status FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ?`,
+      [sk.id],
+    );
+    const fileMap = Object.fromEntries(
+      fileRows.map((f) => [f.file_type, f.status]),
+    );
+
     if (action === "NEED_REVISION") {
+      // The student can only answer a revision by re-uploading a NEED_REUPLOAD file.
+      const toReupload = REVIEWABLE_FILE_TYPES.filter(
+        (t) => fileMap[t] === "NEED_REUPLOAD",
+      );
+      if (toReupload.length === 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Tandai minimal satu berkas sebagai Perlu Upload Ulang sebelum mengembalikan pengajuan",
+        });
+      }
+
       await conn.query(
         `UPDATE pengajuan_sk_penelitian
          SET status = 'NEED_REVISION',
@@ -1028,11 +924,12 @@ exports.reviewSkPenelitian = async (req, res, next) => {
         [String(catatanSekretariat).trim(), sk.id],
       );
       if (studentUserIdForSk) {
+        const skName = await getSkPenulisanNameForOutline(conn, outlineId);
         await insertNotification(
           conn,
           studentUserIdForSk,
           "SK_FILE_NEED_REUPLOAD",
-          "Sekretariat meminta Anda mengunggah ulang dokumen SK Penelitian",
+          `Sekretariat meminta Anda mengunggah ulang dokumen ${skName}`,
           "/student/sk-penelitian",
         );
       }
@@ -1040,43 +937,10 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       txStarted = false;
       return res.json({
         ok: true,
-        message: "SK Penelitian dikembalikan untuk revisi",
+        message: "SK Penulisan dikembalikan untuk revisi",
       });
     }
 
-    if (action === "REJECT") {
-      await conn.query(
-        `UPDATE pengajuan_sk_penelitian
-         SET status = 'REJECTED',
-             catatan_sekretariat = ?,
-             verified_by_user_id = ?,
-             verified_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [String(catatanSekretariat).trim(), req.user.id, sk.id],
-      );
-      if (studentUserIdForSk) {
-        await insertNotification(
-          conn,
-          studentUserIdForSk,
-          "SK_REJECTED",
-          "SK Penelitian Anda ditolak",
-          "/student/sk-penelitian",
-        );
-      }
-      await conn.commit();
-      txStarted = false;
-      return res.json({ ok: true, message: "SK Penelitian ditolak" });
-    }
-
-    // VERIFY — ensure all required files are verified before proceeding
-    const [fileRows] = await conn.query(
-      `SELECT file_type, status FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ?`,
-      [sk.id],
-    );
-    const fileMap = Object.fromEntries(
-      fileRows.map((f) => [f.file_type, f.status]),
-    );
     const unverified = REQUIRED_FILE_TYPES.filter(
       (t) => fileMap[t] !== "VERIFIED",
     );
@@ -1103,26 +967,28 @@ exports.reviewSkPenelitian = async (req, res, next) => {
         ? JENIS.SEMINAR_BISNIS_DIGITAL
         : JENIS.SKRIPSI;
 
-    // set COMPLETED then generate documents
+    const now = new Date();
     await conn.query(
       `UPDATE pengajuan_sk_penelitian
        SET status = 'COMPLETED',
            jenis_sk = ?,
            catatan_sekretariat = ?,
            verified_by_user_id = ?,
-           verified_at = CURRENT_TIMESTAMP,
-           completed_at = CURRENT_TIMESTAMP,
+           verified_at = ?,
+           completed_at = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
         jenisSk,
         catatanSekretariat ? String(catatanSekretariat).trim() : null,
         req.user.id,
+        now,
+        now,
         sk.id,
       ],
     );
 
-    await generateSkDocuments(conn, sk, outlineId, jenisSk);
+    await generateSkDocuments(conn, sk, outlineId, jenisSk, now);
 
     const [[skripsiSource]] = await conn.query(
       `SELECT o.npm, o.judul AS judul, o.program_studi_id,
@@ -1156,7 +1022,7 @@ exports.reviewSkPenelitian = async (req, res, next) => {
         conn,
         studentUserIdForSk,
         "SK_COMPLETED",
-        "SK Penelitian Anda telah diverifikasi",
+        `${skPenulisanName(jenisSk)} Anda telah diverifikasi`,
         "/student/sk-penelitian",
       );
     }
@@ -1166,7 +1032,7 @@ exports.reviewSkPenelitian = async (req, res, next) => {
 
     return res.json({
       ok: true,
-      message: "SK Penelitian diverifikasi dan diselesaikan",
+      message: `${skPenulisanName(jenisSk)} diverifikasi dan diselesaikan`,
     });
   } catch (err) {
     try {
@@ -1185,12 +1051,12 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
     if (req.user.userType !== "STUDENT") {
       return res.status(403).json({
         ok: false,
-        message: "Only students can resubmit SK Penelitian",
+        message: "Hanya mahasiswa yang dapat mengajukan ulang SK Penulisan",
       });
     }
 
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
@@ -1223,6 +1089,15 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
           .status(400)
           .json({ ok: false, message: `name wajib diisi untuk ${f.fileType}` });
       }
+      const uploadError = validateUpload(
+        f.content,
+        String(f.name).trim(),
+        UPLOAD_RULES.TRANSKRIP,
+        "File transkrip nilai",
+      );
+      if (uploadError) {
+        return res.status(400).json({ ok: false, message: uploadError });
+      }
     }
     const fileTypes = files.map((f) => f.fileType);
     if (new Set(fileTypes).size !== fileTypes.length) {
@@ -1231,12 +1106,23 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
         .json({ ok: false, message: "fileType tidak boleh duplikat" });
     }
 
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+
     await conn.beginTransaction();
     txStarted = true;
 
     const [skRows] = await conn.query(
-      `SELECT * FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1 FOR UPDATE`,
-      [outlineId],
+      `SELECT sk.*
+       FROM pengajuan_sk_penelitian sk
+       JOIN outline o ON o.id = sk.outline_id
+       WHERE sk.outline_id = ? AND o.npm = ?
+       LIMIT 1 FOR UPDATE`,
+      [outlineId, npm],
     );
     const sk = skRows[0] ?? null;
     if (!sk) {
@@ -1244,14 +1130,14 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
       txStarted = false;
       return res
         .status(404)
-        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
     }
     if (sk.status !== "NEED_REVISION") {
       await conn.rollback();
       txStarted = false;
       return res.status(409).json({
         ok: false,
-        message: "SK Penelitian harus berstatus NEED_REVISION untuk resubmit",
+        message: "SK Penulisan harus berstatus Perlu Revisi untuk diajukan ulang",
       });
     }
 
@@ -1278,12 +1164,13 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
     }
 
     for (const f of files) {
+      const fileName = String(f.name).trim();
       await upsertSkFile(
         conn,
         sk.id,
         f.fileType,
-        String(f.name).trim(),
-        f.mimeType ?? "application/octet-stream",
+        fileName,
+        mimeFromFileName(fileName),
         String(f.content),
         "UPLOADED",
       );
@@ -1294,37 +1181,21 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
       [sk.id],
     );
 
-    const [resubNpmRows] = await conn.query(
-      `SELECT o.npm FROM outline o
-       JOIN pengajuan_sk_penelitian psk ON psk.outline_id = o.id
-       WHERE psk.id = ? LIMIT 1`,
-      [sk.id],
+    const skName = await getSkPenulisanNameForOutline(conn, outlineId);
+    const [[studentRow]] = await conn.query(
+      `SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`,
+      [npm],
     );
-    const resubNpm = resubNpmRows[0]?.npm ?? null;
-    if (resubNpm) {
-      const [mRows] = await conn.query(
-        `SELECT nama FROM mahasiswa WHERE npm = ? LIMIT 1`,
-        [resubNpm],
-      );
-      const namaMahasiswa = mRows[0]?.nama ?? resubNpm;
-      const [sekRows] = await conn.query(
-        `SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id WHERE r.code = 'SEKRETARIAT'`,
-      );
-      for (const sek of sekRows) {
-        await insertNotification(
-          conn,
-          sek.id,
-          "SK_RESUBMITTED",
-          `Mahasiswa ${namaMahasiswa} mengajukan ulang SK Penelitian`,
-          "/sekretariat/sk-penelitian",
-        );
-      }
-    }
+    await notifySekretariat(
+      conn,
+      "SK_RESUBMITTED",
+      `Mahasiswa ${studentRow?.nama ?? npm} mengajukan ulang ${skName}`,
+    );
 
     await conn.commit();
     txStarted = false;
 
-    return res.json({ ok: true, message: "File berhasil diresubmit" });
+    return res.json({ ok: true, message: "File berhasil diajukan ulang" });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
@@ -1337,8 +1208,8 @@ exports.resubmitSkPenelitian = async (req, res, next) => {
 
 exports.getSkFile = async (req, res, next) => {
   try {
-    const outlineId = Number(req.params.outlineId);
-    if (!Number.isFinite(outlineId) || outlineId <= 0) {
+    const outlineId = parseOutlineId(req);
+    if (!outlineId) {
       return res.status(400).json({ ok: false, message: "Invalid outlineId" });
     }
 
@@ -1350,24 +1221,24 @@ exports.getSkFile = async (req, res, next) => {
       });
     }
 
-    const [skRows] = await db.query(
-      `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
-      [outlineId],
-    );
-    const sk = skRows[0] ?? null;
-    if (!sk) {
+    const access = await checkSkReadAccess(req, outlineId);
+    if (!access.found) {
       return res
         .status(404)
-        .json({ ok: false, message: "SK Penelitian tidak ditemukan" });
+        .json({ ok: false, message: "SK Penulisan tidak ditemukan" });
+    }
+    if (!access.allowed) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
     const [fileRows] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, file_content, source, created_at
-       FROM pengajuan_sk_penelitian_files
-       WHERE pengajuan_sk_penelitian_id = ? AND file_type = ?
-       ORDER BY created_at DESC
+      `SELECT f.id, f.file_type, f.file_name, f.mime_type, f.file_content, f.source, f.created_at
+       FROM pengajuan_sk_penelitian_files f
+       JOIN pengajuan_sk_penelitian sk ON sk.id = f.pengajuan_sk_penelitian_id
+       WHERE sk.outline_id = ? AND f.file_type = ?
+       ORDER BY f.created_at DESC
        LIMIT 1`,
-      [sk.id, fileType],
+      [outlineId, fileType],
     );
     const file = fileRows[0] ?? null;
     if (!file) {
@@ -1381,6 +1252,45 @@ exports.getSkFile = async (req, res, next) => {
     next(err);
   }
 };
+
+const LIST_SELECT = `
+  SELECT
+    sk.id,
+    sk.jenis_sk,
+    sk.outline_id,
+    sk.status,
+    sk.catatan_sekretariat,
+    sk.submitted_at,
+    sk.verified_at,
+    sk.completed_at,
+    sk.created_at,
+    o.npm,
+    m.nama AS nama_mahasiswa,
+    m.tahap_tugas_akhir,
+    o.judul AS judul_skripsi,
+    sk.submission_period_id,
+    o.program_studi_id,
+    ps.nama AS program_studi_nama,
+    EXISTS(
+      SELECT 1 FROM pengajuan_sk_penelitian_files f
+      WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
+    ) AS has_sk_penunjukan_pembimbing,
+    EXISTS(
+      SELECT 1 FROM pengajuan_sk_penelitian_files f
+      WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_KETERANGAN'
+    ) AS has_surat_keterangan,
+    EXISTS(
+      SELECT 1 FROM pengajuan_sk_penelitian_files f
+      WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENGANTAR_PENELITIAN'
+    ) AS has_surat_pengantar_penelitian,
+    EXISTS(
+      SELECT 1 FROM pengajuan_sk_penelitian_files f
+      WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
+    ) AS has_surat_penyelesaian_skripsi
+  FROM pengajuan_sk_penelitian sk
+  JOIN outline o ON o.id = sk.outline_id
+  LEFT JOIN mahasiswa m ON m.npm = o.npm
+  LEFT JOIN program_studi ps ON ps.id = o.program_studi_id`;
 
 exports.listSkForSekretariat = async (req, res, next) => {
   try {
@@ -1396,42 +1306,7 @@ exports.listSkForSekretariat = async (req, res, next) => {
       statusParam && VALID_SK_STATUSES.includes(statusParam);
 
     const [rows] = await db.query(
-      `SELECT
-         sk.id,
-         sk.jenis_sk,
-         sk.outline_id,
-         sk.status,
-         sk.catatan_sekretariat,
-         sk.submitted_at,
-         sk.verified_at,
-         sk.completed_at,
-         sk.created_at,
-         m.nama AS nama_mahasiswa,
-         o.judul AS judul_skripsi,
-         sk.submission_period_id,
-         o.program_studi_id,
-         ps.nama AS program_studi_nama,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
-         ) AS has_sk_penunjukan_pembimbing,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_KETERANGAN'
-         ) AS has_surat_keterangan,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENGANTAR_PENELITIAN'
-         ) AS has_surat_pengantar_penelitian,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
-         ) AS has_surat_penyelesaian_skripsi
-       FROM pengajuan_sk_penelitian sk
-       JOIN outline o ON o.id = sk.outline_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
-       LEFT JOIN mahasiswa m ON m.npm = o.npm
-       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
+      `${LIST_SELECT}
        ${filterByStatus ? "WHERE sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
       filterByStatus ? [statusParam] : [],
@@ -1469,42 +1344,7 @@ exports.listSkForKaprodi = async (req, res, next) => {
       statusParam && VALID_SK_STATUSES.includes(statusParam);
 
     const [rows] = await db.query(
-      `SELECT
-         sk.id,
-         sk.jenis_sk,
-         sk.outline_id,
-         sk.status,
-         sk.catatan_sekretariat,
-         sk.submitted_at,
-         sk.verified_at,
-         sk.completed_at,
-         sk.created_at,
-         m.nama AS nama_mahasiswa,
-         o.judul AS judul_skripsi,
-         sk.submission_period_id,
-         o.program_studi_id,
-         ps.nama AS program_studi_nama,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
-         ) AS has_sk_penunjukan_pembimbing,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_KETERANGAN'
-         ) AS has_surat_keterangan,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENGANTAR_PENELITIAN'
-         ) AS has_surat_pengantar_penelitian,
-         EXISTS(
-           SELECT 1 FROM pengajuan_sk_penelitian_files f
-           WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SURAT_PENYELESAIAN_SKRIPSI'
-         ) AS has_surat_penyelesaian_skripsi
-       FROM pengajuan_sk_penelitian sk
-       JOIN outline o ON o.id = sk.outline_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
-       LEFT JOIN mahasiswa m ON m.npm = o.npm
-       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
+      `${LIST_SELECT}
        WHERE o.program_studi_id IN (?)
        ${filterByStatus ? "AND sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
@@ -1517,6 +1357,8 @@ exports.listSkForKaprodi = async (req, res, next) => {
   }
 };
 
+// Every status by default (the Dekan dashboard counts total vs finished SKs); the Dokumen page
+// filters to COMPLETED itself.
 exports.listSkForDekan = async (req, res, next) => {
   try {
     if (!req.user.hasRole("DEKAN")) {
@@ -1525,20 +1367,20 @@ exports.listSkForDekan = async (req, res, next) => {
         .json({ ok: false, message: "Only dekan can access this endpoint" });
     }
 
-    const [[userRow]] = await db.query(
-      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
-      [req.user.id],
-    );
-    if (!userRow?.nidn) {
-      return res
-        .status(403)
-        .json({ ok: false, message: "Dekan NIDN tidak ditemukan" });
+    const fakultasIds = await getDekanFakultasIds(req.user.id);
+    if (fakultasIds.length === 0) {
+      return res.status(403).json({
+        ok: false,
+        message: "Anda tidak terdaftar sebagai Dekan fakultas mana pun",
+      });
     }
 
     const statusParam = req.query?.status;
     const filterByStatus =
       statusParam && VALID_SK_STATUSES.includes(statusParam);
 
+    // The skripsi of an SK is the one created from the same outline: a student who restarted after
+    // GAGAL has an older SK whose skripsi isn't their newest.
     const [rows] = await db.query(
       `SELECT
          sk.id,
@@ -1553,7 +1395,7 @@ exports.listSkForDekan = async (req, res, next) => {
          o.judul AS judul_skripsi,
          ps.nama AS program_studi_nama,
          o.program_studi_id,
-         (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1) AS skripsi_id,
+         (SELECT id FROM skripsi WHERE outline_id = sk.outline_id ORDER BY id DESC LIMIT 1) AS skripsi_id,
          EXISTS(
            SELECT 1 FROM pengajuan_sk_penelitian_files f
            WHERE f.pengajuan_sk_penelitian_id = sk.id AND f.file_type = 'SK_PENUNJUKAN_PEMBIMBING'
@@ -1561,23 +1403,18 @@ exports.listSkForDekan = async (req, res, next) => {
          EXISTS(
            SELECT 1 FROM revisi_pasca_sidang rps
            JOIN sidang sd ON sd.id = rps.sidang_id
+           JOIN skripsi s2 ON s2.id = sd.skripsi_id
            JOIN revisi_pasca_sidang_files rf ON rf.revisi_id = rps.id AND rf.file_type = 'HALAMAN_PENGESAHAN_DEKAN'
-           WHERE sd.jenis = 'SKRIPSI'
-             AND sd.skripsi_id = (SELECT id FROM skripsi WHERE npm = o.npm ORDER BY id DESC LIMIT 1)
+           WHERE sd.jenis = 'SKRIPSI' AND s2.outline_id = sk.outline_id
          ) AS has_halaman_pengesahan
        FROM pengajuan_sk_penelitian sk
        JOIN outline o ON o.id = sk.outline_id
-       LEFT JOIN kartu_konsultasi_outline k ON k.outline_id = sk.outline_id
        LEFT JOIN mahasiswa m ON m.npm = o.npm
-       LEFT JOIN program_studi ps ON ps.id = o.program_studi_id
-       WHERE o.program_studi_id IN (
-         SELECT id FROM program_studi WHERE fakultas_id = (
-           SELECT id FROM fakultas WHERE COALESCE(dekan_nidn, dekan_staff_usr_id) = ?
-         )
-       )
+       JOIN program_studi ps ON ps.id = o.program_studi_id
+       WHERE ps.fakultas_id IN (?)
        ${filterByStatus ? "AND sk.status = ?" : ""}
        ORDER BY sk.submitted_at DESC`,
-      filterByStatus ? [userRow.nidn, statusParam] : [userRow.nidn],
+      filterByStatus ? [fakultasIds, statusParam] : [fakultasIds],
     );
 
     // SK Skripsi issued through the Seminar Bisnis Digital bridge are also signed by the Dekan.
@@ -1610,10 +1447,8 @@ exports.listSkForDekan = async (req, res, next) => {
          JOIN mahasiswa m ON m.npm = s.npm
          JOIN program_studi ps ON ps.id = s.program_studi_id
          WHERE l.status = 'COMPLETED'
-           AND ps.fakultas_id = (
-             SELECT id FROM fakultas WHERE COALESCE(dekan_nidn, dekan_staff_usr_id) = ?
-           )`,
-        [userRow.nidn],
+           AND ps.fakultas_id IN (?)`,
+        [fakultasIds],
       );
       rows.push(...lanjutanRows);
       rows.sort(

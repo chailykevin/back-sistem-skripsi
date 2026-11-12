@@ -290,7 +290,7 @@ function resolveStudentPosition(npm, data, today) {
           holders: [unit("Sekretariat")],
         });
       }
-      if (sk.status === "DRAFT") return at("SK_PENELITIAN", "MAHASISWA", "Belum mengajukan SK Penelitian", sk.updated_at);
+      if (sk.status === "DRAFT") return at("SK_PENELITIAN", "MAHASISWA", "Belum mengajukan SK Penulisan", sk.updated_at);
       if (sk.status === "NEED_REVISION") return at("SK_PENELITIAN", "MAHASISWA", "Berkas perlu diunggah ulang", sk.updated_at);
       return null;
     }
@@ -301,7 +301,7 @@ function resolveStudentPosition(npm, data, today) {
         if (!data.skPeriodOpen) {
           return at("SK_PENELITIAN", "MAHASISWA", "Menunggu periode pengajuan SK dibuka", null);
         }
-        return at("SK_PENELITIAN", "MAHASISWA", "Belum mengajukan SK Penelitian", kartuOutline.completed_at);
+        return at("SK_PENELITIAN", "MAHASISWA", "Belum mengajukan SK Penulisan", kartuOutline.completed_at);
       }
       const stages = data.outlineStagesByKartu.get(kartuOutline.id) ?? [];
       const { activeStage, activeStatus, stageRow } = resolveActiveKonsultasiOutlineStage(stages, false);
@@ -676,7 +676,6 @@ async function getRecap(programStudiIds, term) {
     SUBMITTED: "other",
     VERIFIED: "done",
     COMPLETED: "done",
-    REJECTED: "rejected",
   };
   for (const r of skRows) add("SK_PENELITIAN", SK_BUCKET[r.status]);
 

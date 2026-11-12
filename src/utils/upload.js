@@ -5,6 +5,8 @@ const MB = 1024 * 1024;
 const UPLOAD_RULES = {
   DOCUMENT: { extensions: [".pdf", ".doc", ".docx"], maxBytes: 10 * MB, label: "PDF, DOC, atau DOCX" },
   SCAN: { extensions: [".pdf", ".jpg", ".jpeg", ".png"], maxBytes: 10 * MB, label: "PDF, JPG, atau PNG" },
+  // Transkrip nilai at Pengajuan Disposisi Pembimbing and its re-upload in SK Penulisan.
+  TRANSKRIP: { extensions: [".pdf", ".jpg", ".jpeg", ".png", ".xlsx"], maxBytes: 10 * MB, label: "PDF, JPG, PNG, atau XLSX" },
 };
 
 // Decoded size of a base64 payload (optionally a data URL) without decoding it.

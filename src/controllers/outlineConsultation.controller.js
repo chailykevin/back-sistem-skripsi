@@ -7,16 +7,13 @@ const {
   generateKartuKonsultasiOutlineFTI,
 } = require("../services/generateKartuKonsultasiOutlineFTI.js");
 const {
-  generateHalamanPersetujuanJudulDesainSkripsiFTI,
-} = require("../services/generateHalamanPersetujuanJudulDesainSkripsiFTI.js");
+  generateHalamanPersetujuanFile,
+  getSkPenulisanNameForOutline,
+} = require("../services/skPenulisan.service");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { getSkSubmissionPeriod } = require("../services/outlineSubmissionPeriod.service");
 const { getCurrentOutlineId } = require("../services/outline.service");
-const {
-  hasSignature,
-  assertSignatures,
-  getStaffSignature,
-} = require("../utils/signature");
+const { hasSignature, assertSignatures } = require("../utils/signature");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -373,7 +370,7 @@ async function generateAndStoreFinalKartuPdf(
   };
 }
 
-async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
+async function autoSubmitSkPenelitian(conn, { outlineId, kartuId }) {
 
   const [existingRows] = await conn.query(
     `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
@@ -424,125 +421,8 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     return { skippedReason: "missing_files", missingFiles };
   }
 
-  // Lecturer signatures are sourced from SIMIKO's m_dosen.dsnTtd.
-  // Blocking: HALAMAN_PERSETUJUAN is auto-verified and required for SK VERIFY,
-  // so a missing signature must abort the outline review rather than leave the SK stuck
-  let halamanFile = null;
-  const [[mahasiswaRow]] = await conn.query(
-    `SELECT u.signature_image FROM users u
-     JOIN outline o ON o.npm = u.npm
-     WHERE o.id = ? LIMIT 1`,
-    [kartu.outline_id],
-  );
-  const [[p2Row]] = await conn.query(
-    `SELECT dsnTtd AS signature_image
-     FROM widya_miko.m_dosen
-     WHERE dsnId = ?
-     LIMIT 1`,
-    [kartu.pembimbing2_nidn],
-  );
-  const [[p1Row]] = await conn.query(
-    `SELECT dsnTtd AS signature_image
-     FROM widya_miko.m_dosen
-     WHERE dsnId = ?
-     LIMIT 1`,
-    [kartu.pembimbing1_nidn],
-  );
-  const [[kaprodiStaffRow]] = await conn.query(
-    `SELECT kaprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
-    [kartu.program_studi_id],
-  );
-  const kaprodiRow = {
-    signature_image: await getStaffSignature(
-      conn,
-      kaprodiStaffRow?.kaprodi_staff_usr_id,
-    ),
-  };
-  const [[psRow]] = await conn.query(
-    `SELECT
-       ps.nama AS program_studi_nama,
-       COALESCE(staf.nama, d.nama) AS kaprodi_nama,
-       m.nama AS nama_mahasiswa,
-       o.judul AS judul_skripsi,
-       d1.nama AS pembimbing1_nama,
-       d2.nama AS pembimbing2_nama
-     FROM program_studi ps
-     LEFT JOIN staf ON staf.usr_id = ps.kaprodi_staff_usr_id
-     LEFT JOIN dosen d ON d.nidn = ps.kaprodi_nidn
-     JOIN outline o ON o.id = ?
-     JOIN mahasiswa m ON m.npm = o.npm
-     LEFT JOIN dosen d1 ON d1.nidn = ?
-     LEFT JOIN dosen d2 ON d2.nidn = ?
-     WHERE ps.id = ? LIMIT 1`,
-    [
-      kartu.outline_id,
-      kartu.pembimbing1_nidn,
-      kartu.pembimbing2_nidn,
-      kartu.program_studi_id,
-    ],
-  );
-
-  assertSignatures([
-    {
-      role: "Mahasiswa",
-      nama: psRow?.nama_mahasiswa,
-      signatureImage: mahasiswaRow?.signature_image,
-    },
-    {
-      role: "Pembimbing 2",
-      nama: psRow?.pembimbing2_nama,
-      signatureImage: p2Row?.signature_image,
-    },
-    {
-      role: "Pembimbing 1",
-      nama: psRow?.pembimbing1_nama,
-      signatureImage: p1Row?.signature_image,
-    },
-    {
-      role: "Kaprodi",
-      nama: psRow?.kaprodi_nama,
-      signatureImage: kaprodiRow?.signature_image,
-    },
-  ]);
-
-  const dataHalamanPersetujuanJudulDesainSkripsiFTI = {
-    mahasiswa: {
-      nama: psRow?.nama_mahasiswa ?? "",
-      npm: kartu.npm,
-      signatureBase64: mahasiswaRow?.signature_image ?? null,
-    },
-    pembimbing: {
-      pertama: {
-        nama: psRow?.pembimbing1_nama ?? "",
-        signatureBase64: p1Row?.signature_image ?? null,
-      },
-      kedua: {
-        nama: psRow?.pembimbing2_nama ?? "",
-        signatureBase64: p2Row?.signature_image ?? null,
-      },
-    },
-    ketuaProgramStudi: {
-      nama: psRow?.kaprodi_nama ?? "",
-      signatureBase64: kaprodiRow?.signature_image ?? null,
-    },
-    programStudi: psRow?.program_studi_nama ?? "",
-    judulSkripsi: psRow?.judul_skripsi ?? "",
-    tahun: String(new Date().getFullYear()),
-  };
-
-  const halamanBuffer = await generateHalamanPersetujuanJudulDesainSkripsiFTI(
-    dataHalamanPersetujuanJudulDesainSkripsiFTI,
-  );
-
-  halamanFile = {
-    mime: "application/pdf",
-    name: buildKartuFileName(
-      kartu.npm,
-      psRow?.nama_mahasiswa,
-      "Halaman Persetujuan Judul",
-    ),
-    content: Buffer.from(halamanBuffer).toString("base64"),
-  };
+  // Blocking: a missing signature aborts the outline review rather than leave the SK stuck.
+  const halamanFile = await generateHalamanPersetujuanFile(conn, outlineId);
 
   const [ins] = await conn.query(
     `INSERT INTO pengajuan_sk_penelitian (outline_id, submission_period_id, status, submitted_at)
@@ -582,8 +462,8 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, kartu }) {
     },
     {
       type: "HALAMAN_PERSETUJUAN",
-      name: halamanFile.name,
-      mime: halamanFile.mime,
+      name: halamanFile.fileName,
+      mime: halamanFile.mimeType,
       content: halamanFile.content,
       status: "VERIFIED",
     },
@@ -2335,7 +2215,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         autoSkResult = await autoSubmitSkPenelitian(conn, {
           outlineId,
           kartuId: stage.kartu_id,
-          kartu: kartuInfo,
         });
       }
     }
@@ -2405,12 +2284,15 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           "Outline Anda telah diterima oleh Pembimbing 1",
           "/student/outline-consultations",
         );
+        const skName = autoSkResult
+          ? await getSkPenulisanNameForOutline(conn, kartuInfo.outline_id)
+          : null;
         if (autoSkResult && autoSkResult.skippedReason === null) {
           await insertNotification(
             conn,
             studentUserId,
             "SK_PENELITIAN_AUTO_SUBMITTED",
-            "Pengajuan SK Penelitian Anda telah diajukan secara otomatis",
+            `Pengajuan ${skName} Anda telah diajukan secara otomatis`,
             "/student/sk-penelitian",
           );
           const [sekRows] = await conn.query(
@@ -2421,7 +2303,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
               conn,
               sek.id,
               "SK_SUBMITTED",
-              `Mahasiswa ${namaMahasiswaForNotif} mengajukan SK Penelitian`,
+              `Mahasiswa ${namaMahasiswaForNotif} mengajukan ${skName}`,
               "/sekretariat/sk-penelitian",
             );
           }
@@ -2430,7 +2312,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             conn,
             studentUserId,
             "SK_PENELITIAN_WAITING_PERIOD",
-            `${autoSkResult.message} Ajukan SK Anda dari halaman SK saat periode dibuka.`,
+            `${autoSkResult.message} Ajukan ${skName} Anda dari halaman SK saat periode dibuka.`,
             "/student/sk-penelitian",
           );
         } else if (autoSkResult?.skippedReason === "missing_files") {
@@ -2438,7 +2320,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             conn,
             studentUserId,
             "SK_PENELITIAN_AUTO_SUBMIT_FAILED",
-            "Pengajuan SK Penelitian belum dapat diajukan otomatis karena ada dokumen yang belum tersedia. Silakan ajukan SK dari halaman SK.",
+            `Pengajuan ${skName} belum dapat diajukan otomatis karena ada dokumen yang belum tersedia. Silakan ajukan dari halaman SK.`,
             "/student/sk-penelitian",
           );
         }

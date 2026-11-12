@@ -11,7 +11,6 @@ function renderTemplate(template, data) {
     "{{programStudi}}": data.mahasiswa.programStudi,
     "{{lokasi}}": data.lokasi,
     "{{judul}}": data.judul,
-    "{{tanggal}}": data.tanggal,
   };
   return Object.entries(values).reduce(
     (html, [placeholder, value]) =>
