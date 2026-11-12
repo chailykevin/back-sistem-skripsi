@@ -29,7 +29,7 @@ exports.getPendingActions = async (req, res, next) => {
       db.query(
         `SELECT COUNT(*) AS c
          FROM konsultasi_outline_stage s
-         WHERE s.pembimbing_nidn = ? AND s.current_status IN ('SUBMITTED', 'IN_REVIEW')`,
+         WHERE s.pembimbing_nidn = ? AND s.current_status = 'SUBMITTED'`,
         [nidn],
       ),
       db.query(
