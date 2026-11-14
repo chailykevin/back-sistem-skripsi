@@ -1,15 +1,37 @@
 "use strict";
 
 const db = require("../db");
-const path = require("path");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const {
   generateSuratKeteranganPenyerahanSkripsiFTI,
 } = require("../services/generateSuratKeteranganPenyerahanSkripsiFTI");
-const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-const { assertSignatures, getStaffSignature } = require("../utils/signature");
+const {
+  getStudentNpm,
+  getLecturerNidn,
+  getStaffUsrId,
+  getKaprodiProgramStudiIds,
+  getSekprodiProgramStudiIds,
+  getSekprodiUserIds,
+  isKaprodiOfProgramStudi,
+} = require("../utils/identity");
+const {
+  assertSignatures,
+  hasSignature,
+  getStaffSignature,
+  getDosenSignature,
+  getUserSignature,
+  getMahasiswaSignature,
+} = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
+const { mimeFromFileName } = require("../utils/mime");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
+
+const BERKAS_CHANGED_MESSAGE =
+  "Data berkas final berubah saat sedang diproses. Silakan muat ulang halaman dan kirim kembali.";
+const MAX_FILE_NAME_LENGTH = 255;
+const SURAT_FILE_NAME = "surat_pernyataan_penyerahan_skripsi.pdf";
+const INSTITUTION_ROLE_CODE = { PERPUSTAKAAN: "PERPUSTAKAAN_STAFF", LPPM: "LPPM" };
 
 function recipientLink(role, skripsiId) {
   switch (role) {
@@ -30,41 +52,86 @@ function recipientLink(role, skripsiId) {
   }
 }
 
-async function getSigByNpm(conn, npm) {
-  if (!npm) return null;
-  const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
-    [npm],
-  );
-  return row?.signature_image ?? null;
-}
-
-async function getSigByDosenUserId(conn, userId) {
-  if (!userId) return null;
-  const [[row]] = await conn.query(
-    `SELECT sd.dsnTtd AS signature_image
-     FROM users u
-     JOIN widya_miko.m_dosen sd ON sd.dsnId = u.nidn
-     WHERE u.id = ?
+// Row of the pengumpulan with everything the surat, the access checks and the recipients need.
+// Penguji come from the pengajuan_sidang_kaprodi of the latest SKRIPSI sidang (deterministic, also for no_hp).
+async function getPengumpulanContext(queryable, skripsiId) {
+  const [[ctx]] = await queryable.query(
+    `SELECT pbf.id, pbf.skripsi_id, pbf.status, pbf.is_completed, pbf.created_at, pbf.updated_at,
+            sk.npm, sk.judul AS judul_skripsi, sk.program_studi_id,
+            sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+            psk_k.penguji1_nidn, psk_k.penguji2_nidn, psk_k.no_hp,
+            m.nama AS nama_mahasiswa,
+            prog.nama AS program_studi_nama,
+            d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
+            dp1.nama AS penguji1_nama, dp2.nama AS penguji2_nama
+     FROM pengumpulan_berkas_final pbf
+     JOIN skripsi sk ON sk.id = pbf.skripsi_id
+     JOIN mahasiswa m ON m.npm = sk.npm
+     LEFT JOIN program_studi prog ON prog.id = sk.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+     LEFT JOIN sidang s ON s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
+     LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+     LEFT JOIN dosen dp1 ON dp1.nidn = psk_k.penguji1_nidn
+     LEFT JOIN dosen dp2 ON dp2.nidn = psk_k.penguji2_nidn
+     WHERE pbf.skripsi_id = ?
      LIMIT 1`,
-    [userId],
+    [skripsiId],
   );
-  return row?.signature_image ?? null;
+  return ctx ?? null;
 }
 
-async function getSigByRole(conn, role, userIdForRole) {
-  if (!userIdForRole) return null;
-  const [[row]] = await conn.query(
-    `SELECT signature_image FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [userIdForRole],
-  );
-  return row?.signature_image ?? null;
+function dosenNidnForRole(ctx, role) {
+  switch (role) {
+    case "PEMBIMBING_1":
+      return ctx.pembimbing1_nidn ?? null;
+    case "PEMBIMBING_2":
+      return ctx.pembimbing2_nidn ?? null;
+    case "PENGUJI_1":
+      return ctx.penguji1_nidn ?? null;
+    case "PENGUJI_2":
+      return ctx.penguji2_nidn ?? null;
+    default:
+      return null;
+  }
 }
 
-async function resolveUserId(conn, nidn) {
+function dosenNamaForRole(ctx, role) {
+  return (
+    {
+      PEMBIMBING_1: ctx.pembimbing1_nama,
+      PEMBIMBING_2: ctx.pembimbing2_nama,
+      PENGUJI_1: ctx.penguji1_nama,
+      PENGUJI_2: ctx.penguji2_nama,
+    }[role] ?? ""
+  );
+}
+
+async function getConfirmations(queryable, pengumpulanId, { forUpdate = false } = {}) {
+  const [rows] = await queryable.query(
+    `SELECT id, recipient_role, user_id, confirmed_at
+     FROM pengumpulan_berkas_final_confirmations
+     WHERE pengumpulan_id = ?
+     ORDER BY FIELD(recipient_role, 'PERPUSTAKAAN','LPPM','PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')${forUpdate ? " FOR UPDATE" : ""}`,
+    [pengumpulanId],
+  );
+  return rows;
+}
+
+// Identifies which confirmations (and by whom) a rendered surat was based on.
+function confirmationsFingerprint(rows, excludeRole = null) {
+  return rows
+    .filter((r) => r.recipient_role !== excludeRole && r.confirmed_at)
+    .map((r) => `${r.recipient_role}|${r.user_id ?? ""}|${new Date(r.confirmed_at).getTime()}`)
+    .sort()
+    .join(";");
+}
+
+// Dosen recipients are found by NIDN at send time; confirmations.user_id can be NULL.
+async function resolveDosenUserId(queryable, nidn) {
   if (!nidn) return null;
-  const [[row]] = await conn.query(
-    `SELECT id FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+  const [[row]] = await queryable.query(
+    `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
     [nidn],
   );
   return row?.id ?? null;
@@ -85,135 +152,197 @@ async function getUserIdByRole(conn, role) {
      INNER JOIN user_roles ur ON ur.user_id = u.id
      INNER JOIN roles r ON r.id = ur.role_id
      WHERE r.code = ? AND ur.is_active = 1 AND u.is_active = 1
+     ORDER BY u.id ASC
      LIMIT 1`,
     [role],
   );
   return row?.id ?? null;
 }
 
-async function generateSuratDoc(
-  conn,
-  pengumpulan,
-  sidangRow,
-  confirmations,
-  sekprodiSig,
-  namaSekprodi,
-  requireSekprodiSig = false,
-) {
-  const [mhsRow] = await conn.query(
-    `SELECT m.nama, m.npm, psk.no_hp
-     FROM mahasiswa m
-     LEFT JOIN pengajuan_sidang ps_ref ON ps_ref.skripsi_id = ? AND ps_ref.jenis = 'SKRIPSI' AND ps_ref.status = 'COMPLETED'
-     LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps_ref.id
-     WHERE m.npm = ?
-     LIMIT 1`,
-    [pengumpulan.skripsi_id, pengumpulan.npm],
+// Signature of the Perpustakaan/LPPM account: the one that confirmed, or (before that) any active
+// account holding the role.
+async function getInstitutionSignature(queryable, recipientRole, confirmation) {
+  if (confirmation?.confirmed_at && confirmation.user_id) {
+    return getUserSignature(queryable, confirmation.user_id);
+  }
+  const [rows] = await queryable.query(
+    `SELECT u.signature_image
+     FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id AND ur.is_active = 1
+     JOIN roles r ON r.id = ur.role_id AND r.code = ?
+     WHERE u.is_active = 1`,
+    [INSTITUTION_ROLE_CODE[recipientRole]],
   );
-  const mhs = mhsRow[0] ?? {};
+  return rows.find((r) => hasSignature(r.signature_image))?.signature_image ?? null;
+}
 
-  const [[psRow]] = await conn.query(
-    `SELECT ps.nama as prodi_nama
+async function getSekprodiOfProgramStudi(queryable, programStudiId) {
+  const [[row]] = await queryable.query(
+    `SELECT ps.sekprodi_staff_usr_id AS staff_usr_id, s.nama
      FROM program_studi ps
-     JOIN skripsi sk ON sk.program_studi_id = ps.id AND sk.id = ?
-     LIMIT 1`,
-    [pengumpulan.skripsi_id],
+     LEFT JOIN staf s ON s.usr_id = ps.sekprodi_staff_usr_id
+     WHERE ps.id = ? LIMIT 1`,
+    [programStudiId],
   );
+  return row ?? null;
+}
 
-  const [[skripsiRow]] = await conn.query(
-    `SELECT judul FROM skripsi WHERE id = ? LIMIT 1`,
-    [pengumpulan.skripsi_id],
+// A 409 (ambiguous SIMIKO name) means the signature cannot be determined: treat it as missing.
+async function getStaffSignatureOrNull(queryable, staffUsrId) {
+  try {
+    return await getStaffSignature(queryable, staffUsrId);
+  } catch (err) {
+    if (err.statusCode !== 409) throw err;
+    return null;
+  }
+}
+
+// Signatures the Surat Pernyataan Penyerahan will need that are missing now (no rendering, one round
+// of lookups). Empty once the process is COMPLETED.
+async function computeMissingSignatures(ctx, confirmations) {
+  if (ctx.is_completed) return [];
+  const confByRole = new Map(confirmations.map((c) => [c.recipient_role, c]));
+  const missing = [];
+  const check = (role, nama, kind, promise) =>
+    promise.then((sig) => {
+      if (!hasSignature(sig)) missing.push({ role, nama: nama ?? "", kind });
+    });
+
+  const lookups = [
+    check("Mahasiswa", ctx.nama_mahasiswa, "MAHASISWA", getMahasiswaSignature(db, ctx.npm)),
+    check("Perpustakaan", "", "PERPUSTAKAAN", getInstitutionSignature(db, "PERPUSTAKAAN", confByRole.get("PERPUSTAKAAN"))),
+    check("LPPM", "", "LPPM", getInstitutionSignature(db, "LPPM", confByRole.get("LPPM"))),
+  ];
+  for (const [role, label] of [
+    ["PEMBIMBING_1", "Pembimbing 1"],
+    ["PEMBIMBING_2", "Pembimbing 2"],
+    ["PENGUJI_1", "Penguji 1"],
+    ["PENGUJI_2", "Penguji 2"],
+  ]) {
+    lookups.push(check(label, dosenNamaForRole(ctx, role), "DOSEN", getDosenSignature(db, dosenNidnForRole(ctx, role))));
+  }
+  const sekprodi = await getSekprodiOfProgramStudi(db, ctx.program_studi_id);
+  lookups.push(
+    check(
+      "Sekretaris Prodi",
+      sekprodi?.nama,
+      "SEKPRODI",
+      sekprodi?.staff_usr_id ? getStaffSignatureOrNull(db, sekprodi.staff_usr_id) : Promise.resolve(null),
+    ),
   );
+  await Promise.all(lookups);
 
+  const order = ["Mahasiswa", "Perpustakaan", "LPPM", "Pembimbing 1", "Pembimbing 2", "Penguji 1", "Penguji 2", "Sekretaris Prodi"];
+  return missing.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
+}
+
+// confirmations: rows ({ recipient_role, user_id, confirmed_at }) the surat is rendered from.
+// sekprodi: { signatureImage, nama } to print and require the Sekprodi signature, or null.
+async function generateSuratDoc(queryable, ctx, confirmations, sekprodi = null) {
   const confMap = {};
-  for (const c of confirmations) {
-    confMap[c.recipient_role] = c;
-  }
+  for (const c of confirmations) confMap[c.recipient_role] = c;
 
-  const perpusSig = confMap["PERPUSTAKAAN"]?.user_id
-    ? await getSigByRole(conn, "PERPUSTAKAAN", confMap["PERPUSTAKAAN"].user_id)
-    : null;
-  const lppmSig = confMap["LPPM"]?.user_id
-    ? await getSigByRole(conn, "LPPM", confMap["LPPM"].user_id)
-    : null;
-
-  const [sigMhs, sigPb1, sigPb2, sigPg1, sigPg2] = await Promise.all([
-    getSigByNpm(conn, pengumpulan.npm),
-    getSigByDosenUserId(conn, confMap["PEMBIMBING_1"]?.user_id ?? null),
-    getSigByDosenUserId(conn, confMap["PEMBIMBING_2"]?.user_id ?? null),
-    getSigByDosenUserId(conn, confMap["PENGUJI_1"]?.user_id ?? null),
-    getSigByDosenUserId(conn, confMap["PENGUJI_2"]?.user_id ?? null),
-  ]);
-
-  async function getDosenNamaByUserId(userId) {
-    if (!userId) return "";
-    const [[row]] = await conn.query(
-      `SELECT d.nama FROM users u JOIN dosen d ON d.nidn = u.nidn WHERE u.id = ? LIMIT 1`,
-      [userId],
-    );
-    return row?.nama ?? "";
-  }
-  const [namaPb1, namaPb2, namaPg1, namaPg2] = await Promise.all([
-    getDosenNamaByUserId(confMap["PEMBIMBING_1"]?.user_id ?? null),
-    getDosenNamaByUserId(confMap["PEMBIMBING_2"]?.user_id ?? null),
-    getDosenNamaByUserId(confMap["PENGUJI_1"]?.user_id ?? null),
-    getDosenNamaByUserId(confMap["PENGUJI_2"]?.user_id ?? null),
+  const [sigMhs, sigPerpus, sigLppm, sigPb1, sigPb2, sigPg1, sigPg2] = await Promise.all([
+    getMahasiswaSignature(queryable, ctx.npm),
+    getInstitutionSignature(queryable, "PERPUSTAKAAN", confMap.PERPUSTAKAAN),
+    getInstitutionSignature(queryable, "LPPM", confMap.LPPM),
+    getDosenSignature(queryable, ctx.pembimbing1_nidn),
+    getDosenSignature(queryable, ctx.pembimbing2_nidn),
+    getDosenSignature(queryable, ctx.penguji1_nidn),
+    getDosenSignature(queryable, ctx.penguji2_nidn),
   ]);
 
   assertSignatures([
-    {
-      role: "Mahasiswa",
-      nama: mhs.nama ?? sidangRow?.nama_mahasiswa,
-      signatureImage: sigMhs,
-    },
-    { role: "Perpustakaan", signatureImage: perpusSig },
-    { role: "LPPM", signatureImage: lppmSig },
-    { role: "Pembimbing 1", nama: namaPb1, signatureImage: sigPb1 },
-    { role: "Pembimbing 2", nama: namaPb2, signatureImage: sigPb2 },
-    { role: "Penguji 1", nama: namaPg1, signatureImage: sigPg1 },
-    { role: "Penguji 2", nama: namaPg2, signatureImage: sigPg2 },
-    ...(requireSekprodiSig
-      ? [
-          {
-            role: "Sekretaris Prodi",
-            nama: namaSekprodi,
-            signatureImage: sekprodiSig,
-          },
-        ]
+    { role: "Mahasiswa", nama: ctx.nama_mahasiswa, signatureImage: sigMhs },
+    { role: "Perpustakaan", signatureImage: sigPerpus },
+    { role: "LPPM", signatureImage: sigLppm },
+    { role: "Pembimbing 1", nama: ctx.pembimbing1_nama, signatureImage: sigPb1 },
+    { role: "Pembimbing 2", nama: ctx.pembimbing2_nama, signatureImage: sigPb2 },
+    { role: "Penguji 1", nama: ctx.penguji1_nama, signatureImage: sigPg1 },
+    { role: "Penguji 2", nama: ctx.penguji2_nama, signatureImage: sigPg2 },
+    ...(sekprodi
+      ? [{ role: "Sekretaris Prodi", nama: sekprodi.nama, signatureImage: sekprodi.signatureImage }]
       : []),
   ]);
 
-  const tanggalDibuat = formatTanggal(new Date());
-
   const confirmationData = (role, signatureBase64) => ({
-    tanggal: confMap[role]?.confirmed_at
-      ? formatTanggal(confMap[role].confirmed_at)
-      : "",
+    tanggal: confMap[role]?.confirmed_at ? formatTanggal(confMap[role].confirmed_at) : "",
     signatureBase64,
   });
 
   return generateSuratKeteranganPenyerahanSkripsiFTI({
     mahasiswa: {
-      nama: mhs.nama ?? sidangRow?.nama_mahasiswa ?? "",
-      npm: pengumpulan.npm,
-      nomorHp: mhs.no_hp ?? "",
-      programStudi: psRow?.prodi_nama ?? sidangRow?.program_studi_nama ?? "",
-      judulSkripsi: skripsiRow?.judul ?? sidangRow?.judul_skripsi ?? "",
+      nama: ctx.nama_mahasiswa ?? "",
+      npm: ctx.npm,
+      nomorHp: ctx.no_hp ?? "",
+      programStudi: ctx.program_studi_nama ?? "",
+      judulSkripsi: ctx.judul_skripsi ?? "",
       signatureBase64: sigMhs,
     },
     penerimaan: {
-      perpustakaan: confirmationData("PERPUSTAKAAN", perpusSig),
-      lppm: confirmationData("LPPM", lppmSig),
+      perpustakaan: confirmationData("PERPUSTAKAAN", sigPerpus),
+      lppm: confirmationData("LPPM", sigLppm),
       pembimbingPertama: confirmationData("PEMBIMBING_1", sigPb1),
       pembimbingKedua: confirmationData("PEMBIMBING_2", sigPb2),
       pengujiUtama: confirmationData("PENGUJI_1", sigPg1),
       anggotaPenguji: confirmationData("PENGUJI_2", sigPg2),
     },
     sekretarisProgramStudi: {
-      nama: namaSekprodi ?? "",
-      signatureBase64: sekprodiSig ?? null,
+      nama: sekprodi?.nama ?? "",
+      signatureBase64: sekprodi?.signatureImage ?? null,
     },
-    tanggalDibuat,
+    tanggalDibuat: formatTanggal(new Date()),
   });
+}
+
+// DELETE + INSERT (UNIQUE on pengumpulan_id + file_type).
+async function storeSurat(conn, pengumpulanId, docBuffer) {
+  await conn.query(
+    `DELETE FROM pengumpulan_berkas_final_files
+     WHERE pengumpulan_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYERAHAN'`,
+    [pengumpulanId],
+  );
+  await conn.query(
+    `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, mime_type, file_content)
+     VALUES (?, 'SURAT_PERNYATAAN_PENYERAHAN', ?, 'application/pdf', ?)`,
+    [pengumpulanId, SURAT_FILE_NAME, Buffer.from(docBuffer).toString("base64")],
+  );
+}
+
+async function lockPengumpulan(conn, pengumpulanId) {
+  const [[row]] = await conn.query(
+    `SELECT id, status FROM pengumpulan_berkas_final WHERE id = ? FOR UPDATE`,
+    [pengumpulanId],
+  );
+  return row ?? null;
+}
+
+// Student, one of the four dosen, Perpustakaan, LPPM, Sekretariat, the Kaprodi of the prodi, or its Sekprodi.
+async function canAccessPengumpulan(req, ctx) {
+  const userId = Number(req.user.id);
+  const [npm, nidn] = await Promise.all([getStudentNpm(userId), getLecturerNidn(userId)]);
+  if (npm && npm === ctx.npm) return true;
+  if (
+    nidn &&
+    [ctx.pembimbing1_nidn, ctx.pembimbing2_nidn, ctx.penguji1_nidn, ctx.penguji2_nidn].includes(nidn)
+  ) {
+    return true;
+  }
+  if (
+    req.user.hasRole("PERPUSTAKAAN_STAFF") ||
+    req.user.hasRole("LPPM") ||
+    req.user.hasRole("SEKRETARIAT")
+  ) {
+    return true;
+  }
+  if (req.user.hasRole("KAPRODI") && (await isKaprodiOfProgramStudi(userId, ctx.program_studi_id))) {
+    return true;
+  }
+  if (req.user.hasRole("SEKPRODI")) {
+    const ids = await getSekprodiProgramStudiIds(await getStaffUsrId(userId));
+    if (ids.includes(Number(ctx.program_studi_id))) return true;
+  }
+  return false;
 }
 
 // POST /pengumpulan-berkas-final/:skripsiId/init
@@ -315,8 +444,9 @@ exports.initPengumpulan = async (req, res, next) => {
 };
 
 // POST /pengumpulan-berkas-final/:skripsiId/submit
+// A student submits once: only a DRAFT is accepted, under a row lock, so confirmations are never wiped.
 exports.submitPengumpulan = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     const skripsiId = Number(req.params.skripsiId);
@@ -326,103 +456,54 @@ exports.submitPengumpulan = async (req, res, next) => {
     const npm = await getStudentNpm(req.user.id);
     if (!npm) return res.status(403).json({ ok: false, message: "Forbidden" });
 
-    const { fileSkripsi, artikelPenelitian } = req.body;
-    if (
-      !fileSkripsi?.fileContent ||
-      !fileSkripsi?.fileName ||
-      !artikelPenelitian?.fileContent ||
-      !artikelPenelitian?.fileName
-    ) {
-      return res
-        .status(400)
-        .json({
+    const { fileSkripsi, artikelPenelitian } = req.body ?? {};
+    const uploads = [
+      { fileType: "FILE_SKRIPSI", label: "File Skripsi", noun: "file skripsi", file: fileSkripsi },
+      { fileType: "ARTIKEL_PENELITIAN", label: "Artikel Penelitian", noun: "artikel penelitian", file: artikelPenelitian },
+    ];
+    for (const { noun, label, file } of uploads) {
+      if (
+        typeof file?.fileContent !== "string" ||
+        typeof file?.fileName !== "string" ||
+        !file.fileContent ||
+        !file.fileName
+      ) {
+        return res.status(400).json({ ok: false, message: "fileSkripsi dan artikelPenelitian wajib diisi" });
+      }
+      if (file.fileName.length > MAX_FILE_NAME_LENGTH) {
+        return res.status(400).json({
           ok: false,
-          message: "fileSkripsi dan artikelPenelitian wajib diisi",
+          message: `Nama ${noun} maksimal ${MAX_FILE_NAME_LENGTH} karakter`,
         });
+      }
+      const uploadError = validateUpload(file.fileContent, file.fileName, UPLOAD_RULES.PDF, label);
+      if (uploadError) return res.status(400).json({ ok: false, message: uploadError });
     }
 
-    await conn.beginTransaction();
-    txStarted = true;
-
-    const [[pengumpulan]] = await conn.query(
-      `SELECT pbf.id, pbf.status, sk.npm,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM pengumpulan_berkas_final pbf
-       JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE pbf.skripsi_id = ? AND sk.npm = ?
-       LIMIT 1`,
-      [skripsiId, npm],
-    );
-    if (!pengumpulan) {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(404)
-        .json({ ok: false, message: "Pengumpulan berkas belum diinisiasi" });
+    const ctx = await getPengumpulanContext(db, skripsiId);
+    if (!ctx || ctx.npm !== npm) {
+      return res.status(404).json({ ok: false, message: "Pengumpulan berkas belum diinisiasi" });
     }
-    if (pengumpulan.status === "COMPLETED") {
-      await conn.rollback();
-      txStarted = false;
+    if (ctx.status !== "DRAFT") {
       return res
         .status(409)
-        .json({ ok: false, message: "Pengumpulan sudah selesai" });
+        .json({ ok: false, message: "Berkas final sudah dikirim dan tidak dapat diubah." });
+    }
+    if (!hasSignature(await getMahasiswaSignature(db, npm))) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Tanda tangan Anda belum tersimpan. Simpan tanda tangan di halaman profil (/profil) sebelum mengirim berkas final.",
+      });
     }
 
-    // Upsert FILE_SKRIPSI
-    await conn.query(
-      `DELETE FROM pengumpulan_berkas_final_files WHERE pengumpulan_id = ? AND file_type = 'FILE_SKRIPSI'`,
-      [pengumpulan.id],
+    const perpustakaanUserId = await getUserIdByRole(db, "PERPUSTAKAAN_STAFF");
+    const lppmUserId = await getUserIdByRole(db, "LPPM");
+    const [pb1UserId, pb2UserId, pg1UserId, pg2UserId] = await Promise.all(
+      ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"].map((role) =>
+        resolveDosenUserId(db, dosenNidnForRole(ctx, role)),
+      ),
     );
-    await conn.query(
-      `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, mime_type, file_content)
-       VALUES (?, 'FILE_SKRIPSI', ?, ?, ?)`,
-      [
-        pengumpulan.id,
-        fileSkripsi.fileName,
-        fileSkripsi.mimeType ?? null,
-        fileSkripsi.fileContent,
-      ],
-    );
-
-    // Upsert ARTIKEL_PENELITIAN
-    await conn.query(
-      `DELETE FROM pengumpulan_berkas_final_files WHERE pengumpulan_id = ? AND file_type = 'ARTIKEL_PENELITIAN'`,
-      [pengumpulan.id],
-    );
-    await conn.query(
-      `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, mime_type, file_content)
-       VALUES (?, 'ARTIKEL_PENELITIAN', ?, ?, ?)`,
-      [
-        pengumpulan.id,
-        artikelPenelitian.fileName,
-        artikelPenelitian.mimeType ?? null,
-        artikelPenelitian.fileContent,
-      ],
-    );
-
-    // Resolve user_ids for PERPUSTAKAAN_STAFF and LPPM
-    const perpustakaanUserId = await getUserIdByRole(
-      conn,
-      "PERPUSTAKAAN_STAFF",
-    );
-    const lppmUserId = await getUserIdByRole(conn, "LPPM");
-
-    // Recreate confirmation rows on every submit
-    await conn.query(
-      `DELETE FROM pengumpulan_berkas_final_confirmations WHERE pengumpulan_id = ?`,
-      [pengumpulan.id],
-    );
-
-    const [pb1UserId, pb2UserId, pg1UserId, pg2UserId] = await Promise.all([
-      resolveUserId(conn, pengumpulan.pembimbing1_nidn),
-      resolveUserId(conn, pengumpulan.pembimbing2_nidn),
-      resolveUserId(conn, pengumpulan.penguji1_nidn),
-      resolveUserId(conn, pengumpulan.penguji2_nidn),
-    ]);
     const confirmRows = [
       { role: "PERPUSTAKAAN", userId: perpustakaanUserId },
       { role: "LPPM", userId: lppmUserId },
@@ -432,21 +513,45 @@ exports.submitPengumpulan = async (req, res, next) => {
       { role: "PENGUJI_2", userId: pg2UserId },
     ];
 
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const locked = await lockPengumpulan(conn, ctx.id);
+    if (!locked || locked.status !== "DRAFT") {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(409)
+        .json({ ok: false, message: "Berkas final sudah dikirim dan tidak dapat diubah." });
+    }
+
+    for (const { fileType, file } of uploads) {
+      await conn.query(
+        `DELETE FROM pengumpulan_berkas_final_files WHERE pengumpulan_id = ? AND file_type = ?`,
+        [ctx.id, fileType],
+      );
+      await conn.query(
+        `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, mime_type, file_content)
+         VALUES (?, ?, ?, ?, ?)`,
+        [ctx.id, fileType, file.fileName, mimeFromFileName(file.fileName), file.fileContent],
+      );
+    }
+
+    await conn.query(
+      `DELETE FROM pengumpulan_berkas_final_confirmations WHERE pengumpulan_id = ?`,
+      [ctx.id],
+    );
     for (const row of confirmRows) {
       await conn.query(
         `INSERT INTO pengumpulan_berkas_final_confirmations (pengumpulan_id, recipient_role, user_id)
          VALUES (?, ?, ?)`,
-        [pengumpulan.id, row.role, row.userId ?? null],
+        [ctx.id, row.role, row.userId ?? null],
       );
     }
 
-    // Update status to SUBMITTED
-    await conn.query(
-      `UPDATE pengumpulan_berkas_final SET status = 'SUBMITTED' WHERE id = ?`,
-      [pengumpulan.id],
-    );
+    await conn.query(`UPDATE pengumpulan_berkas_final SET status = 'SUBMITTED' WHERE id = ?`, [ctx.id]);
 
-    // Notify all 6 recipients
     for (const row of confirmRows) {
       if (row.userId) {
         await insertNotification(
@@ -461,23 +566,23 @@ exports.submitPengumpulan = async (req, res, next) => {
 
     await conn.commit();
     txStarted = false;
-    return res.json({
-      ok: true,
-      data: { id: pengumpulan.id, status: "SUBMITTED" },
-    });
+    return res.json({ ok: true, data: { id: ctx.id, status: "SUBMITTED" } });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
 // POST /pengumpulan-berkas-final/:skripsiId/confirm
+// The 6th confirmation renders the surat before the transaction (no lock or pool connection held while
+// Chromium runs); the transaction then locks the pengumpulan row first, so confirmations are serialized
+// and the last confirmer always sees 6/6, and refuses with 409 if the rows the surat was rendered from changed.
 exports.confirmPengumpulan = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     const skripsiId = Number(req.params.skripsiId);
@@ -485,177 +590,101 @@ exports.confirmPengumpulan = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
     const userId = Number(req.user.id);
-    const userRoles = req.user.roles ?? [];
 
+    const ctx = await getPengumpulanContext(db, skripsiId);
+    if (!ctx) {
+      return res.status(404).json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+    }
+    if (ctx.status !== "SUBMITTED") {
+      return res.status(409).json({ ok: false, message: "Berkas belum disubmit oleh mahasiswa" });
+    }
+
+    let matchedRole = null;
+    if (req.user.hasRole("PERPUSTAKAAN_STAFF")) {
+      matchedRole = "PERPUSTAKAAN";
+    } else if (req.user.hasRole("LPPM")) {
+      matchedRole = "LPPM";
+    } else {
+      const nidn = await getLecturerNidn(userId);
+      if (nidn) {
+        matchedRole =
+          ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"].find(
+            (role) => dosenNidnForRole(ctx, role) === nidn,
+          ) ?? null;
+      }
+    }
+    if (!matchedRole) {
+      return res.status(403).json({ ok: false, message: "Anda tidak termasuk penerima berkas ini" });
+    }
+
+    const now = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const rows = await getConfirmations(db, ctx.id);
+    const ownRow = rows.find((r) => r.recipient_role === matchedRole);
+    if (!ownRow) {
+      return res.status(404).json({ ok: false, message: "Data konfirmasi tidak ditemukan" });
+    }
+    if (ownRow.confirmed_at) {
+      return res.status(409).json({ ok: false, message: "Anda sudah mengkonfirmasi sebelumnya" });
+    }
+
+    const renderedFingerprint = confirmationsFingerprint(rows, matchedRole);
+    const othersConfirmed = rows.filter((r) => r.recipient_role !== matchedRole && r.confirmed_at).length;
+    let docBuffer = null;
+    if (othersConfirmed === rows.length - 1) {
+      const withMine = rows.map((r) =>
+        r.recipient_role === matchedRole ? { ...r, user_id: userId, confirmed_at: now } : r,
+      );
+      docBuffer = await generateSuratDoc(db, ctx, withMine);
+    }
+
+    conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
-    const [[pengumpulan]] = await conn.query(
-      `SELECT pbf.id, pbf.status, pbf.skripsi_id, sk.npm,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-              sk.program_studi_id
-       FROM pengumpulan_berkas_final pbf
-       JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE pbf.skripsi_id = ?
-       LIMIT 1`,
-      [skripsiId],
-    );
-    if (!pengumpulan) {
+    const locked = await lockPengumpulan(conn, ctx.id);
+    const lockedRows = locked ? await getConfirmations(conn, ctx.id, { forUpdate: true }) : [];
+    const lockedOwn = lockedRows.find((r) => r.recipient_role === matchedRole);
+    const abort = async (status, message) => {
       await conn.rollback();
       txStarted = false;
-      return res
-        .status(404)
-        .json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+      return res.status(status).json({ ok: false, message });
+    };
+    if (!locked || locked.status !== "SUBMITTED" || !lockedOwn) {
+      return abort(409, BERKAS_CHANGED_MESSAGE);
     }
-    if (pengumpulan.status !== "SUBMITTED") {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(409)
-        .json({ ok: false, message: "Berkas belum disubmit oleh mahasiswa" });
+    if (lockedOwn.confirmed_at) {
+      return abort(409, "Anda sudah mengkonfirmasi sebelumnya");
     }
-
-    // Determine which confirmation row this user matches
-    let matchedRole = null;
-
-    if (userRoles.includes("PERPUSTAKAAN_STAFF")) {
-      matchedRole = "PERPUSTAKAAN";
-    } else if (userRoles.includes("LPPM")) {
-      matchedRole = "LPPM";
-    } else {
-      // Dosen: match by NIDN
-      const nidn = await getLecturerNidn(userId);
-      if (nidn) {
-        if (nidn === pengumpulan.pembimbing1_nidn) matchedRole = "PEMBIMBING_1";
-        else if (nidn === pengumpulan.pembimbing2_nidn)
-          matchedRole = "PEMBIMBING_2";
-        else if (nidn === pengumpulan.penguji1_nidn) matchedRole = "PENGUJI_1";
-        else if (nidn === pengumpulan.penguji2_nidn) matchedRole = "PENGUJI_2";
-      }
-    }
-
-    if (!matchedRole) {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Anda tidak termasuk penerima berkas ini",
-        });
-    }
-
-    const [[confRow]] = await conn.query(
-      `SELECT id, confirmed_at FROM pengumpulan_berkas_final_confirmations
-       WHERE pengumpulan_id = ? AND recipient_role = ?
-       LIMIT 1`,
-      [pengumpulan.id, matchedRole],
-    );
-    if (!confRow) {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(404)
-        .json({ ok: false, message: "Data konfirmasi tidak ditemukan" });
-    }
-    if (confRow.confirmed_at) {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(409)
-        .json({ ok: false, message: "Anda sudah mengkonfirmasi sebelumnya" });
+    const isLast =
+      lockedRows.filter((r) => r.recipient_role !== matchedRole && r.confirmed_at).length ===
+      lockedRows.length - 1;
+    if (isLast !== (docBuffer !== null) || confirmationsFingerprint(lockedRows, matchedRole) !== renderedFingerprint) {
+      return abort(409, BERKAS_CHANGED_MESSAGE);
     }
 
     await conn.query(
-      `UPDATE pengumpulan_berkas_final_confirmations
-       SET confirmed_at = NOW(), user_id = ?
-       WHERE id = ?`,
-      [userId, confRow.id],
+      `UPDATE pengumpulan_berkas_final_confirmations SET confirmed_at = ?, user_id = ? WHERE id = ?`,
+      [now, userId, lockedOwn.id],
     );
+    const total = lockedRows.length;
+    const confirmed = lockedRows.filter((r) => r.confirmed_at).length + 1;
 
-    // Check if all 6 have confirmed
-    const [[{ total, confirmed }]] = await conn.query(
-      `SELECT COUNT(*) as total, SUM(confirmed_at IS NOT NULL) as confirmed
-       FROM pengumpulan_berkas_final_confirmations
-       WHERE pengumpulan_id = ?`,
-      [pengumpulan.id],
-    );
+    if (isLast) {
+      await storeSurat(conn, ctx.id, docBuffer);
+      await conn.query(`UPDATE pengumpulan_berkas_final SET status = 'WAITING_SIGNATURE' WHERE id = ?`, [ctx.id]);
 
-    if (Number(confirmed) === Number(total)) {
-      // All confirmed — generate Surat Pernyataan Penyerahan
-      const allConfs = await conn.query(
-        `SELECT recipient_role, user_id, confirmed_at
-         FROM pengumpulan_berkas_final_confirmations
-         WHERE pengumpulan_id = ?`,
-        [pengumpulan.id],
-      );
-      const confirmations = allConfs[0];
-
-      const sidangRows = await conn.query(
-        `SELECT m.nama AS nama_mahasiswa
-         FROM sidang s
-         JOIN skripsi sk ON sk.id = s.skripsi_id
-         JOIN mahasiswa m ON m.npm = sk.npm
-         WHERE s.skripsi_id = ? AND s.jenis = 'SKRIPSI' ORDER BY s.id DESC LIMIT 1`,
-        [skripsiId],
-      );
-      const sidangRow = sidangRows[0][0] ?? null;
-
-      const pengumpulanFull = { ...pengumpulan };
-      const docBuffer = await generateSuratDoc(
-        conn,
-        pengumpulanFull,
-        sidangRow,
-        confirmations,
-        null,
-        "",
-      );
-
-      await conn.query(
-        `DELETE FROM pengumpulan_berkas_final_files
-         WHERE pengumpulan_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYERAHAN'`,
-        [pengumpulan.id],
-      );
-      await conn.query(
-        `INSERT INTO pengumpulan_berkas_final_files (pengumpulan_id, file_type, file_name, file_content)
-         VALUES (?, 'SURAT_PERNYATAAN_PENYERAHAN', 'surat_pernyataan_penyerahan_skripsi.pdf', ?)`,
-        [pengumpulan.id, Buffer.from(docBuffer).toString("base64")],
-      );
-
-      await conn.query(
-        `UPDATE pengumpulan_berkas_final SET status = 'WAITING_SIGNATURE' WHERE id = ?`,
-        [pengumpulan.id],
-      );
-
-      // Notify SEKPRODI of this prodi
-      if (pengumpulan.program_studi_id) {
-        const [[psRow]] = await conn.query(
-          `SELECT sekprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
-          [pengumpulan.program_studi_id],
-        );
-        if (psRow?.sekprodi_staff_usr_id) {
-          const sekprodiUserId = await resolveUserId(
+      if (ctx.program_studi_id) {
+        for (const sekprodiUserId of await getSekprodiUserIds(conn, ctx.program_studi_id)) {
+          await insertNotification(
             conn,
-            psRow.sekprodi_staff_usr_id,
+            sekprodiUserId,
+            "PENGUMPULAN_BERKAS_FINAL",
+            `Semua pihak telah mengkonfirmasi berkas final skripsi mahasiswa npm ${ctx.npm}. Silakan tanda tangani surat penyerahan.`,
+            recipientLink("SEKPRODI", skripsiId),
           );
-          if (sekprodiUserId) {
-            await insertNotification(
-              conn,
-              sekprodiUserId,
-              "PENGUMPULAN_BERKAS_FINAL",
-              `Semua pihak telah mengkonfirmasi berkas final skripsi mahasiswa npm ${pengumpulan.npm}. Silakan tanda tangani surat penyerahan.`,
-              recipientLink("SEKPRODI", skripsiId),
-            );
-          }
         }
       }
-
-      // Also notify student
-      const studentUserId = await getUserIdByNpm(conn, pengumpulan.npm);
+      const studentUserId = await getUserIdByNpm(conn, ctx.npm);
       if (studentUserId) {
         await insertNotification(
           conn,
@@ -666,8 +695,7 @@ exports.confirmPengumpulan = async (req, res, next) => {
         );
       }
     } else {
-      // Notify student about partial confirmation
-      const studentUserId = await getUserIdByNpm(conn, pengumpulan.npm);
+      const studentUserId = await getUserIdByNpm(conn, ctx.npm);
       if (studentUserId) {
         await insertNotification(
           conn,
@@ -681,157 +709,83 @@ exports.confirmPengumpulan = async (req, res, next) => {
 
     await conn.commit();
     txStarted = false;
-    return res.json({
-      ok: true,
-      data: { confirmed: Number(confirmed), total: Number(total) },
-    });
+    return res.json({ ok: true, data: { confirmed, total } });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
 // POST /pengumpulan-berkas-final/:skripsiId/sign
+// Checks, signatures and the render happen before the transaction; the transaction locks the row and
+// re-checks WAITING_SIGNATURE, so a double sign gets one success and one 409.
 exports.signPengumpulan = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
-    const userId = Number(req.user.id);
-
     if (!req.user.hasRole("SEKPRODI")) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) return res.status(403).json({ ok: false, message: "Forbidden" });
 
+    const ctx = await getPengumpulanContext(db, skripsiId);
+    if (!ctx) {
+      return res.status(404).json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+    }
+    if (ctx.status !== "WAITING_SIGNATURE") {
+      return res
+        .status(409)
+        .json({ ok: false, message: "Belum semua pihak mengkonfirmasi penerimaan" });
+    }
+
+    const sekprodiProgramStudiIds = await getSekprodiProgramStudiIds(staffUsrId);
+    if (!sekprodiProgramStudiIds.includes(Number(ctx.program_studi_id))) {
+      return res
+        .status(403)
+        .json({ ok: false, message: "Anda bukan Sekretaris Prodi dari program studi ini" });
+    }
+
+    const sekprodiSig = await getStaffSignature(db, staffUsrId);
+    const [[stafRow]] = await db.query(`SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`, [staffUsrId]);
+    const confirmations = await getConfirmations(db, ctx.id);
+    const docBuffer = await generateSuratDoc(db, ctx, confirmations, {
+      signatureImage: sekprodiSig,
+      nama: stafRow?.nama ?? "",
+    });
+
+    conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
-    const [[pengumpulan]] = await conn.query(
-      `SELECT pbf.id, pbf.status, pbf.skripsi_id, sk.npm,
-              sk.program_studi_id,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM pengumpulan_berkas_final pbf
-       JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE pbf.skripsi_id = ?
-       LIMIT 1`,
-      [skripsiId],
-    );
-    if (!pengumpulan) {
+    const locked = await lockPengumpulan(conn, ctx.id);
+    if (!locked || locked.status !== "WAITING_SIGNATURE") {
       await conn.rollback();
       txStarted = false;
-      return res
-        .status(404)
-        .json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
-    }
-    if (pengumpulan.status !== "WAITING_SIGNATURE") {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(409)
-        .json({
-          ok: false,
-          message: "Belum semua pihak mengkonfirmasi penerimaan",
-        });
+      return res.status(409).json({
+        ok: false,
+        message:
+          locked?.status === "COMPLETED"
+            ? "Surat penyerahan sudah ditandatangani."
+            : BERKAS_CHANGED_MESSAGE,
+      });
     }
 
-    // Verify sekprodi belongs to this prodi
-    const [[sekprodiUserRow]] = await conn.query(
-      `SELECT u.staff_usr_id FROM users u
-       INNER JOIN user_roles ur ON ur.user_id = u.id
-       INNER JOIN roles r ON r.id = ur.role_id
-       WHERE u.id = ? AND r.code = 'SEKPRODI' AND ur.is_active = 1
-       LIMIT 1`,
-      [userId],
-    );
-    if (!sekprodiUserRow?.staff_usr_id) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(403).json({ ok: false, message: "Forbidden" });
-    }
-
-    // Sekprodi is always a staff account; a prodi with no Sekprodi assigned must refuse, not skip the check.
-    const [[psRow]] = await conn.query(
-      `SELECT sekprodi_staff_usr_id FROM program_studi WHERE id = ? LIMIT 1`,
-      [pengumpulan.program_studi_id],
-    );
-    if (
-      !psRow?.sekprodi_staff_usr_id ||
-      psRow.sekprodi_staff_usr_id !== sekprodiUserRow.staff_usr_id
-    ) {
-      await conn.rollback();
-      txStarted = false;
-      return res
-        .status(403)
-        .json({
-          ok: false,
-          message: "Anda bukan Sekretaris Prodi dari program studi ini",
-        });
-    }
-
-    const sekprodiSig = await getStaffSignature(
-      conn,
-      sekprodiUserRow.staff_usr_id,
-    );
-    const [[stafRow]] = await conn.query(
-      `SELECT nama FROM staf WHERE usr_id = ? LIMIT 1`,
-      [sekprodiUserRow.staff_usr_id],
-    );
-    const namaSekprodi = stafRow?.nama ?? "";
-
-    // Regenerate document with sekprodi signature
-    const allConfs = await conn.query(
-      `SELECT recipient_role, user_id, confirmed_at
-       FROM pengumpulan_berkas_final_confirmations
-       WHERE pengumpulan_id = ?`,
-      [pengumpulan.id],
-    );
-    const confirmations = allConfs[0];
-
-    const sidangRows = await conn.query(
-      `SELECT m.nama AS nama_mahasiswa
-       FROM sidang s
-       JOIN skripsi sk ON sk.id = s.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       WHERE s.skripsi_id = ? AND s.jenis = 'SKRIPSI' ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId],
-    );
-    const sidangRow = sidangRows[0][0] ?? null;
-
-    const docBuffer = await generateSuratDoc(
-      conn,
-      pengumpulan,
-      sidangRow,
-      confirmations,
-      sekprodiSig,
-      namaSekprodi,
-      true,
-    );
-
-    await conn.query(
-      `UPDATE pengumpulan_berkas_final_files
-       SET file_content = ?, file_name = 'surat_pernyataan_penyerahan_skripsi.pdf'
-       WHERE pengumpulan_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYERAHAN'`,
-      [Buffer.from(docBuffer).toString("base64"), pengumpulan.id],
-    );
-
+    await storeSurat(conn, ctx.id, docBuffer);
     await conn.query(
       `UPDATE pengumpulan_berkas_final SET status = 'COMPLETED', is_completed = 1 WHERE id = ?`,
-      [pengumpulan.id],
+      [ctx.id],
     );
 
-    // Notify student
-    const studentUserId = await getUserIdByNpm(conn, pengumpulan.npm);
+    const studentUserId = await getUserIdByNpm(conn, ctx.npm);
     if (studentUserId) {
       await insertNotification(
         conn,
@@ -844,17 +798,14 @@ exports.signPengumpulan = async (req, res, next) => {
 
     await conn.commit();
     txStarted = false;
-    return res.json({
-      ok: true,
-      data: { status: "COMPLETED", is_completed: 1 },
-    });
+    return res.json({ ok: true, data: { status: "COMPLETED", is_completed: 1 } });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
@@ -865,76 +816,16 @@ exports.getPengumpulan = async (req, res, next) => {
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
-    const userId = Number(req.user.id);
-    const userRoles = req.user.roles ?? [];
 
-    const [[pengumpulan]] = await db.query(
-      `SELECT pbf.id, pbf.skripsi_id, pbf.status, pbf.is_completed,
-              pbf.created_at, pbf.updated_at, sk.npm,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              sk.judul AS judul_skripsi,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn,
-              sk.program_studi_id,
-              m.nama AS nama_mahasiswa,
-              prog.nama AS program_studi_nama,
-              d1.nama AS pembimbing1_nama,
-              d2.nama AS pembimbing2_nama,
-              dp1.nama AS penguji1_nama,
-              dp2.nama AS penguji2_nama
-       FROM pengumpulan_berkas_final pbf
-       JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN program_studi prog ON prog.id = sk.program_studi_id
-       LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       LEFT JOIN dosen dp1 ON dp1.nidn = psk_k.penguji1_nidn
-       LEFT JOIN dosen dp2 ON dp2.nidn = psk_k.penguji2_nidn
-       WHERE pbf.skripsi_id = ?
-       LIMIT 1`,
-      [skripsiId],
-    );
+    const pengumpulan = await getPengumpulanContext(db, skripsiId);
     if (!pengumpulan) {
-      return res
-        .status(404)
-        .json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
+      return res.status(404).json({ ok: false, message: "Pengumpulan berkas tidak ditemukan" });
     }
-
-    // Auth check
-    const npm = await getStudentNpm(userId);
-    const nidn = await getLecturerNidn(userId);
-    const isStudent = npm && npm === pengumpulan.npm;
-    const isDosen =
-      nidn &&
-      (nidn === pengumpulan.pembimbing1_nidn ||
-        nidn === pengumpulan.pembimbing2_nidn ||
-        nidn === pengumpulan.penguji1_nidn ||
-        nidn === pengumpulan.penguji2_nidn);
-    const isPerpustakaanOrLppm =
-      userRoles.includes("PERPUSTAKAAN_STAFF") || userRoles.includes("LPPM");
-    const isSekretariatProdi = userRoles.includes("SEKPRODI");
-    const isPrivileged =
-      userRoles.includes("SEKRETARIAT") || userRoles.includes("KAPRODI");
-
-    if (
-      !isStudent &&
-      !isDosen &&
-      !isPerpustakaanOrLppm &&
-      !isSekretariatProdi &&
-      !isPrivileged
-    ) {
+    if (!(await canAccessPengumpulan(req, pengumpulan))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    const [confirmations] = await db.query(
-      `SELECT id, recipient_role, user_id, confirmed_at
-       FROM pengumpulan_berkas_final_confirmations
-       WHERE pengumpulan_id = ?
-       ORDER BY FIELD(recipient_role, 'PERPUSTAKAAN','LPPM','PEMBIMBING_1','PEMBIMBING_2','PENGUJI_1','PENGUJI_2')`,
-      [pengumpulan.id],
-    );
+    const confirmations = await getConfirmations(db, pengumpulan.id);
 
     const [files] = await db.query(
       `SELECT id, file_type, file_name, mime_type, created_at
@@ -950,6 +841,8 @@ exports.getPengumpulan = async (req, res, next) => {
        LIMIT 1`,
       [pengumpulan.id],
     );
+
+    const missingSignatures = await computeMissingSignatures(pengumpulan, confirmations);
 
     return res.json({
       ok: true,
@@ -968,16 +861,11 @@ exports.getPengumpulan = async (req, res, next) => {
         isCompleted: !!pengumpulan.is_completed,
         createdAt: pengumpulan.created_at,
         updatedAt: pengumpulan.updated_at,
+        missingSignatures,
         confirmations: confirmations.map((c) => ({
           id: c.id,
           recipientRole: c.recipient_role,
-          nama:
-            {
-              PEMBIMBING_1: pengumpulan.pembimbing1_nama,
-              PEMBIMBING_2: pengumpulan.pembimbing2_nama,
-              PENGUJI_1: pengumpulan.penguji1_nama,
-              PENGUJI_2: pengumpulan.penguji2_nama,
-            }[c.recipient_role] ?? null,
+          nama: dosenNamaForRole(pengumpulan, c.recipient_role) || null,
           userId: c.user_id,
           confirmedAt: c.confirmed_at,
         })),
@@ -1010,45 +898,12 @@ exports.getFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
     const fileType = req.params.fileType?.toUpperCase();
-    const userId = Number(req.user.id);
-    const userRoles = req.user.roles ?? [];
 
-    const [[pengumpulan]] = await db.query(
-      `SELECT pbf.id, sk.npm,
-              sk.pembimbing1_nidn, sk.pembimbing2_nidn,
-              psk_k.penguji1_nidn, psk_k.penguji2_nidn
-       FROM pengumpulan_berkas_final pbf
-       JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       WHERE pbf.skripsi_id = ?
-       LIMIT 1`,
-      [skripsiId],
-    );
-    if (!pengumpulan)
-      return res.status(404).json({ ok: false, message: "Tidak ditemukan" });
-
-    const npm = await getStudentNpm(userId);
-    const nidn = await getLecturerNidn(userId);
-    const isStudent = npm && npm === pengumpulan.npm;
-    const isDosen =
-      nidn &&
-      (nidn === pengumpulan.pembimbing1_nidn ||
-        nidn === pengumpulan.pembimbing2_nidn ||
-        nidn === pengumpulan.penguji1_nidn ||
-        nidn === pengumpulan.penguji2_nidn);
-    const isAuthorized =
-      isStudent ||
-      isDosen ||
-      userRoles.includes("PERPUSTAKAAN_STAFF") ||
-      userRoles.includes("LPPM") ||
-      userRoles.includes("SEKPRODI") ||
-      userRoles.includes("SEKRETARIAT") ||
-      userRoles.includes("KAPRODI");
-
-    if (!isAuthorized)
+    const pengumpulan = await getPengumpulanContext(db, skripsiId);
+    if (!pengumpulan) return res.status(404).json({ ok: false, message: "Tidak ditemukan" });
+    if (!(await canAccessPengumpulan(req, pengumpulan))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
 
     const [[fileRow]] = await db.query(
       `SELECT file_content, file_name, mime_type
@@ -1057,16 +912,13 @@ exports.getFile = async (req, res, next) => {
        LIMIT 1`,
       [pengumpulan.id, fileType],
     );
-    if (!fileRow)
-      return res
-        .status(404)
-        .json({ ok: false, message: "File tidak ditemukan" });
+    if (!fileRow) return res.status(404).json({ ok: false, message: "File tidak ditemukan" });
 
     return res.json({
       ok: true,
       data: {
         fileName: fileRow.file_name,
-        mimeType: fileRow.mime_type,
+        mimeType: fileRow.mime_type ?? mimeFromFileName(fileRow.file_name),
         fileContent: fileRow.file_content,
       },
     });
@@ -1083,34 +935,35 @@ exports.listForLecturer = async (req, res, next) => {
 
     const statusFilter = req.query.status;
 
-    const callerUserId = await resolveUserId(db, nidn);
     const [rows] = await db.query(
-      `SELECT pbf.id, pbf.skripsi_id, sk.npm, pbf.status, pbf.is_completed,
-              pbf.created_at, pbf.updated_at,
-              m.nama as nama_mahasiswa,
-              sk.judul as judul_skripsi,
-              CASE
-                WHEN sk.pembimbing1_nidn = ? THEN 'PEMBIMBING_1'
-                WHEN sk.pembimbing2_nidn = ? THEN 'PEMBIMBING_2'
-                WHEN psk_k.penguji1_nidn = ? THEN 'PENGUJI_1'
-                WHEN psk_k.penguji2_nidn = ? THEN 'PENGUJI_2'
-              END as caller_role,
-              conf.confirmed_at as caller_confirmed_at
-       FROM pengumpulan_berkas_final pbf
-       JOIN skripsi sk ON sk.id = pbf.skripsi_id
-       INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
-       LEFT JOIN pengajuan_sidang_kaprodi psk_k
-              ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-       LEFT JOIN mahasiswa m ON m.npm = sk.npm
+      `SELECT t.*, conf.confirmed_at AS caller_confirmed_at
+       FROM (
+         SELECT pbf.id, pbf.skripsi_id, sk.npm, pbf.status, pbf.is_completed,
+                pbf.created_at, pbf.updated_at,
+                m.nama AS nama_mahasiswa,
+                sk.judul AS judul_skripsi,
+                CASE
+                  WHEN sk.pembimbing1_nidn = ? THEN 'PEMBIMBING_1'
+                  WHEN sk.pembimbing2_nidn = ? THEN 'PEMBIMBING_2'
+                  WHEN psk_k.penguji1_nidn = ? THEN 'PENGUJI_1'
+                  WHEN psk_k.penguji2_nidn = ? THEN 'PENGUJI_2'
+                END AS caller_role
+         FROM pengumpulan_berkas_final pbf
+         JOIN skripsi sk ON sk.id = pbf.skripsi_id
+         INNER JOIN sidang s ON s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
+         LEFT JOIN pengajuan_sidang_kaprodi psk_k
+                ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+         LEFT JOIN mahasiswa m ON m.npm = sk.npm
+         WHERE pbf.status != 'DRAFT'
+           AND (sk.pembimbing1_nidn = ?
+             OR sk.pembimbing2_nidn = ?
+             OR psk_k.penguji1_nidn = ?
+             OR psk_k.penguji2_nidn = ?)
+       ) t
        LEFT JOIN pengumpulan_berkas_final_confirmations conf
-         ON conf.pengumpulan_id = pbf.id
-         AND conf.user_id = ?
-       WHERE sk.pembimbing1_nidn = ?
-          OR sk.pembimbing2_nidn = ?
-          OR psk_k.penguji1_nidn = ?
-          OR psk_k.penguji2_nidn = ?
-       ORDER BY pbf.created_at DESC`,
-      [nidn, nidn, nidn, nidn, callerUserId ?? null, nidn, nidn, nidn, nidn],
+         ON conf.pengumpulan_id = t.id AND conf.recipient_role = t.caller_role
+       ORDER BY t.created_at DESC`,
+      [nidn, nidn, nidn, nidn, nidn, nidn, nidn, nidn],
     );
 
     const filtered = statusFilter
@@ -1144,21 +997,12 @@ exports.listForSekretariatProdi = async (req, res, next) => {
     if (!req.user.hasRole("SEKPRODI")) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
-    const userId = Number(req.user.id);
-
-    const [[sekprodiUserRow]] = await db.query(
-    `SELECT COALESCE(u.nidn, u.staff_usr_id) AS nidn FROM users u WHERE u.id = ? AND u.is_active = 1 LIMIT 1`,
-      [userId],
-    );
-    if (!sekprodiUserRow?.nidn) {
+    const staffUsrId = await getStaffUsrId(req.user.id);
+    if (!staffUsrId) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
-
-    const [[psRow]] = await db.query(
-      `SELECT id FROM program_studi WHERE COALESCE(sekprodi_nidn, sekprodi_staff_usr_id) = ? LIMIT 1`,
-      [sekprodiUserRow.nidn],
-    );
-    if (!psRow) {
+    const programStudiIds = await getSekprodiProgramStudiIds(staffUsrId);
+    if (programStudiIds.length === 0) {
       return res.json({ ok: true, data: [] });
     }
 
@@ -1173,9 +1017,9 @@ exports.listForSekretariatProdi = async (req, res, next) => {
        JOIN skripsi sk ON sk.id = pbf.skripsi_id
        INNER JOIN sidang s ON s.skripsi_id = pbf.skripsi_id AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
        LEFT JOIN mahasiswa m ON m.npm = sk.npm
-       WHERE sk.program_studi_id = ?
+       WHERE sk.program_studi_id IN (?)
        ORDER BY pbf.created_at DESC`,
-      [psRow.id],
+      [programStudiIds],
     );
 
     const statusFilter = req.query.status;

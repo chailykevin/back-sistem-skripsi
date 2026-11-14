@@ -1,5 +1,5 @@
 const db = require("../db");
-const { getStaffSignature } = require("../utils/signature");
+const { getStaffSignature, hasSignature: isValidSignature } = require("../utils/signature");
 
 const SIMIKO_STAFF_SIGNATURE_ROLES = new Set([
   "KAPRODI",
@@ -37,7 +37,7 @@ async function getSignatureProfile(userId, roles = []) {
   if (!usesStaffSimikoSource && !usesLecturerSimikoSource) {
     const signatureImage = user.signature_image ?? null;
     return {
-      hasSignature: signatureImage !== null,
+      hasSignature: isValidSignature(signatureImage),
       signatureImage,
       source: "LOCAL",
       canManage: true,
@@ -72,7 +72,7 @@ async function getSignatureProfile(userId, roles = []) {
       };
     }
     return {
-      hasSignature: signatureImage !== null,
+      hasSignature: isValidSignature(signatureImage),
       signatureImage,
       source: "SIMIKO",
       canManage: false,
@@ -90,7 +90,7 @@ async function getSignatureProfile(userId, roles = []) {
     );
     const signatureImage = dosen?.dsnTtd ?? null;
     return {
-      hasSignature: signatureImage !== null,
+      hasSignature: isValidSignature(signatureImage),
       signatureImage,
       source: "SIMIKO",
       canManage: false,

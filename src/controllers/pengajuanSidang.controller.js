@@ -49,10 +49,46 @@ const {
   getStudentNpm,
   getStaffUsrId,
   getKaprodiProgramStudiIds,
+  getKaprodiUserIds,
   isKaprodiOfProgramStudi,
 } = require("../utils/identity");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
-const { BULAN_ROMAWI, formatTanggal } = require("../utils/dates");
+const { BULAN_ROMAWI, formatTanggal, toIsoDate } = require("../utils/dates");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
+const { mimeFromFileName } = require("../utils/mime");
+
+// "Seminar Proposal" or "Sidang Skripsi", for messages that name the pengajuan's kind.
+function kegiatanLabel(jenis) {
+  return jenis === JENIS.SEMINAR_BISNIS_DIGITAL ? "Seminar Proposal" : "Sidang Skripsi";
+}
+
+async function getStudentUserId(queryable, skripsiId) {
+  const [[row]] = await queryable.query(
+    `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
+     WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+    [skripsiId],
+  );
+  return row?.id ?? null;
+}
+
+async function getSekretariatUserIds(queryable) {
+  const [rows] = await queryable.query(
+    `SELECT DISTINCT u.id FROM users u
+     JOIN user_roles ur ON ur.user_id = u.id
+     JOIN roles r ON r.id = ur.role_id
+     WHERE r.code = 'SEKRETARIAT' AND u.is_active = 1`,
+  );
+  return rows.map((r) => r.id);
+}
+
+const TANGGAL_RE = /^\d{4}-\d{2}-\d{2}$/;
+const WAKTU_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
+// A sidang date can't be scheduled before today (server local date).
+function isPastTanggal(value) {
+  const iso = typeof value === "string" && TANGGAL_RE.test(value) ? value : toIsoDate(value);
+  return iso < toIsoDate();
+}
 
 function validateIpk(ipk) {
   if (ipk === null || ipk === undefined || ipk === "") return null;
@@ -245,7 +281,6 @@ const VALID_KAPRODI_STATUSES = [
   "SUBMITTED",
   "NEED_REVISION",
   "VALID",
-  "REJECTED",
   "DISPOSISI_SENT",
   "COMPLETED",
 ];
@@ -294,7 +329,37 @@ const OPTIONAL_FILE_TYPES = [
   "FOTOCOPY_KONVERSI",
 ];
 
-// Required only when pengajuan_disposisi_pembimbing.perlu_surat_pengantar = 1
+// Server copy of the per-file limits on the student page (SidangSkripsiStudent.tsx); anything not
+// listed is a PDF/DOC/DOCX document of at most 10 MB.
+const UPLOAD_RULE_BY_FILE_TYPE = {
+  BERKAS_SKRIPSI: UPLOAD_RULES.SKRIPSI_CHAPTER,
+  JURNAL: UPLOAD_RULES.SKRIPSI_CHAPTER,
+  PAS_FOTO: UPLOAD_RULES.PHOTO,
+  REKAP_NILAI: UPLOAD_RULES.TRANSKRIP,
+  KTM: UPLOAD_RULES.SCAN,
+  BUKTI_PEMBAYARAN: UPLOAD_RULES.SCAN,
+  FOTOCOPY_KONVERSI: UPLOAD_RULES.SCAN,
+  BUKTI_HADIR_SIDANG: UPLOAD_RULES.SCAN,
+  SERTIFIKAT_POINT: UPLOAD_RULES.SCAN,
+};
+
+const FILE_LABELS = {
+  BERKAS_SKRIPSI: "Berkas Skripsi",
+  SURAT_SURVEI: "Surat Survei",
+  SURAT_KETERANGAN: "Surat Keterangan",
+  JURNAL: "Artikel Jurnal",
+  SURAT_PERNYATAAN_TIDAK_PLAGIAT: "Surat Pernyataan Tidak Plagiat",
+  PAS_FOTO: "Pas Foto",
+  KTM: "KTM",
+  BUKTI_PEMBAYARAN: "Bukti Pembayaran",
+  LEMBAR_KONSULTASI_JURNAL: "Lembar Konsultasi Jurnal",
+  REKAP_NILAI: "Rekap Nilai",
+  FOTOCOPY_KONVERSI: "Fotocopy Konversi Nilai",
+  BUKTI_HADIR_SIDANG: "Bukti Hadir Sidang",
+  KARTU_KONSULTASI_PA: "Kartu Konsultasi PA",
+  KARTU_PRAKTIKUM: "Kartu Praktikum",
+  SERTIFIKAT_POINT: "Sertifikat Point",
+};
 
 const REQUIRED_FILE_TYPES = ALL_FILE_TYPES.filter(
   (t) => !OPTIONAL_FILE_TYPES.includes(t),
@@ -337,7 +402,6 @@ const VALID_SIDANG_STATUSES = [
   "WAITING_FOR_DISPOSISI",
   "WAITING_FOR_SURAT",
   "COMPLETED",
-  "REJECTED",
 ];
 const VALID_FILE_STATUSES = ["SUBMITTED", "NEED_REUPLOAD", "VERIFIED"];
 
@@ -349,11 +413,61 @@ async function getActiveSidang(conn, skripsiId) {
   );
 }
 
+// DELETE + INSERT of one generated document (UNIQUE on pengajuan_sidang_id + file_type).
+async function upsertGeneratedFile(conn, pengajuanSidangId, { fileType, fileName, base64 }) {
+  await conn.query(
+    `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = ?`,
+    [pengajuanSidangId, fileType],
+  );
+  await conn.query(
+    `INSERT INTO pengajuan_sidang_files
+       (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
+     VALUES (?, ?, ?, 'application/pdf', ?, 'SYSTEM', 'VERIFIED')`,
+    [pengajuanSidangId, fileType, fileName, base64],
+  );
+}
+
+// Documents are rendered before the transaction that stores them, so no row lock or pool connection
+// is held while Chromium runs. The transaction then re-reads the row under a lock and refuses (409)
+// if any of the fields the documents print changed in between.
+function rowFingerprint(row, fields) {
+  return JSON.stringify(
+    fields.map((k) => {
+      const v = row?.[k] ?? null;
+      return v instanceof Date ? v.getTime() : v === null ? null : String(v);
+    }),
+  );
+}
+
+const KAPRODI_FORM_FIELDS = [
+  "status",
+  "tempat_lahir",
+  "tgl_lahir",
+  "alamat",
+  "no_hp",
+  "no_wa",
+  "status_pernikahan",
+  "ipk",
+  "semua_mk_lulus",
+  "penguji1_nidn",
+  "penguji2_nidn",
+];
+const DISPOSISI_FIELDS = [
+  "status",
+  "tanggal_sidang",
+  "waktu_sidang",
+  "tempat_sidang",
+  "penguji1_nidn",
+  "penguji2_nidn",
+];
+const CHANGED_WHILE_PROCESSING_MESSAGE =
+  "Data pengajuan berubah saat sedang diproses. Silakan muat ulang halaman dan kirim kembali.";
+
 // The Surat Permohonan Seminar: generated at Kaprodi submit with the disposisi half blank, and
 // regenerated at disposisi with it filled in and signed by Kaprodi. Kept in the slot of the
 // Skripsi's Lembar Permohonan Ujian.
-async function storePermohonanSeminar(conn, skripsiId, pengajuanSidangId, kaprodi, { disposisi = false } = {}) {
-  const [[row]] = await conn.query(
+async function buildPermohonanSeminar(queryable, skripsiId, kaprodi, { disposisi = false } = {}) {
+  const [[row]] = await queryable.query(
     `SELECT s.npm, s.judul, m.nama AS nama_mahasiswa, ps.nama AS prodi_nama,
             ps.kaprodi_staff_usr_id, staf.nama AS nama_kaprodi,
             u.signature_image AS mahasiswa_sig, dp.nama AS penguji_nama
@@ -367,7 +481,7 @@ async function storePermohonanSeminar(conn, skripsiId, pengajuanSidangId, kaprod
     [kaprodi.penguji1_nidn ?? null, skripsiId],
   );
   const kaprodiSig = disposisi
-    ? await getStaffSignature(conn, row.kaprodi_staff_usr_id)
+    ? await getStaffSignature(queryable, row.kaprodi_staff_usr_id)
     : null;
   assertSignatures([
     { role: "Mahasiswa", nama: row.nama_mahasiswa, signatureImage: row.mahasiswa_sig },
@@ -403,20 +517,11 @@ async function storePermohonanSeminar(conn, skripsiId, pengajuanSidangId, kaprod
     },
   });
 
-  await conn.query(
-    `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_PERMOHONAN_UJIAN'`,
-    [pengajuanSidangId],
-  );
-  await conn.query(
-    `INSERT INTO pengajuan_sidang_files
-       (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-     VALUES (?, 'LEMBAR_PERMOHONAN_UJIAN', ?, 'application/pdf', ?, 'SYSTEM', 'VERIFIED')`,
-    [
-      pengajuanSidangId,
-      `Surat_Permohonan_Seminar_${row.npm}.pdf`,
-      Buffer.from(buffer).toString("base64"),
-    ],
-  );
+  return {
+    fileType: "LEMBAR_PERMOHONAN_UJIAN",
+    fileName: `Surat_Permohonan_Seminar_${row.npm}.pdf`,
+    base64: Buffer.from(buffer).toString("base64"),
+  };
 }
 
 // Read endpoints only: ?jenis= shows a finished phase (the Seminar pengajuan after the switch to Skripsi).
@@ -569,7 +674,7 @@ exports.initPengajuanSidang = async (req, res, next) => {
     // so they must also prevent creating a new row.
     const [[activeRow]] = await conn.query(
       `SELECT id, status, submitted_at FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND jenis = ? AND status NOT IN ('COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND jenis = ? AND status <> 'COMPLETED'
        ORDER BY
          CASE WHEN status = 'DRAFT' AND submitted_at IS NULL THEN 0 ELSE 1 END ASC,
          created_at DESC
@@ -706,23 +811,33 @@ exports.getPengajuanSidang = async (req, res, next) => {
         .json({ ok: false, message: "Pengajuan Sidang tidak ditemukan" });
     }
 
-    const [[mahasiswaInfo]] = await db.query(
-      `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks, s.program_studi_id,
-              ps.nama AS program_studi_nama, s.perlu_surat_pengantar
-       FROM skripsi s
-       JOIN mahasiswa m ON m.npm = s.npm
-       JOIN program_studi ps ON ps.id = s.program_studi_id
-       WHERE s.id = ? LIMIT 1`,
-      [skripsiId],
-    );
-
-    const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
-       FROM pengajuan_sidang_files
-       WHERE pengajuan_sidang_id = ?
-       ORDER BY file_type ASC`,
-      [sidang.id],
-    );
+    const [
+      [[mahasiswaInfo]],
+      [files],
+      currentJenis,
+      pengujiRule,
+      skripsiRegistrationBlock,
+    ] = await Promise.all([
+      db.query(
+        `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks, s.program_studi_id,
+                ps.nama AS program_studi_nama, s.perlu_surat_pengantar
+         FROM skripsi s
+         JOIN mahasiswa m ON m.npm = s.npm
+         JOIN program_studi ps ON ps.id = s.program_studi_id
+         WHERE s.id = ? LIMIT 1`,
+        [skripsiId],
+      ),
+      db.query(
+        `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
+         FROM pengajuan_sidang_files
+         WHERE pengajuan_sidang_id = ?
+         ORDER BY file_type ASC`,
+        [sidang.id],
+      ),
+      resolveJenis(db, skripsiId),
+      getPengujiRule(db, skripsiId, sidang.jenis),
+      getSkripsiRegistrationBlock(db, skripsiId, sidang.jenis),
+    ]);
 
     return res.json({
       ok: true,
@@ -730,13 +845,9 @@ exports.getPengajuanSidang = async (req, res, next) => {
         sidang,
         mahasiswa: mahasiswaInfo ?? null,
         files,
-        currentJenis: await resolveJenis(db, skripsiId),
-        pengujiRule: await getPengujiRule(db, skripsiId, sidang.jenis),
-        skripsiRegistrationBlock: await getSkripsiRegistrationBlock(
-          db,
-          skripsiId,
-          sidang.jenis,
-        ),
+        currentJenis,
+        pengujiRule,
+        skripsiRegistrationBlock,
       },
     });
   } catch (err) {
@@ -789,6 +900,15 @@ exports.uploadFiles = async (req, res, next) => {
           message: `fileName wajib diisi untuk ${f.fileType}`,
         });
       }
+      const uploadError = validateUpload(
+        f.fileContent,
+        String(f.fileName).trim(),
+        UPLOAD_RULE_BY_FILE_TYPE[f.fileType] ?? UPLOAD_RULES.DOCUMENT,
+        FILE_LABELS[f.fileType] ?? f.fileType,
+      );
+      if (uploadError) {
+        return res.status(400).json({ ok: false, message: uploadError });
+      }
     }
 
     const fileTypes = files.map((f) => f.fileType);
@@ -825,12 +945,10 @@ exports.uploadFiles = async (req, res, next) => {
       });
     }
 
-    const [[kaprodiRow]] = sidang
-      ? await db.query(
-          `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
-          [sidang.id],
-        )
-      : [[null]];
+    const [[kaprodiRow]] = await db.query(
+      `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+      [sidang.id],
+    );
 
     const isSeminar = sidang.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
     if (isSeminar) {
@@ -847,8 +965,19 @@ exports.uploadFiles = async (req, res, next) => {
       }
     }
 
-    const kaprodiNotYetValid = kaprodiRow && kaprodiRow.status !== "VALID";
-    if (kaprodiNotYetValid) {
+    if (
+      isSeminar &&
+      ["VALID", "DISPOSISI_SENT", "COMPLETED"].includes(kaprodiRow?.status) &&
+      files.some((f) => SEMINAR_KAPRODI_FILE_TYPES.includes(f.fileType))
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Proposal sudah disetujui Kaprodi dan tidak dapat diganti.",
+      });
+    }
+
+    // No Kaprodi row yet (an ujian ulang draft before the Kaprodi step) counts as not yet VALID.
+    if (kaprodiRow?.status !== "VALID") {
       const uploadableBeforeValid = isSeminar
         ? SEMINAR_KAPRODI_FILE_TYPES
         : [...KAPRODI_REQUIRED_FILE_TYPES, ...KAPRODI_OPTIONAL_FILE_TYPES];
@@ -868,6 +997,21 @@ exports.uploadFiles = async (req, res, next) => {
     try {
       await conn.beginTransaction();
       txStarted = true;
+
+      // Re-checked under a lock: a submit or Sekretariat VERIFY may have landed since the read above.
+      const [[locked]] = await conn.query(
+        `SELECT status FROM pengajuan_sidang WHERE id = ? FOR UPDATE`,
+        [sidang.id],
+      );
+      if (locked?.status !== "DRAFT" && locked?.status !== "NEED_REVISION") {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message:
+            "File hanya bisa diunggah saat status DRAFT atau NEED_REVISION",
+        });
+      }
 
       for (const f of files) {
         const [[existing]] = await conn.query(
@@ -897,7 +1041,7 @@ exports.uploadFiles = async (req, res, next) => {
             sidang.id,
             f.fileType,
             String(f.fileName).trim(),
-            f.mimeType ?? null,
+            mimeFromFileName(String(f.fileName).trim()),
             String(f.fileContent),
             carryKaprodiStatus,
             carryVerifiedAt,
@@ -992,6 +1136,20 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       });
     }
 
+    // Sekretariat can only act on a pengajuan Kaprodi has validated, so it can't be sent before.
+    const [[kaprodiForSubmit]] = await conn.query(
+      `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+      [sidang.id],
+    );
+    if (kaprodiForSubmit?.status !== "VALID") {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message: "Pengajuan belum disetujui oleh Kaprodi.",
+      });
+    }
+
     // Gate original first submissions by period, and repair legacy/auto-created
     // drafts that predate an open period by assigning it once.
     const requiresOpenPeriod =
@@ -1074,18 +1232,12 @@ exports.submitPengajuanSidang = async (req, res, next) => {
       [npm],
     );
     const namaMahasiswa = mahasiswaRow?.nama ?? npm;
-    const [sekRows] = await conn.query(
-      `SELECT u.id FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE r.code = 'SEKRETARIAT'`,
-    );
-    for (const sek of sekRows) {
+    for (const sekId of await getSekretariatUserIds(conn)) {
       await insertNotification(
         conn,
-        sek.id,
+        sekId,
         "SIDANG_SUBMITTED",
-        `Mahasiswa ${namaMahasiswa} mengajukan Sidang Skripsi`,
+        `Mahasiswa ${namaMahasiswa} mengajukan ${kegiatanLabel(sidang.jenis)}`,
         "/sekretariat/pengajuan-sidang",
       );
     }
@@ -1212,19 +1364,16 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
+    // No reject (decided 2026-11-12): a rejected pengajuan left the student no way forward.
     const { action, catatanSekretariat } = req.body ?? {};
-    if (
-      action !== "VERIFY" &&
-      action !== "REJECT" &&
-      action !== "NEED_REVISION"
-    ) {
+    if (action !== "VERIFY" && action !== "NEED_REVISION") {
       return res.status(400).json({
         ok: false,
-        message: "action harus 'VERIFY', 'REJECT', atau 'NEED_REVISION'",
+        message: "action harus 'VERIFY' atau 'NEED_REVISION'",
       });
     }
     if (
-      (action === "REJECT" || action === "NEED_REVISION") &&
+      action === "NEED_REVISION" &&
       (!catatanSekretariat || !String(catatanSekretariat).trim())
     ) {
       return res
@@ -1278,18 +1427,13 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
          WHERE id = ?`,
         [String(catatanSekretariat).trim(), sidang.id],
       );
-      const [[studentRow]] = await conn.query(
-        `SELECT u.id FROM users u
-         JOIN skripsi s ON s.npm = u.npm
-         WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
-        [skripsiId],
-      );
-      if (studentRow) {
+      const studentUserId = await getStudentUserId(conn, skripsiId);
+      if (studentUserId) {
         await insertNotification(
           conn,
-          studentRow.id,
+          studentUserId,
           "SIDANG_NEED_REVISION",
-          "Sekretariat meminta Anda mengunggah ulang dokumen pengajuan sidang",
+          `Sekretariat meminta Anda mengunggah ulang dokumen pengajuan ${kegiatanLabel(sidang.jenis)}`,
           "/student/pengajuan-sidang",
         );
       }
@@ -1301,136 +1445,98 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       });
     }
 
-    if (action === "VERIFY") {
-      // All required files must be VERIFIED
-      const [fileRows] = await conn.query(
-        `SELECT file_type, status FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
-        [sidang.id],
-      );
-      const fileMap = Object.fromEntries(
-        fileRows.map((f) => [f.file_type, f.status]),
-      );
+    // VERIFY: all required files must be VERIFIED
+    const [fileRows] = await conn.query(
+      `SELECT file_type, status FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
+      [sidang.id],
+    );
+    const fileMap = Object.fromEntries(
+      fileRows.map((f) => [f.file_type, f.status]),
+    );
 
-      if (sidang.ujian_ke > 1) {
-        // Ujian ulang: only check BUKTI_PEMBAYARAN and BERKAS_SKRIPSI
-        const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BERKAS_SKRIPSI"];
-        const unverified = ujianUlangRequired.filter(
-          (t) => fileMap[t] !== "VERIFIED",
-        );
-        if (unverified.length > 0) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(400).json({
-            ok: false,
-            message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
-          });
-        }
-      } else {
-        const [[skripsiForVerify]] = await conn.query(
-          `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
-          [skripsiId],
-        );
-        const isSeminar = sidang.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
-        const perluSuratKeterangan =
-          !isSeminar && skripsiForVerify?.perlu_surat_pengantar === 1;
-
-        // The Seminar proposal is Kaprodi's to check, so Sekretariat only answers for the rest.
-        const sekretariatFileTypes = isSeminar
-          ? SEMINAR_SEKRETARIAT_FILE_TYPES
-          : REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
-        const unverified = sekretariatFileTypes.filter(
-          (t) => fileMap[t] !== "VERIFIED",
-        );
-        if (unverified.length > 0) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(400).json({
-            ok: false,
-            message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
-          });
-        }
-        if (
-          perluSuratKeterangan &&
-          fileMap["SURAT_KETERANGAN"] !== "VERIFIED"
-        ) {
-          await conn.rollback();
-          txStarted = false;
-          return res.status(400).json({
-            ok: false,
-            message: "File SURAT_KETERANGAN belum diverifikasi",
-          });
-        }
+    if (sidang.ujian_ke > 1) {
+      // Ujian ulang: only check BUKTI_PEMBAYARAN and BERKAS_SKRIPSI
+      const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BERKAS_SKRIPSI"];
+      const unverified = ujianUlangRequired.filter(
+        (t) => fileMap[t] !== "VERIFIED",
+      );
+      if (unverified.length > 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
+        });
       }
-
-      await conn.query(
-        `UPDATE pengajuan_sidang
-         SET status = 'WAITING_FOR_DISPOSISI',
-             catatan_sekretariat = ?,
-             verified_by_user_id = ?,
-             verified_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [
-          catatanSekretariat ? String(catatanSekretariat).trim() : null,
-          req.user.id,
-          sidang.id,
-        ],
-      );
-
-      // Notify mahasiswa
-      const [[studentRow]] = await conn.query(
-        `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
-         WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
+    } else {
+      const [[skripsiForVerify]] = await conn.query(
+        `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
         [skripsiId],
       );
-      if (studentRow) {
-        await insertNotification(
-          conn,
-          studentRow.id,
-          "SIDANG_WAITING_FOR_DISPOSISI",
-          "Dokumen pengajuan sidang telah diverifikasi. Menunggu disposisi dari Kaprodi.",
-          "/student/pengajuan-sidang",
-        );
-      }
+      const isSeminar = sidang.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+      const perluSuratKeterangan =
+        !isSeminar && skripsiForVerify?.perlu_surat_pengantar === 1;
 
-      await conn.commit();
-      txStarted = false;
-      return res.json({
-        ok: true,
-        message: "Pengajuan Sidang berhasil diverifikasi",
-      });
+      // The Seminar proposal is Kaprodi's to check, so Sekretariat only answers for the rest.
+      const sekretariatFileTypes = isSeminar
+        ? SEMINAR_SEKRETARIAT_FILE_TYPES
+        : REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
+      const unverified = sekretariatFileTypes.filter(
+        (t) => fileMap[t] !== "VERIFIED",
+      );
+      if (unverified.length > 0) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
+        });
+      }
+      if (
+        perluSuratKeterangan &&
+        fileMap["SURAT_KETERANGAN"] !== "VERIFIED"
+      ) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: "File SURAT_KETERANGAN belum diverifikasi",
+        });
+      }
     }
 
-    // REJECT
     await conn.query(
       `UPDATE pengajuan_sidang
-       SET status = 'REJECTED',
+       SET status = 'WAITING_FOR_DISPOSISI',
            catatan_sekretariat = ?,
            verified_by_user_id = ?,
            verified_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [String(catatanSekretariat).trim(), req.user.id, sidang.id],
+      [
+        catatanSekretariat ? String(catatanSekretariat).trim() : null,
+        req.user.id,
+        sidang.id,
+      ],
     );
 
-    const [[studentRow]] = await conn.query(
-      `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
-       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
-      [skripsiId],
-    );
-    if (studentRow) {
+    const studentUserId = await getStudentUserId(conn, skripsiId);
+    if (studentUserId) {
       await insertNotification(
         conn,
-        studentRow.id,
-        "SIDANG_REJECTED",
-        "Pengajuan Sidang Skripsi Anda ditolak",
+        studentUserId,
+        "SIDANG_WAITING_FOR_DISPOSISI",
+        `Dokumen pengajuan ${kegiatanLabel(sidang.jenis)} telah diverifikasi. Menunggu disposisi dari Kaprodi.`,
         "/student/pengajuan-sidang",
       );
     }
 
     await conn.commit();
     txStarted = false;
-    return res.json({ ok: true, message: "Pengajuan Sidang ditolak" });
+    return res.json({
+      ok: true,
+      message: "Pengajuan Sidang berhasil diverifikasi",
+    });
   } catch (err) {
     try {
       if (txStarted) await conn.rollback();
@@ -1595,7 +1701,7 @@ exports.initKaprodi = async (req, res, next) => {
     // Find the current active pengajuan_sidang for this student
     let [[activeSidang]] = await conn.query(
       `SELECT id, ujian_ke, status FROM pengajuan_sidang
-       WHERE skripsi_id = ? AND jenis = ? AND status NOT IN ('COMPLETED','REJECTED')
+       WHERE skripsi_id = ? AND jenis = ? AND status <> 'COMPLETED'
        ORDER BY id DESC LIMIT 1`,
       [skripsiId, jenis],
     );
@@ -1647,7 +1753,12 @@ exports.initKaprodi = async (req, res, next) => {
       }
     }
 
-    const isUjianUlang = activeSidang && activeSidang.ujian_ke > 1;
+    // A pengajuan created here is numbered after the sidang already held (normally the TIDAK_LULUS
+    // revisi has already created the ujian ulang draft, so this is 1).
+    const ujianKe = activeSidang
+      ? Number(activeSidang.ujian_ke)
+      : (await countSidang(conn, skripsiId, jenis)) + 1;
+    const isUjianUlang = ujianKe > 1;
 
     // Gate by period for original flow only (ujian ulang is exempt)
     let openPeriod = null;
@@ -1667,10 +1778,10 @@ exports.initKaprodi = async (req, res, next) => {
     // Auto-create pengajuan_sidang DRAFT if missing (auto-init from konsultasi may have been skipped)
     if (!activeSidang) {
       const [sidangIns] = await conn.query(
-        `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', 1, ?)`,
-        [skripsiId, jenis, openPeriod?.id ?? null],
+        `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, ujian_ke, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', ?, ?)`,
+        [skripsiId, jenis, ujianKe, openPeriod?.id ?? null],
       );
-      activeSidang = { id: sidangIns.insertId, ujian_ke: 1 };
+      activeSidang = { id: sidangIns.insertId, ujian_ke: ujianKe };
     }
 
     const [ins] = await conn.query(
@@ -1718,16 +1829,55 @@ exports.getKaprodi = async (req, res, next) => {
         message: "Pengajuan Sidang tidak ditemukan",
       });
     }
-    const [[kaprodi]] = await db.query(
-      `SELECT psk.*,
-              dpg1.nama AS penguji1_nama,
-              dpg2.nama AS penguji2_nama
-       FROM pengajuan_sidang_kaprodi psk
-       LEFT JOIN dosen dpg1 ON dpg1.nidn = psk.penguji1_nidn
-       LEFT JOIN dosen dpg2 ON dpg2.nidn = psk.penguji2_nidn
-       WHERE psk.pengajuan_sidang_id = ? LIMIT 1`,
-      [activeSidangForGet.id],
-    );
+    const [
+      [[kaprodi]],
+      [[autoData]],
+      [files],
+      currentJenis,
+      pengujiRule,
+      skripsiRegistrationBlock,
+    ] = await Promise.all([
+      db.query(
+        `SELECT psk.*,
+                dpg1.nama AS penguji1_nama,
+                dpg2.nama AS penguji2_nama
+         FROM pengajuan_sidang_kaprodi psk
+         LEFT JOIN dosen dpg1 ON dpg1.nidn = psk.penguji1_nidn
+         LEFT JOIN dosen dpg2 ON dpg2.nidn = psk.penguji2_nidn
+         WHERE psk.pengajuan_sidang_id = ? LIMIT 1`,
+        [activeSidangForGet.id],
+      ),
+      db.query(
+        `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks, s.program_studi_id,
+                ps.nama AS program_studi_nama,
+                COALESCE(
+                  (SELECT l.judul_seminar FROM pengajuan_sk_skripsi_lanjutan l
+                   JOIN sidang sd ON sd.id = l.seminar_sidang_id
+                   WHERE sd.pengajuan_sidang_id = ?),
+                  s.judul
+                ) AS judul_skripsi,
+                s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
+                s.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
+                m.tempat_lahir, m.tanggal_lahir, m.ipk
+         FROM skripsi s
+         JOIN mahasiswa m ON m.npm = s.npm
+         JOIN program_studi ps ON ps.id = s.program_studi_id
+         LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+         LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
+         WHERE s.id = ? LIMIT 1`,
+        [activeSidangForGet.id, skripsiId],
+      ),
+      db.query(
+        `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
+         FROM pengajuan_sidang_files
+         WHERE pengajuan_sidang_id = ? AND file_type IN (?)
+         ORDER BY file_type ASC`,
+        [activeSidangForGet.id, KAPRODI_FILE_TYPES],
+      ),
+      resolveJenis(db, skripsiId),
+      getPengujiRule(db, skripsiId, activeSidangForGet.jenis),
+      getSkripsiRegistrationBlock(db, skripsiId, activeSidangForGet.jenis),
+    ]);
     if (!kaprodi) {
       return res.status(404).json({
         ok: false,
@@ -1735,43 +1885,9 @@ exports.getKaprodi = async (req, res, next) => {
       });
     }
 
-    const [[autoData]] = await db.query(
-      `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks, s.program_studi_id,
-              ps.nama AS program_studi_nama,
-              COALESCE(
-                (SELECT l.judul_seminar FROM pengajuan_sk_skripsi_lanjutan l
-                 JOIN sidang sd ON sd.id = l.seminar_sidang_id
-                 WHERE sd.pengajuan_sidang_id = ?),
-                s.judul
-              ) AS judul_skripsi,
-              s.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
-              s.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
-              COALESCE(psd.ujian_ke, 0) AS ujian_ke,
-              m.tempat_lahir, m.tanggal_lahir, m.ipk
-       FROM skripsi s
-       JOIN mahasiswa m ON m.npm = s.npm
-       JOIN program_studi ps ON ps.id = s.program_studi_id
-       LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
-       LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
-       LEFT JOIN pengajuan_sidang psd ON psd.skripsi_id = s.id
-         AND psd.jenis = ?
-         AND psd.status NOT IN ('REJECTED')
-       WHERE s.id = ?
-       ORDER BY psd.id DESC LIMIT 1`,
-      [activeSidangForGet.id, activeSidangForGet.jenis, skripsiId],
-    );
-
     const tahunMasuk = autoData?.npm
       ? "20" + String(autoData.npm).substring(0, 2)
       : null;
-
-    const [files] = await db.query(
-      `SELECT id, file_type, file_name, mime_type, source, status, kaprodi_status, kaprodi_verified_at, created_at
-       FROM pengajuan_sidang_files
-       WHERE pengajuan_sidang_id = ? AND file_type IN (?)
-       ORDER BY file_type ASC`,
-      [activeSidangForGet.id, KAPRODI_FILE_TYPES],
-    );
 
     return res.json({
       ok: true,
@@ -1793,18 +1909,14 @@ exports.getKaprodi = async (req, res, next) => {
               pembimbing2_nidn: autoData.pembimbing2_nidn,
               pembimbing2_nama: autoData.pembimbing2_nama,
               tahun_masuk: tahunMasuk,
-              ujian_ke: autoData.ujian_ke,
+              ujian_ke: activeSidangForGet.ujian_ke ?? null,
             }
           : null,
         files,
         jenis: activeSidangForGet.jenis,
-        currentJenis: await resolveJenis(db, skripsiId),
-        pengujiRule: await getPengujiRule(db, skripsiId, activeSidangForGet.jenis),
-        skripsiRegistrationBlock: await getSkripsiRegistrationBlock(
-          db,
-          skripsiId,
-          activeSidangForGet.jenis,
-        ),
+        currentJenis,
+        pengujiRule,
+        skripsiRegistrationBlock,
       },
     });
   } catch (err) {
@@ -2043,8 +2155,186 @@ exports.updateKaprodi = async (req, res, next) => {
   }
 };
 
+// The Skripsi letters generated at Kaprodi submit (the Seminar only has its Surat Permohonan):
+// Lembar Permohonan Ujian, Surat Pernyataan Perbaikan and Kelengkapan, Lembar Usulan Penguji (not for
+// Bisnis Digital, whose penguji Kaprodi assigns), and the Surat Penyelesaian Skripsi regenerated now
+// that alamat and no_hp are known. Renders only; the caller stores them.
+async function buildSkripsiSubmitDocuments(queryable, { skripsiId, npm, kaprodi, pengajuan, pengujiRule }) {
+  const [[docData]] = await queryable.query(
+    `SELECT s.npm, s.program_studi_id, m.nama AS nama_mahasiswa, m.sks,
+            ps.nama AS prodi_nama, f.nama AS fakultas_nama,
+            s.judul AS judul_skripsi,
+            d1.nama AS dospem1_nama,
+            d2.nama AS dospem2_nama,
+            ps.kaprodi_staff_usr_id,
+            COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
+            u_mhs.signature_image AS mahasiswa_sig
+     FROM skripsi s
+     JOIN mahasiswa m ON m.npm = s.npm
+     JOIN program_studi ps ON ps.id = s.program_studi_id
+     LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
+     LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
+     LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+     LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
+     LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
+     LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
+     WHERE s.id = ? LIMIT 1`,
+    [skripsiId],
+  );
+  const kaprodiSig = docData
+    ? await getStaffSignature(queryable, docData.kaprodi_staff_usr_id)
+    : null;
+  const namaKaprodi = docData?.nama_kaprodi ?? "";
+
+  assertSignatures([
+    { role: "Kaprodi", nama: namaKaprodi, signatureImage: kaprodiSig },
+    {
+      role: "Mahasiswa",
+      nama: docData?.nama_mahasiswa,
+      signatureImage: docData?.mahasiswa_sig,
+    },
+  ]);
+
+  const todayDate = formatTanggal(new Date());
+  const tahunMasuk = docData?.npm ? "20" + String(docData.npm).substring(0, 2) : "";
+  const tglLahirFormatted = kaprodi.tgl_lahir ? formatTanggal(new Date(kaprodi.tgl_lahir)) : "";
+  const ujianCount = pengajuan.ujian_ke ?? 1;
+  const mahasiswa = {
+    nama: docData?.nama_mahasiswa ?? npm,
+    npm: docData?.npm ?? npm,
+    signatureBase64: docData?.mahasiswa_sig ?? null,
+  };
+  const pdf = (fileType, fileName, buffer) => ({
+    fileType,
+    fileName,
+    base64: Buffer.from(buffer).toString("base64"),
+  });
+  const documents = [];
+
+  documents.push(
+    pdf(
+      "LEMBAR_PERMOHONAN_UJIAN",
+      `Lembar_Permohonan_Ujian_${npm}.pdf`,
+      await generatePermohonanUjianSkripsiFTI({
+        tanggal: todayDate,
+        mahasiswa: {
+          ...mahasiswa,
+          tempatTanggalLahir: `${kaprodi.tempat_lahir ?? ""}, ${tglLahirFormatted}`,
+          programStudi: docData?.prodi_nama ?? "",
+          tahunMasuk,
+          alamat: kaprodi.alamat ?? "",
+          noHp: kaprodi.no_hp ?? "",
+          noWa: kaprodi.no_wa ?? "",
+          status: kaprodi.status_pernikahan ?? "",
+          judulSkripsi: docData?.judul_skripsi ?? "",
+          ujianKe: `${ujianCount} (${terbilang(ujianCount)})`,
+          ipk: kaprodi.ipk ?? "",
+          sks: docData?.sks ?? "",
+        },
+        ketuaProgramStudi: { nama: namaKaprodi, signatureBase64: kaprodiSig ?? null },
+      }),
+    ),
+  );
+
+  documents.push(
+    pdf(
+      "SURAT_PERNYATAAN_PERBAIKAN",
+      `Surat_Pernyataan_Perbaikan_${npm}.pdf`,
+      await generatePernyataanPerbaikanSkripsiFTI({
+        mahasiswa: {
+          ...mahasiswa,
+          alamat: kaprodi.alamat ?? "",
+          noHp: kaprodi.no_hp ?? "",
+          judulSkripsi: docData?.judul_skripsi ?? "",
+        },
+        ketuaProgramStudi: {
+          nama: namaKaprodi,
+          programStudi: docData?.prodi_nama ?? "",
+          signatureBase64: kaprodiSig ?? null,
+        },
+      }),
+    ),
+  );
+
+  documents.push(
+    pdf(
+      "SURAT_PERNYATAAN_KELENGKAPAN",
+      `Surat_Pernyataan_Kelengkapan_${npm}.pdf`,
+      await generatePernyataanKelengkapanDanNilaiMatkulFTI({
+        mahasiswa: { ...mahasiswa, programStudi: docData?.prodi_nama ?? "" },
+        tanggal: todayDate,
+      }),
+    ),
+  );
+
+  if (pengujiRule.studentPicks) {
+    documents.push(
+      pdf(
+        "LEMBAR_USULAN_PENGUJI",
+        `Lembar_Usulan_Penguji_${npm}.pdf`,
+        await generateUsulanPengujiFTI({
+          tanggal: todayDate,
+          programStudi: docData?.prodi_nama ?? "",
+          ketuaProgramStudi: { nama: namaKaprodi, signatureBase64: null },
+          mahasiswa: {
+            ...mahasiswa,
+            pembimbingUtama: docData?.dospem1_nama ?? "",
+            pembimbingKedua: docData?.dospem2_nama ?? "",
+            judulSkripsi: docData?.judul_skripsi ?? "",
+          },
+          pilihanPenguji: await buildPilihanPenguji(
+            queryable,
+            docData?.program_studi_id,
+            pengajuan.jenis,
+            { penguji1Nidn: kaprodi.penguji1_nidn, penguji2Nidn: kaprodi.penguji2_nidn },
+          ),
+          disposisi: {
+            pengujiUtama: "",
+            pengujiKedua: "",
+            tanggalUjian: "",
+            waktuUjian: "",
+            tanggalDisposisi: "",
+            signatureBase64: null,
+          },
+        }),
+      ),
+    );
+  }
+
+  const [[skRow]] = await queryable.query(
+    `SELECT psk.id FROM pengajuan_sk_penelitian psk
+     WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
+     LIMIT 1`,
+    [skripsiId],
+  );
+  const penyelesaian = skRow
+    ? {
+        skPenelitianId: skRow.id,
+        ...pdf(
+          "SURAT_PERNYATAAN_PENYELESAIAN",
+          `Surat_Penyelesaian_Skripsi_${npm}.pdf`,
+          await generatePernyataanPenyelesaianSkripsiFTI({
+            mahasiswa: {
+              ...mahasiswa,
+              alamat: kaprodi.alamat ?? "",
+              noHp: kaprodi.no_hp ?? "",
+              judulSkripsi: docData?.judul_skripsi ?? "",
+            },
+            ketuaProgramStudi: {
+              nama: namaKaprodi,
+              programStudi: docData?.prodi_nama ?? "",
+              signatureBase64: kaprodiSig ?? null,
+            },
+          }),
+        ),
+      }
+    : null;
+
+  return { documents, penyelesaian };
+}
+
 exports.submitKaprodi = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     if (req.user.userType !== "STUDENT") {
@@ -2065,43 +2355,30 @@ exports.submitKaprodi = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "Mahasiswa tidak valid" });
     }
-    if (!(await isSkripsiOwnedBy(conn, skripsiId, npm))) {
+    if (!(await isSkripsiOwnedBy(db, skripsiId, npm))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    await conn.beginTransaction();
-    txStarted = true;
-
-    const activeSidangForSubmit = await getActiveSidang(conn, skripsiId);
+    const jenis = await resolveJenis(db, skripsiId);
+    const pengajuan = await getActivePengajuanSidang(db, skripsiId, jenis);
     const registrationBlock =
-      activeSidangForSubmit &&
-      (await getSkripsiRegistrationBlock(
-        conn,
-        skripsiId,
-        activeSidangForSubmit.jenis,
-      ));
+      pengajuan && (await getSkripsiRegistrationBlock(db, skripsiId, pengajuan.jenis));
     if (registrationBlock) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(409).json({ ok: false, message: registrationBlock });
     }
-    const [[kaprodi]] = activeSidangForSubmit
-      ? await conn.query(
-          `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
-          [activeSidangForSubmit.id],
+    const [[kaprodi]] = pengajuan
+      ? await db.query(
+          `SELECT * FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+          [pengajuan.id],
         )
       : [[null]];
     if (!kaprodi) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(404).json({
         ok: false,
         message: "Pengajuan Sidang Kaprodi tidak ditemukan",
       });
     }
     if (kaprodi.status !== "DRAFT" && kaprodi.status !== "NEED_REVISION") {
-      await conn.rollback();
-      txStarted = false;
       return res.status(409).json({
         ok: false,
         message:
@@ -2109,7 +2386,7 @@ exports.submitKaprodi = async (req, res, next) => {
       });
     }
 
-    const isSeminar = activeSidangForSubmit.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+    const isSeminar = pengajuan.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
     const missingFields = [];
     if (!kaprodi.tempat_lahir) missingFields.push("tempatLahir");
     if (!kaprodi.tgl_lahir) missingFields.push("tglLahir");
@@ -2117,11 +2394,7 @@ exports.submitKaprodi = async (req, res, next) => {
     if (!kaprodi.no_hp) missingFields.push("noHp");
     if (!kaprodi.no_wa) missingFields.push("noWa");
     if (!isSeminar && kaprodi.ipk == null) missingFields.push("ipk");
-    const pengujiRule = await getPengujiRule(
-      conn,
-      skripsiId,
-      activeSidangForSubmit.jenis,
-    );
+    const pengujiRule = await getPengujiRule(db, skripsiId, pengajuan.jenis);
     if (pengujiRule.studentPicks) {
       if (!kaprodi.penguji1_nidn) missingFields.push("penguji1Nidn");
       if (pengujiRule.hasPenguji2 && !kaprodi.penguji2_nidn) {
@@ -2132,401 +2405,122 @@ exports.submitKaprodi = async (req, res, next) => {
       missingFields.push("statusPernikahan");
     }
     if (missingFields.length > 0) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(400).json({
         ok: false,
         message: `Field berikut belum diisi: ${missingFields.join(", ")}`,
       });
     }
     if (!isSeminar && !kaprodi.semua_mk_lulus) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(400).json({
         ok: false,
         message: "Konfirmasi seluruh mata kuliah sudah lulus harus dicentang",
       });
     }
 
-    const [[skripsiProdiRow]] = await conn.query(
+    const [[skripsiProdiRow]] = await db.query(
       `SELECT program_studi_id FROM skripsi WHERE id = ? LIMIT 1`,
       [skripsiId],
     );
+    const programStudiId = skripsiProdiRow?.program_studi_id;
     const submitEligibilityError = await getIneligiblePengujiMessage(
-      conn,
-      skripsiProdiRow?.program_studi_id,
-      activeSidangForSubmit.jenis,
+      db,
+      programStudiId,
+      pengajuan.jenis,
       {
         penguji1Nidn: kaprodi.penguji1_nidn,
         penguji2Nidn: kaprodi.penguji2_nidn,
       },
     );
     if (submitEligibilityError) {
-      await conn.rollback();
-      txStarted = false;
       return res
         .status(400)
         .json({ ok: false, message: submitEligibilityError });
     }
 
-    const { period: openPeriod } = await attachOpenSidangPeriodIfMissing(
-      conn,
-      activeSidangForSubmit,
-    );
-    if (
-      Number(activeSidangForSubmit.ujian_ke) === 1 &&
-      activeSidangForSubmit.sidang_submission_period_id == null &&
-      !openPeriod
-    ) {
-      await conn.rollback();
-      txStarted = false;
+    // An original pengajuan auto-created before any period opened takes the period open now.
+    const needsPeriod =
+      Number(pengajuan.ujian_ke) === 1 && pengajuan.sidang_submission_period_id == null;
+    const openPeriod = needsPeriod ? await getSidangOpenPeriod(pengajuan.jenis) : null;
+    if (needsPeriod && !openPeriod) {
       return res.status(409).json({
         ok: false,
         message: "Tidak ada periode pengajuan sidang yang sedang dibuka.",
       });
     }
 
-    await conn.query(
-      `UPDATE pengajuan_sidang_kaprodi
-       SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+    const { documents, penyelesaian } = isSeminar
+      ? { documents: [await buildPermohonanSeminar(db, skripsiId, kaprodi)], penyelesaian: null }
+      : await buildSkripsiSubmitDocuments(db, { skripsiId, npm, kaprodi, pengajuan, pengujiRule });
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [[locked]] = await conn.query(
+      `SELECT * FROM pengajuan_sidang_kaprodi WHERE id = ? FOR UPDATE`,
       [kaprodi.id],
     );
+    if (
+      rowFingerprint(locked, KAPRODI_FORM_FIELDS) !==
+      rowFingerprint(kaprodi, KAPRODI_FORM_FIELDS)
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({ ok: false, message: CHANGED_WHILE_PROCESSING_MESSAGE });
+    }
 
-    // These are Skripsi documents and agreements; the Seminar only has its own Surat Permohonan.
-    if (isSeminar) {
-      await storePermohonanSeminar(conn, skripsiId, activeSidangForSubmit.id, kaprodi);
-    } else {
-      // Generate LEMBAR_PERMOHONAN_UJIAN
-      const [[docData]] = await conn.query(
-        `SELECT s.npm, m.nama AS nama_mahasiswa, m.sks,
-                ps.nama AS prodi_nama, f.nama AS fakultas_nama,
-                s.judul AS judul_skripsi,
-                d1.nama AS dospem1_nama,
-                d2.nama AS dospem2_nama,
-                ps.kaprodi_staff_usr_id,
-                COALESCE(staf_kaprodi.nama, d_kaprodi.nama) AS nama_kaprodi,
-                u_mhs.signature_image AS mahasiswa_sig
-         FROM skripsi s
-         JOIN mahasiswa m ON m.npm = s.npm
-         JOIN program_studi ps ON ps.id = s.program_studi_id
-         LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
-         LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
-         LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-         LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
-         LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
-         LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
-         WHERE s.id = ? LIMIT 1`,
-        [skripsiId],
-      );
-      if (docData) {
-        docData.kaprodi_sig = await getStaffSignature(
-          conn,
-          docData.kaprodi_staff_usr_id,
-        );
-      }
+    if (needsPeriod) {
+      await attachOpenSidangPeriodIfMissing(conn, pengajuan, openPeriod);
+    }
 
-      const todayDate = formatTanggal(new Date());
-      const tahunMasuk = docData?.npm
-        ? "20" + String(docData.npm).substring(0, 2)
-        : "";
-      const tglLahirFormatted = kaprodi.tgl_lahir
-        ? formatTanggal(new Date(kaprodi.tgl_lahir))
-        : "";
-      const ttl = `${kaprodi.tempat_lahir ?? ""}, ${tglLahirFormatted}`;
-      const ujianCount = activeSidangForSubmit?.ujian_ke ?? 1;
-      const ujianCountString = terbilang(ujianCount);
-      const namaKaprodi = docData?.nama_kaprodi ?? "";
+    await conn.query(
+      `UPDATE pengajuan_sidang_kaprodi
+       SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+           usulan_penguji1_nidn = ?, usulan_penguji2_nidn = ?
+       WHERE id = ?`,
+      [
+        pengujiRule.studentPicks ? kaprodi.penguji1_nidn : null,
+        pengujiRule.studentPicks && pengujiRule.hasPenguji2 ? kaprodi.penguji2_nidn : null,
+        kaprodi.id,
+      ],
+    );
 
-      assertSignatures([
-        {
-          role: "Kaprodi",
-          nama: namaKaprodi,
-          signatureImage: docData?.kaprodi_sig,
-        },
-        {
-          role: "Mahasiswa",
-          nama: docData?.nama_mahasiswa,
-          signatureImage: docData?.mahasiswa_sig,
-        },
-      ]);
+    for (const doc of documents) {
+      await upsertGeneratedFile(conn, pengajuan.id, doc);
+    }
 
-      const dataPermohonanUjianSkripsiFTI = {
-        tanggal: todayDate,
-        mahasiswa: {
-          nama: docData?.nama_mahasiswa ?? npm,
-          npm: docData?.npm ?? npm,
-          tempatTanggalLahir: ttl,
-          programStudi: docData?.prodi_nama ?? "",
-          tahunMasuk,
-          alamat: kaprodi.alamat ?? "",
-          noHp: kaprodi.no_hp ?? "",
-          noWa: kaprodi.no_wa ?? "",
-          status: kaprodi.status_pernikahan ?? "",
-          judulSkripsi: docData?.judul_skripsi ?? "",
-          ujianKe: `${ujianCount} (${ujianCountString})`,
-          ipk: kaprodi.ipk ?? "",
-          sks: docData?.sks ?? "",
-          signatureBase64: docData?.mahasiswa_sig ?? null,
-        },
-        ketuaProgramStudi: {
-          nama: namaKaprodi,
-          signatureBase64: docData?.kaprodi_sig ?? null,
-        },
-      };
-      const lembarBuffer = await generatePermohonanUjianSkripsiFTI(
-        dataPermohonanUjianSkripsiFTI,
-      );
-      const lembarBase64 = Buffer.from(lembarBuffer).toString("base64");
-      const mimeLembarPdf = "application/pdf";
-
-      // Auto-create pengajuan_sidang DRAFT if none exists, then upsert the file
-      const jenis = activeSidangForSubmit.jenis;
-      let existingSidang = await getEditablePengajuanSidang(
-        conn,
-        skripsiId,
-        jenis,
-      );
-      if (!existingSidang) {
-        const openPeriodForFallback = await getSidangOpenPeriod(jenis);
-        const [ins] = await conn.query(
-          `INSERT INTO pengajuan_sidang (skripsi_id, jenis, status, sidang_submission_period_id) VALUES (?, ?, 'DRAFT', ?)`,
-          [skripsiId, jenis, openPeriodForFallback?.id ?? null],
-        );
-        existingSidang = { id: ins.insertId };
-      }
-
+    if (penyelesaian) {
       await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_PERMOHONAN_UJIAN'`,
-        [existingSidang.id],
+        `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
+        [penyelesaian.skPenelitianId],
       );
       await conn.query(
-        `INSERT INTO pengajuan_sidang_files
-           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'LEMBAR_PERMOHONAN_UJIAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [
-          existingSidang.id,
-          `Lembar_Permohonan_Ujian_${npm}.pdf`,
-          mimeLembarPdf,
-          lembarBase64,
-        ],
+        `INSERT INTO pengajuan_sk_penelitian_files
+           (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
+         VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, 'application/pdf', ?, 'GENERATED', 'VERIFIED')`,
+        [penyelesaian.skPenelitianId, penyelesaian.fileName, penyelesaian.base64],
       );
-
-      // Generate SURAT_PERNYATAAN_PERBAIKAN
-
-      const dataPernyataanPerbaikanSkripsiFTI = {
-        mahasiswa: {
-          nama: docData?.nama_mahasiswa ?? npm,
-          npm: docData?.npm ?? npm,
-          alamat: kaprodi.alamat ?? "",
-          noHp: kaprodi.no_hp ?? "",
-          judulSkripsi: docData?.judul_skripsi ?? "",
-          signatureBase64: docData?.mahasiswa_sig ?? null,
-        },
-        ketuaProgramStudi: {
-          nama: namaKaprodi,
-          programStudi: docData?.prodi_nama ?? "",
-          signatureBase64: docData?.kaprodi_sig ?? null,
-        },
-      };
-      const perbaikanBuffer = await generatePernyataanPerbaikanSkripsiFTI(
-        dataPernyataanPerbaikanSkripsiFTI,
-      );
-      const perbaikanBase64 = Buffer.from(perbaikanBuffer).toString("base64");
-      const mimePerbaikanPdf = "application/pdf";
-
+      // Also update the copy already attached to pengajuan_sidang_files
       await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PERBAIKAN'`,
-        [existingSidang.id],
+        `UPDATE pengajuan_sidang_files
+         SET file_content = ?, file_name = ?, mime_type = 'application/pdf', updated_at = CURRENT_TIMESTAMP
+         WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
+        [penyelesaian.base64, penyelesaian.fileName, pengajuan.id],
       );
-      await conn.query(
-        `INSERT INTO pengajuan_sidang_files
-           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SURAT_PERNYATAAN_PERBAIKAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [
-          existingSidang.id,
-          `Surat_Pernyataan_Perbaikan_${npm}.pdf`,
-          mimePerbaikanPdf,
-          perbaikanBase64,
-        ],
-      );
-
-      // Generate SURAT_PERNYATAAN_KELENGKAPAN
-
-      const dataPernyataanKelengkapanDanNilaiMatkulFTI = {
-        mahasiswa: {
-          nama: docData?.nama_mahasiswa ?? npm,
-          npm: docData?.npm ?? npm,
-          programStudi: docData?.prodi_nama ?? "",
-          signatureBase64: docData?.mahasiswa_sig ?? null,
-        },
-        tanggal: todayDate,
-      };
-      const kelengkapanBuffer =
-        await generatePernyataanKelengkapanDanNilaiMatkulFTI(
-          dataPernyataanKelengkapanDanNilaiMatkulFTI,
-        );
-      const kelengkapanBase64 = Buffer.from(kelengkapanBuffer).toString("base64");
-      const mimeKelengkapanPdf = "application/pdf";
-
-      await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_KELENGKAPAN'`,
-        [existingSidang.id],
-      );
-      await conn.query(
-        `INSERT INTO pengajuan_sidang_files
-           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'SURAT_PERNYATAAN_KELENGKAPAN', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [
-          existingSidang.id,
-          `Surat_Pernyataan_Kelengkapan_${npm}.pdf`,
-          mimeKelengkapanPdf,
-          kelengkapanBase64,
-        ],
-      );
-
-      // Generate LEMBAR_USULAN_PENGUJI (not for Bisnis Digital, whose penguji Kaprodi assigns)
-      if (pengujiRule.studentPicks) {
-        const pilihanPengujiUsulan = await buildPilihanPenguji(
-          conn,
-          skripsiProdiRow?.program_studi_id,
-          activeSidangForSubmit.jenis,
-          {
-            penguji1Nidn: kaprodi.penguji1_nidn,
-            penguji2Nidn: kaprodi.penguji2_nidn,
-          },
-        );
-
-        const dataUsulanPengujiFTI = {
-          tanggal: todayDate,
-          programStudi: docData?.prodi_nama ?? "",
-          ketuaProgramStudi: {
-            nama: namaKaprodi,
-            signatureBase64: null,
-          },
-          mahasiswa: {
-            nama: docData?.nama_mahasiswa ?? npm,
-            npm: docData?.npm ?? npm,
-            pembimbingUtama: docData?.dospem1_nama ?? "",
-            pembimbingKedua: docData?.dospem2_nama ?? "",
-            judulSkripsi: docData?.judul_skripsi ?? "",
-            signatureBase64: docData?.mahasiswa_sig ?? null,
-          },
-          pilihanPenguji: pilihanPengujiUsulan,
-          disposisi: {
-            pengujiUtama: "",
-            pengujiKedua: "",
-            tanggalUjian: "",
-            waktuUjian: "",
-            tanggalDisposisi: "",
-            signatureBase64: null,
-          },
-        };
-        const usulanBuffer = await generateUsulanPengujiFTI(dataUsulanPengujiFTI);
-        const usulanBase64 = Buffer.from(usulanBuffer).toString("base64");
-        const mimeUsulanPdf = "application/pdf";
-
-        await conn.query(
-          `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_USULAN_PENGUJI'`,
-          [existingSidang.id],
-        );
-        await conn.query(
-          `INSERT INTO pengajuan_sidang_files
-             (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-           VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-          [
-            existingSidang.id,
-            `Lembar_Usulan_Penguji_${npm}.pdf`,
-            mimeUsulanPdf,
-            usulanBase64,
-          ],
-        );
-      }
-
-      // Regenerate SURAT_PENYELESAIAN_SKRIPSI now that alamat and no_hp are available
-      const [[skRow]] = await conn.query(
-        `SELECT psk.id FROM pengajuan_sk_penelitian psk
-         WHERE psk.outline_id = (SELECT outline_id FROM skripsi WHERE id = ? LIMIT 1)
-         LIMIT 1`,
-        [skripsiId],
-      );
-      if (skRow) {
-
-        const dataPernyataanPenyelesaianSkripsiFTI = {
-          mahasiswa: {
-            nama: docData?.nama_mahasiswa ?? npm,
-            npm: docData?.npm ?? npm,
-            alamat: kaprodi.alamat ?? "",
-            noHp: kaprodi.no_hp ?? "",
-            judulSkripsi: docData?.judul_skripsi ?? "",
-            signatureBase64: docData?.mahasiswa_sig ?? null,
-          },
-          ketuaProgramStudi: {
-            nama: namaKaprodi,
-            programStudi: docData?.prodi_nama ?? "",
-            signatureBase64: docData?.kaprodi_sig ?? null,
-          },
-        };
-        const penyelesaianBuffer = await generatePernyataanPenyelesaianSkripsiFTI(
-          dataPernyataanPenyelesaianSkripsiFTI,
-        );
-        const penyelesaianBase64 =
-          Buffer.from(penyelesaianBuffer).toString("base64");
-        const penyelesaianFileName = `Surat_Penyelesaian_Skripsi_${npm}.pdf`;
-        const mimePenyelesaianPdf = "application/pdf";
-
-        await conn.query(
-          `DELETE FROM pengajuan_sk_penelitian_files WHERE pengajuan_sk_penelitian_id = ? AND file_type = 'SURAT_PENYELESAIAN_SKRIPSI'`,
-          [skRow.id],
-        );
-        await conn.query(
-          `INSERT INTO pengajuan_sk_penelitian_files
-             (pengajuan_sk_penelitian_id, file_type, file_name, mime_type, file_content, source, status)
-           VALUES (?, 'SURAT_PENYELESAIAN_SKRIPSI', ?, ?, ?, 'GENERATED', 'VERIFIED')`,
-          [
-            skRow.id,
-            penyelesaianFileName,
-            mimePenyelesaianPdf,
-            penyelesaianBase64,
-          ],
-        );
-        // Also update the copy already attached to pengajuan_sidang_files
-        await conn.query(
-          `UPDATE pengajuan_sidang_files
-           SET file_content = ?, file_name = ?, mime_type = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE pengajuan_sidang_id = ? AND file_type = 'SURAT_PERNYATAAN_PENYELESAIAN'`,
-          [
-            penyelesaianBase64,
-            penyelesaianFileName,
-            mimePenyelesaianPdf,
-            existingSidang.id,
-          ],
-        );
-      }
     }
 
     const [[mahasiswaRow]] = await conn.query(
-      `SELECT m.nama, m.program_studi_id FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
+      `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
       [npm],
     );
     const namaMahasiswa = mahasiswaRow?.nama ?? npm;
-    const programStudiId = mahasiswaRow?.program_studi_id;
-
     if (programStudiId) {
-      const [kaprodiUsers] = await conn.query(
-        `SELECT u.id FROM users u
-         INNER JOIN user_roles ur ON ur.user_id = u.id
-         INNER JOIN roles r ON r.id = ur.role_id
-         INNER JOIN program_studi ps ON COALESCE(ps.kaprodi_nidn, ps.kaprodi_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)
-         WHERE r.code = 'KAPRODI' AND ps.id = ? AND u.is_active = 1`,
-        [programStudiId],
-      );
-      for (const ku of kaprodiUsers) {
+      for (const kaprodiUserId of await getKaprodiUserIds(conn, programStudiId)) {
         await insertNotification(
           conn,
-          ku.id,
+          kaprodiUserId,
           "SIDANG_KAPRODI_SUBMITTED",
-          `Mahasiswa ${namaMahasiswa} mengajukan permohonan ${isSeminar ? "seminar proposal" : "sidang skripsi"}`,
+          `Mahasiswa ${namaMahasiswa} mengajukan permohonan ${kegiatanLabel(pengajuan.jenis).toLowerCase()}`,
           "/kaprodi/pengajuan-sidang",
         );
       }
@@ -2545,7 +2539,7 @@ exports.submitKaprodi = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
@@ -2587,11 +2581,11 @@ exports.reviewFileKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Data dosen tidak valid" });
     }
     const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
+    const sidang = await getActiveSidang(db, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    const sidang = await getActiveSidang(conn, skripsiId);
     if (!sidang) {
       await conn.rollback();
       txStarted = false;
@@ -2688,19 +2682,16 @@ exports.reviewKaprodi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
+    // No reject (decided 2026-11-12): a rejected Kaprodi form could neither be edited nor resubmitted.
     const { action, catatanKaprodi } = req.body ?? {};
-    if (
-      action !== "VALID" &&
-      action !== "NEED_REVISION" &&
-      action !== "REJECTED"
-    ) {
+    if (action !== "VALID" && action !== "NEED_REVISION") {
       return res.status(400).json({
         ok: false,
-        message: "action harus 'VALID', 'NEED_REVISION', atau 'REJECTED'",
+        message: "action harus 'VALID' atau 'NEED_REVISION'",
       });
     }
     if (
-      (action === "NEED_REVISION" || action === "REJECTED") &&
+      action === "NEED_REVISION" &&
       (!catatanKaprodi || !String(catatanKaprodi).trim())
     ) {
       return res
@@ -2715,11 +2706,11 @@ exports.reviewKaprodi = async (req, res, next) => {
         .json({ ok: false, message: "Data dosen tidak valid" });
     }
     const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
+    const activeSidangForReview = await getActiveSidang(db, skripsiId);
 
     await conn.beginTransaction();
     txStarted = true;
 
-    const activeSidangForReview = await getActiveSidang(conn, skripsiId);
     const [[kaprodi]] = activeSidangForReview
       ? await conn.query(
           `SELECT psk.*, s.program_studi_id
@@ -2813,7 +2804,7 @@ exports.reviewKaprodi = async (req, res, next) => {
       }
     }
 
-    const newStatus = action === "VALID" ? "VALID" : action;
+    const newStatus = action;
 
     await conn.query(
       `UPDATE pengajuan_sidang_kaprodi
@@ -2831,31 +2822,23 @@ exports.reviewKaprodi = async (req, res, next) => {
       ],
     );
 
-    const [[studentRow]] = await conn.query(
-      `SELECT u.id FROM users u JOIN skripsi s ON s.npm = u.npm
-       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
-      [skripsiId],
-    );
-
-    if (studentRow) {
+    const studentUserId = await getStudentUserId(conn, skripsiId);
+    if (studentUserId) {
+      const kegiatan = kegiatanLabel(activeSidangForReview.jenis);
       const notifMap = {
         VALID: [
           "SIDANG_KAPRODI_VALID",
-          "Pengajuan sidang Anda telah disetujui oleh Kaprodi",
+          `Pengajuan ${kegiatan} Anda telah disetujui oleh Kaprodi`,
         ],
         NEED_REVISION: [
           "SIDANG_KAPRODI_NEED_REVISION",
-          "Kaprodi meminta revisi pada pengajuan sidang Anda",
-        ],
-        REJECTED: [
-          "SIDANG_KAPRODI_REJECTED",
-          "Pengajuan sidang Anda ditolak oleh Kaprodi",
+          `Kaprodi meminta revisi pada pengajuan ${kegiatan} Anda`,
         ],
       };
       const [notifType, notifMsg] = notifMap[action];
       await insertNotification(
         conn,
-        studentRow.id,
+        studentUserId,
         notifType,
         notifMsg,
         "/student/pengajuan-sidang",
@@ -2868,7 +2851,6 @@ exports.reviewKaprodi = async (req, res, next) => {
     const msgMap = {
       VALID: "disetujui",
       NEED_REVISION: "dikembalikan untuk revisi",
-      REJECTED: "ditolak",
     };
     return res.json({
       ok: true,
@@ -3000,6 +2982,49 @@ exports.listKaprodiSubmissions = async (req, res, next) => {
   }
 };
 
+// The disposisi is filled in once Sekretariat has verified the pengajuan and stays editable only
+// until it is sent: after that the Lembar Usulan Penguji / Surat Permohonan Seminar carry its values,
+// so a later change would no longer match them.
+const DISPOSISI_PENGAJUAN_STATUSES = ["VERIFIED", "WAITING_FOR_DISPOSISI"];
+
+async function loadDisposisiTarget(queryable, skripsiId) {
+  const pengajuan = await getActiveSidang(queryable, skripsiId);
+  if (!pengajuan) return { pengajuan: null, kaprodi: null };
+  const [[kaprodi]] = await queryable.query(
+    `SELECT psk.*, s.program_studi_id
+     FROM pengajuan_sidang_kaprodi psk
+     JOIN pengajuan_sidang ps ON ps.id = psk.pengajuan_sidang_id
+     JOIN skripsi s ON s.id = ps.skripsi_id
+     WHERE psk.pengajuan_sidang_id = ? LIMIT 1`,
+    [pengajuan.id],
+  );
+  return { pengajuan, kaprodi: kaprodi ?? null };
+}
+
+// Returns a refusal { status, message }, or null when the disposisi may be edited or sent.
+function disposisiStateError(pengajuan, kaprodi) {
+  if (!kaprodi) {
+    return { status: 404, message: "Pengajuan Sidang Kaprodi tidak ditemukan" };
+  }
+  if (kaprodi.status !== "VALID") {
+    return {
+      status: 409,
+      message:
+        kaprodi.status === "DISPOSISI_SENT" || kaprodi.status === "COMPLETED"
+          ? "Disposisi sudah dikirim dan tidak dapat diubah lagi"
+          : "Disposisi hanya bisa diisi setelah Kaprodi menyetujui pengajuan",
+    };
+  }
+  if (!DISPOSISI_PENGAJUAN_STATUSES.includes(pengajuan.status)) {
+    return {
+      status: 409,
+      message:
+        "Pengajuan Sidang harus berstatus WAITING_FOR_DISPOSISI sebelum mengisi disposisi",
+    };
+  }
+  return null;
+}
+
 exports.updateDisposisi = async (req, res, next) => {
   try {
     if (!req.user.hasRole("KAPRODI")) {
@@ -3021,17 +3046,7 @@ exports.updateDisposisi = async (req, res, next) => {
     }
     const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
 
-    const activeSidangForUpdate = await getActiveSidang(db, skripsiId);
-    const [[kaprodi]] = activeSidangForUpdate
-      ? await db.query(
-          `SELECT psk.*, s.program_studi_id
-           FROM pengajuan_sidang_kaprodi psk
-           JOIN pengajuan_sidang ps ON ps.id = psk.pengajuan_sidang_id
-           JOIN skripsi s ON s.id = ps.skripsi_id
-           WHERE psk.pengajuan_sidang_id = ? LIMIT 1`,
-          [activeSidangForUpdate.id],
-        )
-      : [[null]];
+    const { pengajuan, kaprodi } = await loadDisposisiTarget(db, skripsiId);
     if (!kaprodi) {
       return res.status(404).json({
         ok: false,
@@ -3044,39 +3059,62 @@ exports.updateDisposisi = async (req, res, next) => {
         message: "Anda tidak memiliki akses ke pengajuan ini",
       });
     }
-    if (kaprodi.status !== "VALID" && kaprodi.status !== "DISPOSISI_SENT") {
-      return res.status(409).json({
-        ok: false,
-        message:
-          "Disposisi hanya bisa diubah saat status VALID atau DISPOSISI_SENT",
-      });
+    const stateError = disposisiStateError(pengajuan, kaprodi);
+    if (stateError) {
+      return res
+        .status(stateError.status)
+        .json({ ok: false, message: stateError.message });
     }
 
-    const {
-      tanggalSidang,
-      waktuSidang,
-      tempatSidang,
-      tanggalDisposisi,
-      penguji1Nidn,
-      penguji2Nidn,
-    } = req.body ?? {};
+    // tanggal disposisi is set by the server when the disposisi is sent.
+    const { tanggalSidang, waktuSidang, tempatSidang, penguji1Nidn, penguji2Nidn } =
+      req.body ?? {};
 
     const updates = {};
-    if (tanggalSidang !== undefined)
-      updates.tanggal_sidang = tanggalSidang || null;
-    if (waktuSidang !== undefined) updates.waktu_sidang = waktuSidang || null;
-    if (tempatSidang !== undefined)
-      updates.tempat_sidang = tempatSidang ? String(tempatSidang).trim() : null;
-    if (tanggalDisposisi !== undefined)
-      updates.tanggal_disposisi = tanggalDisposisi || null;
+    if (tanggalSidang !== undefined) {
+      const value = tanggalSidang ? String(tanggalSidang).trim() : null;
+      if (value) {
+        const parsed = new Date(`${value}T00:00:00`);
+        if (
+          !TANGGAL_RE.test(value) ||
+          Number.isNaN(parsed.getTime()) ||
+          toIsoDate(parsed) !== value
+        ) {
+          return res
+            .status(400)
+            .json({ ok: false, message: "Tanggal sidang tidak valid (format YYYY-MM-DD)" });
+        }
+        if (isPastTanggal(value)) {
+          return res
+            .status(400)
+            .json({ ok: false, message: "Tanggal sidang tidak boleh sebelum hari ini" });
+        }
+      }
+      updates.tanggal_sidang = value;
+    }
+    if (waktuSidang !== undefined) {
+      const value = waktuSidang ? String(waktuSidang).trim() : null;
+      if (value && !WAKTU_RE.test(value)) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Waktu sidang tidak valid (format HH:MM)" });
+      }
+      updates.waktu_sidang = value;
+    }
+    if (tempatSidang !== undefined) {
+      const value = tempatSidang ? String(tempatSidang).trim() : "";
+      if (value.length > 255) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Tempat sidang maksimal 255 karakter" });
+      }
+      updates.tempat_sidang = value || null;
+    }
     if (penguji1Nidn !== undefined)
       updates.penguji1_nidn = penguji1Nidn ? String(penguji1Nidn).trim() : null;
     if (penguji2Nidn !== undefined)
       updates.penguji2_nidn = penguji2Nidn ? String(penguji2Nidn).trim() : null;
-    if (
-      updates.penguji2_nidn &&
-      activeSidangForUpdate.jenis === JENIS.SEMINAR_BISNIS_DIGITAL
-    ) {
+    if (updates.penguji2_nidn && pengajuan.jenis === JENIS.SEMINAR_BISNIS_DIGITAL) {
       return res.status(400).json({ ok: false, message: SINGLE_PENGUJI_MESSAGE });
     }
 
@@ -3089,7 +3127,7 @@ exports.updateDisposisi = async (req, res, next) => {
     const disposisiEligibilityError = await getIneligiblePengujiMessage(
       db,
       kaprodi.program_studi_id,
-      activeSidangForUpdate.jenis,
+      pengajuan.jenis,
       {
         penguji1Nidn: updates.penguji1_nidn,
         penguji2Nidn: updates.penguji2_nidn,
@@ -3104,12 +3142,18 @@ exports.updateDisposisi = async (req, res, next) => {
     const setClauses = Object.keys(updates)
       .map((k) => `${k} = ?`)
       .join(", ");
-    const setValues = Object.values(updates);
-
-    await db.query(
-      `UPDATE pengajuan_sidang_kaprodi SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [...setValues, kaprodi.id],
+    // Conditional on VALID, so a disposisi sent meanwhile is not overwritten.
+    const [result] = await db.query(
+      `UPDATE pengajuan_sidang_kaprodi SET ${setClauses}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND status = 'VALID'`,
+      [...Object.values(updates), kaprodi.id],
     );
+    if (result.affectedRows === 0) {
+      return res.status(409).json({
+        ok: false,
+        message: "Disposisi sudah dikirim dan tidak dapat diubah lagi",
+      });
+    }
 
     return res.json({ ok: true, message: "Data disposisi disimpan" });
   } catch (err) {
@@ -3118,7 +3162,7 @@ exports.updateDisposisi = async (req, res, next) => {
 };
 
 exports.submitDisposisi = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     if (!req.user.hasRole("KAPRODI")) {
@@ -3140,77 +3184,54 @@ exports.submitDisposisi = async (req, res, next) => {
     }
     const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
 
-    await conn.beginTransaction();
-    txStarted = true;
-
-    const activeSidangForDisposisi = await getActiveSidang(conn, skripsiId);
-    const [[kaprodi]] = activeSidangForDisposisi
-      ? await conn.query(
-          `SELECT psk.*, s.program_studi_id
-           FROM pengajuan_sidang_kaprodi psk
-           JOIN pengajuan_sidang ps ON ps.id = psk.pengajuan_sidang_id
-           JOIN skripsi s ON s.id = ps.skripsi_id
-           WHERE psk.pengajuan_sidang_id = ? LIMIT 1 FOR UPDATE`,
-          [activeSidangForDisposisi.id],
-        )
-      : [[null]];
+    const { pengajuan, kaprodi } = await loadDisposisiTarget(db, skripsiId);
     if (!kaprodi) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(404).json({
         ok: false,
         message: "Pengajuan Sidang Kaprodi tidak ditemukan",
       });
     }
     if (!kaprodiProgramStudiIds.includes(Number(kaprodi.program_studi_id))) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(403).json({
         ok: false,
         message: "Anda tidak memiliki akses ke pengajuan ini",
       });
     }
-    if (kaprodi.status !== "VALID" && kaprodi.status !== "DISPOSISI_SENT") {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(409).json({
-        ok: false,
-        message:
-          "Disposisi hanya bisa disubmit saat status VALID atau DISPOSISI_SENT",
-      });
+    const stateError = disposisiStateError(pengajuan, kaprodi);
+    if (stateError) {
+      return res
+        .status(stateError.status)
+        .json({ ok: false, message: stateError.message });
     }
 
     const missingDisposisi = [];
     if (!kaprodi.tanggal_sidang) missingDisposisi.push("tanggalSidang");
     if (!kaprodi.waktu_sidang) missingDisposisi.push("waktuSidang");
     if (!kaprodi.tempat_sidang) missingDisposisi.push("tempatSidang");
-    if (!kaprodi.tanggal_disposisi) missingDisposisi.push("tanggalDisposisi");
-    const pengujiRule = await getPengujiRule(
-      conn,
-      skripsiId,
-      activeSidangForDisposisi.jenis,
-    );
+    const pengujiRule = await getPengujiRule(db, skripsiId, pengajuan.jenis);
     if (!kaprodi.penguji1_nidn) missingDisposisi.push("penguji1Nidn");
     if (pengujiRule.hasPenguji2 && !kaprodi.penguji2_nidn) {
       missingDisposisi.push("penguji2Nidn");
     }
     if (missingDisposisi.length > 0) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(400).json({
         ok: false,
         message: `Field disposisi berikut belum diisi: ${missingDisposisi.join(", ")}`,
       });
     }
     if (!pengujiRule.hasPenguji2 && kaprodi.penguji2_nidn) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(400).json({ ok: false, message: SINGLE_PENGUJI_MESSAGE });
+    }
+    // A date saved on an earlier day may have passed since.
+    if (isPastTanggal(kaprodi.tanggal_sidang)) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Tanggal sidang tidak boleh sebelum hari ini" });
     }
 
     // Kaprodi is the only one who sets penguji for Bisnis Digital, so the pembimbing/duplicate
     // check the student's form runs must also run here.
-    const [[pembimbingRow]] = await conn.query(
+    const [[pembimbingRow]] = await db.query(
       `SELECT pembimbing1_nidn, pembimbing2_nidn FROM skripsi WHERE id = ? LIMIT 1`,
       [skripsiId],
     );
@@ -3221,47 +3242,31 @@ exports.submitDisposisi = async (req, res, next) => {
       pembimbing2Nidn: pembimbingRow?.pembimbing2_nidn ?? null,
     });
     if (disposisiPengujiError) {
-      await conn.rollback();
-      txStarted = false;
       return res.status(400).json({ ok: false, message: disposisiPengujiError });
     }
 
-    const sidang = await getActiveSidang(conn, skripsiId);
-    if (
-      !sidang ||
-      !["VERIFIED", "WAITING_FOR_DISPOSISI"].includes(sidang.status)
-    ) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(409).json({
-        ok: false,
-        message:
-          "Pengajuan Sidang harus berstatus WAITING_FOR_DISPOSISI sebelum mengirim disposisi",
-      });
-    }
-
     const submitDisposisiEligibilityError = await getIneligiblePengujiMessage(
-      conn,
+      db,
       kaprodi.program_studi_id,
-      activeSidangForDisposisi.jenis,
+      pengajuan.jenis,
       {
         penguji1Nidn: kaprodi.penguji1_nidn,
         penguji2Nidn: kaprodi.penguji2_nidn,
       },
     );
     if (submitDisposisiEligibilityError) {
-      await conn.rollback();
-      txStarted = false;
       return res
         .status(400)
         .json({ ok: false, message: submitDisposisiEligibilityError });
     }
 
-    const [[docData]] = await conn.query(
+    const tanggalDisposisi = toIsoDate();
+    const kaprodiForDocs = { ...kaprodi, tanggal_disposisi: tanggalDisposisi };
+
+    const [[docData]] = await db.query(
       `SELECT
          s.npm, m.nama AS nama_mahasiswa,
          ps.nama AS prodi_nama,
-         f.nama AS fakultas_nama,
          s.judul AS judul_skripsi,
          d1.nama AS dospem1_nama,
          d2.nama AS dospem2_nama,
@@ -3273,61 +3278,38 @@ exports.submitDisposisi = async (req, res, next) => {
        JOIN program_studi ps ON ps.id = s.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = s.pembimbing2_nidn
-       LEFT JOIN fakultas f ON f.id = ps.fakultas_id
        LEFT JOIN staf staf_kaprodi ON staf_kaprodi.usr_id = ps.kaprodi_staff_usr_id
        LEFT JOIN dosen d_kaprodi ON d_kaprodi.nidn = ps.kaprodi_nidn
        LEFT JOIN users u_mhs ON u_mhs.npm = s.npm AND u_mhs.is_active = 1
        WHERE s.id = ? LIMIT 1`,
       [skripsiId],
     );
-    if (docData) {
-      docData.kaprodi_sig = await getStaffSignature(
-        conn,
-        docData.kaprodi_staff_usr_id,
-      );
-    }
-
     const npm = docData?.npm ?? "";
-    const sidangDateFormatted = kaprodi.tanggal_sidang
-      ? formatTanggal(new Date(kaprodi.tanggal_sidang))
-      : "";
-    const disposisiDateFormatted = kaprodi.tanggal_disposisi
-      ? formatTanggal(new Date(kaprodi.tanggal_disposisi))
-      : "";
-    const waktuSidangFormatted = kaprodi.waktu_sidang
-      ? String(kaprodi.waktu_sidang).substring(0, 5)
-      : "";
 
-    // Bisnis Digital has no Lembar Usulan Penguji, so nothing is regenerated or signed here.
+    const documents = [];
+    // Bisnis Digital has no Lembar Usulan Penguji, so nothing is regenerated or signed for it here.
     if (pengujiRule.studentPicks) {
-      const [[pg1RowDisposisi]] = await conn.query(
-        `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
-        [kaprodi.penguji1_nidn],
-      );
-      const [[pg2RowDisposisi]] = await conn.query(
-        `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
-        [kaprodi.penguji2_nidn],
-      );
-
+      const kaprodiSig = await getStaffSignature(db, docData?.kaprodi_staff_usr_id);
       assertSignatures([
-        {
-          role: "Kaprodi",
-          nama: docData?.nama_kaprodi,
-          signatureImage: docData?.kaprodi_sig,
-        },
+        { role: "Kaprodi", nama: docData?.nama_kaprodi, signatureImage: kaprodiSig },
         {
           role: "Mahasiswa",
           nama: docData?.nama_mahasiswa,
           signatureImage: docData?.mahasiswa_sig,
         },
       ]);
-
-      const dataUsulanPengujiFTI = {
+      const [[pg1Row]] = await db.query(`SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`, [
+        kaprodi.penguji1_nidn,
+      ]);
+      const [[pg2Row]] = await db.query(`SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`, [
+        kaprodi.penguji2_nidn,
+      ]);
+      const usulanBuffer = await generateUsulanPengujiFTI({
         tanggal: formatTanggal(new Date()),
         programStudi: docData?.prodi_nama ?? "",
         ketuaProgramStudi: {
           nama: docData?.nama_kaprodi ?? "",
-          signatureBase64: docData?.kaprodi_sig ?? null,
+          signatureBase64: kaprodiSig ?? null,
         },
         mahasiswa: {
           nama: docData?.nama_mahasiswa ?? npm,
@@ -3337,96 +3319,103 @@ exports.submitDisposisi = async (req, res, next) => {
           judulSkripsi: docData?.judul_skripsi ?? "",
           signatureBase64: docData?.mahasiswa_sig ?? null,
         },
-        pilihanPenguji: await buildPilihanPenguji(
-          conn,
-          kaprodi.program_studi_id,
-          activeSidangForDisposisi.jenis,
-          {
-            penguji1Nidn: kaprodi.penguji1_nidn,
-            penguji2Nidn: kaprodi.penguji2_nidn,
-          },
-        ),
+        pilihanPenguji: await buildPilihanPenguji(db, kaprodi.program_studi_id, pengajuan.jenis, {
+          penguji1Nidn: kaprodi.usulan_penguji1_nidn ?? kaprodi.penguji1_nidn,
+          penguji2Nidn: kaprodi.usulan_penguji2_nidn ?? kaprodi.penguji2_nidn,
+        }),
         disposisi: {
-          pengujiUtama: pg1RowDisposisi?.nama ?? "",
-          pengujiKedua: pg2RowDisposisi?.nama ?? "",
-          tanggalUjian: sidangDateFormatted,
-          waktuUjian: waktuSidangFormatted,
-          tanggalDisposisi: disposisiDateFormatted,
-          signatureBase64: docData?.kaprodi_sig ?? null,
+          pengujiUtama: pg1Row?.nama ?? "",
+          pengujiKedua: pg2Row?.nama ?? "",
+          tanggalUjian: formatTanggal(new Date(kaprodi.tanggal_sidang)),
+          waktuUjian: String(kaprodi.waktu_sidang).substring(0, 5),
+          tanggalDisposisi: formatTanggal(new Date(`${tanggalDisposisi}T00:00:00`)),
+          signatureBase64: kaprodiSig ?? null,
         },
-      };
-      const usulanBuffer = await generateUsulanPengujiFTI(dataUsulanPengujiFTI);
-      const usulanBase64 = Buffer.from(usulanBuffer).toString("base64");
-      const mimeUsulanPdf = "application/pdf";
-
-      await conn.query(
-        `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = 'LEMBAR_USULAN_PENGUJI'`,
-        [sidang.id],
-      );
-      await conn.query(
-        `INSERT INTO pengajuan_sidang_files
-           (pengajuan_sidang_id, file_type, file_name, mime_type, file_content, source, status)
-         VALUES (?, 'LEMBAR_USULAN_PENGUJI', ?, ?, ?, 'SYSTEM', 'VERIFIED')`,
-        [
-          sidang.id,
-          `Lembar_Usulan_Penguji_${npm}.pdf`,
-          mimeUsulanPdf,
-          usulanBase64,
-        ],
+      });
+      documents.push({
+        fileType: "LEMBAR_USULAN_PENGUJI",
+        fileName: `Lembar_Usulan_Penguji_${npm}.pdf`,
+        base64: Buffer.from(usulanBuffer).toString("base64"),
+      });
+    }
+    if (pengajuan.jenis === JENIS.SEMINAR_BISNIS_DIGITAL) {
+      documents.push(
+        await buildPermohonanSeminar(db, skripsiId, kaprodiForDocs, { disposisi: true }),
       );
     }
 
-    if (activeSidangForDisposisi.jenis === JENIS.SEMINAR_BISNIS_DIGITAL) {
-      await storePermohonanSeminar(conn, skripsiId, activeSidangForDisposisi.id, kaprodi, {
-        disposisi: true,
-      });
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    // Both rows locked and re-checked: a double submit or an edit since the render gets a 409.
+    const [[lockedPengajuan]] = await conn.query(
+      `SELECT status FROM pengajuan_sidang WHERE id = ? FOR UPDATE`,
+      [pengajuan.id],
+    );
+    const [[lockedKaprodi]] = await conn.query(
+      `SELECT * FROM pengajuan_sidang_kaprodi WHERE id = ? FOR UPDATE`,
+      [kaprodi.id],
+    );
+    const lockedError = disposisiStateError(
+      { ...pengajuan, status: lockedPengajuan?.status },
+      lockedKaprodi,
+    );
+    if (lockedError) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(lockedError.status)
+        .json({ ok: false, message: lockedError.message });
+    }
+    if (
+      rowFingerprint(lockedKaprodi, DISPOSISI_FIELDS) !==
+      rowFingerprint(kaprodi, DISPOSISI_FIELDS)
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({ ok: false, message: CHANGED_WHILE_PROCESSING_MESSAGE });
+    }
+
+    for (const doc of documents) {
+      await upsertGeneratedFile(conn, pengajuan.id, doc);
     }
 
     await conn.query(
       `UPDATE pengajuan_sidang_kaprodi
-       SET status = 'DISPOSISI_SENT', disposisi_submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       SET status = 'DISPOSISI_SENT', tanggal_disposisi = ?, disposisi_submitted_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [kaprodi.id],
+      [tanggalDisposisi, kaprodi.id],
     );
 
     await conn.query(
       `UPDATE pengajuan_sidang
        SET status = 'WAITING_FOR_SURAT', updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [sidang.id],
+      [pengajuan.id],
     );
 
     const namaMahasiswa = docData?.nama_mahasiswa ?? npm;
+    const kegiatan = kegiatanLabel(pengajuan.jenis);
 
-    // Notify mahasiswa that schedule has been set and surat is pending
-    const [[studentRow]] = await conn.query(
-      `SELECT u.id FROM users u
-       JOIN skripsi s ON s.npm = u.npm
-       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
-      [skripsiId],
-    );
-    if (studentRow) {
+    const studentUserId = await getStudentUserId(conn, skripsiId);
+    if (studentUserId) {
       await insertNotification(
         conn,
-        studentRow.id,
+        studentUserId,
         "SIDANG_DISPOSISI_SUBMITTED",
-        "Kaprodi telah mengisi jadwal sidang. Menunggu surat undangan dari Sekretariat.",
+        `Kaprodi telah mengisi jadwal ${kegiatan}. Menunggu surat undangan dari Sekretariat.`,
         "/student/pengajuan-sidang",
       );
     }
 
-    const [sekRows] = await conn.query(
-      `SELECT u.id FROM users u
-       JOIN user_roles ur ON ur.user_id = u.id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE r.code = 'SEKRETARIAT'`,
-    );
-    for (const sek of sekRows) {
+    for (const sekId of await getSekretariatUserIds(conn)) {
       await insertNotification(
         conn,
-        sek.id,
+        sekId,
         "DISPOSISI_SIDANG_SENT",
-        `Kaprodi telah mengirim disposisi penguji dan jadwal sidang untuk mahasiswa ${namaMahasiswa}`,
+        `Kaprodi telah mengirim disposisi penguji dan jadwal ${kegiatan} untuk mahasiswa ${namaMahasiswa}`,
         "/sekretariat/disposisi-sidang",
       );
     }
@@ -3440,6 +3429,7 @@ exports.submitDisposisi = async (req, res, next) => {
       data: {
         id: kaprodi.id,
         status: "DISPOSISI_SENT",
+        tanggalDisposisi,
         disposisiSubmittedAt: new Date(),
       },
     });
@@ -3449,7 +3439,7 @@ exports.submitDisposisi = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
@@ -3517,7 +3507,7 @@ exports.listDisposisiForSekretariat = async (req, res, next) => {
        LEFT JOIN sidang sd ON sd.pengajuan_sidang_id = ps2.id
        LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = sd.id
        WHERE ${conditions.join(" AND ")}
-         AND ps2.status IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED','REJECTED')
+         AND ps2.status IN ('VERIFIED','WAITING_FOR_DISPOSISI','WAITING_FOR_SURAT','COMPLETED')
        ORDER BY psk.disposisi_submitted_at DESC, psk.reviewed_at DESC`,
       params,
     );
@@ -3657,6 +3647,9 @@ exports.generateSuratUndangan = async (req, res, next) => {
     // Locking the prodi row serializes concurrent generations for the same prodi, and the count
     // is a locking read (FOR SHARE) so it sees letters committed while we waited for that lock —
     // a plain read would use this transaction's older snapshot and hand out a duplicate number.
+    // The month comes from the Node clock, so the new sidang row stores this same `now` as its
+    // created_at (not MySQL's CURRENT_TIMESTAMP): with the DB in UTC and the app in WIB, the two
+    // disagree on the month for the first hours of each month, which would repeat a number.
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
@@ -3768,9 +3761,9 @@ exports.generateSuratUndangan = async (req, res, next) => {
     if (!existingSidang) {
       const [sidangIns] = await conn.query(
         `INSERT INTO sidang
-           (skripsi_id, jenis, nomor_surat, pengajuan_sidang_id)
-         VALUES (?, ?, ?, ?)`,
-        [skripsiId, sidang.jenis, nomorSuratSidang, sidang.id],
+           (skripsi_id, jenis, nomor_surat, pengajuan_sidang_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [skripsiId, sidang.jenis, nomorSuratSidang, sidang.id, now],
       );
       const newSidangId = sidangIns.insertId;
 
@@ -3818,18 +3811,13 @@ exports.generateSuratUndangan = async (req, res, next) => {
       );
     }
 
-    const [[studentRow]] = await conn.query(
-      `SELECT u.id FROM users u
-       JOIN skripsi s ON s.npm = u.npm
-       WHERE s.id = ? AND u.is_active = 1 LIMIT 1`,
-      [skripsiId],
-    );
-    if (studentRow) {
+    const studentUserId = await getStudentUserId(conn, skripsiId);
+    if (studentUserId) {
       await insertNotification(
         conn,
-        studentRow.id,
+        studentUserId,
         "SIDANG_COMPLETED",
-        "Surat undangan sidang telah dikirim. Pengajuan sidang selesai.",
+        `Surat undangan ${kegiatanLabel(sidang.jenis)} telah dikirim. Pengajuan ${kegiatanLabel(sidang.jenis)} selesai.`,
         "/student/pengajuan-sidang",
       );
     }

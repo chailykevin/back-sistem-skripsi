@@ -1,6 +1,7 @@
+/* The margin lives on @page, not on .page, so every page of a long consultation log keeps it. */
 @page {
   size: 8.5in 13in;
-  margin: 0;
+  margin: 2cm;
 }
 
 * { box-sizing: border-box; }
@@ -11,12 +12,6 @@ body {
   color: #000;
   font-family: "Times New Roman", serif;
   font-size: 12pt;
-}
-
-.page {
-  width: 8.5in;
-  min-height: 13in;
-  padding: 2cm;
 }
 
 .header {
@@ -117,7 +112,9 @@ h2 {
 .consultation-table th:nth-child(3),
 .consultation-table td:nth-child(3) { width: 18.95%; }
 
-.consultation-table tbody tr { height: 11mm; }
+.consultation-table thead { display: table-header-group; }
+
+.consultation-table tbody tr { height: 11mm; break-inside: avoid; }
 
 .consultation-signature {
   display: block;

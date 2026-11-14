@@ -172,7 +172,7 @@ function resolveWaitingOn(activeStatus) {
   if (activeStatus === "WAITING_SUBMISSION" || activeStatus === "NEED_REVISION") {
     return "Mahasiswa";
   }
-  if (activeStatus === "SUBMITTED" || activeStatus === "IN_REVIEW") {
+  if (activeStatus === "SUBMITTED") {
     return "Dosen Pembimbing";
   }
   return "";
@@ -730,7 +730,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       }
 
       const [sidangRows] = await db.query(
-        `SELECT id, skripsi_id, jenis, status, hasil_sidang FROM sidang WHERE skripsi_id IN (?) ORDER BY skripsi_id, id DESC`,
+        `SELECT id, skripsi_id, jenis, status, hasil_sidang, pengajuan_sidang_id FROM sidang WHERE skripsi_id IN (?) ORDER BY skripsi_id, id DESC`,
         [skripsiIds],
       );
       const latestSidangBySkripsiId = latestByKey(sidangRows, "skripsi_id");
@@ -899,13 +899,28 @@ exports.exportOverallProgressReport = async (req, res, next) => {
             // Bab 5 is done and the pending SK Skripsi is what blocks Pengajuan Sidang Skripsi.
             fase = "SK Penulisan Skripsi";
             status = LANJUTAN_STATUS_LABELS[lanjutan?.status] ?? LANJUTAN_STATUS_LABELS.WAITING_KAPRODI;
+          } else if (
+            pengajuanSidang &&
+            sidang &&
+            pengajuanSidang.jenis === sidang.jenis &&
+            sidang.pengajuan_sidang_id !== pengajuanSidang.id &&
+            !seminarFinished
+          ) {
+            // Re-exam: the newest pengajuan has no sidang yet, so the previous attempt's revisi is history.
+            fase = pengajuanSidang.jenis === SEMINAR ? "Pengajuan Seminar Proposal" : "Pengajuan Sidang";
+            status = pengajuanSidang.status;
+            if (pengajuanSidang.ujian_ke > 1) detailTahap = `Ujian Ke-${pengajuanSidang.ujian_ke}`;
+          } else if (revisi && revisi.is_completed === 1 && sidang.hasil_sidang === "LULUS" && !seminarFinished) {
+            // Revisi is done but Berkas Final not started (once started, the pengumpulan branch above wins).
+            fase = "Pengumpulan Berkas Final";
+            detailTahap = "Belum memulai pengumpulan berkas final";
           } else if (revisi && !seminarFinished) {
             const stages = revisiStagesByRevisiId.get(revisi.id) ?? [];
             const isCompleted = revisi.is_completed === 1;
             const { activeStage, activeStatus, stageRow } = resolveActiveRevisiStage(stages, isCompleted, sidang.jenis);
             const isTransisi = !isCompleted && !stageRow;
-            fase = isCompleted ? "Selesai" : (isSeminarSidang ? "Revisi Pasca Seminar" : "Revisi Pasca Sidang");
-            detailTahap = isCompleted ? "" : (isTransisi ? "Transisi" : (revisiStageLabel(activeStage, sidang.jenis) ?? ""));
+            fase = isSeminarSidang ? "Revisi Pasca Seminar" : "Revisi Pasca Sidang";
+            detailTahap = isCompleted ? "Selesai" : (isTransisi ? "Transisi" : (revisiStageLabel(activeStage, sidang.jenis) ?? ""));
             status = isCompleted || isTransisi ? "" : (activeStatus ?? "");
             menunggu = isCompleted || isTransisi ? "" : resolveWaitingOn(activeStatus);
             durasi = stageRow ? formatDurationHours(stageRow.updated_at, now) : "-";
@@ -1215,7 +1230,7 @@ exports.exportRevisiReport = async (req, res, next) => {
          CONCAT(sk.id, '-', s.jenis) AS skripsi_jenis_key,
          sk.id AS skripsi_id,
          sk.npm,
-         sk.judul,
+         COALESCE(lanjutan.judul_seminar, sk.judul) AS judul,
          sk.pembimbing1_nidn,
          sk.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
@@ -1224,6 +1239,7 @@ exports.exportRevisiReport = async (req, res, next) => {
        FROM revisi_pasca_sidang rps
        INNER JOIN sidang s ON s.id = rps.sidang_id
        INNER JOIN skripsi sk ON sk.id = s.skripsi_id
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        INNER JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = s.pengajuan_sidang_id
        WHERE sk.program_studi_id IN (${placeholders})

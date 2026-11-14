@@ -50,7 +50,12 @@
 
       <h2>CATATAN KONSULTASI</h2>
       <table class="consultation-table">
-        <thead><tr><th>TANGGAL</th><th>K E T E R A N G A N</th><th>P A R A F</th></tr></thead>
+        <colgroup><col class="col-tanggal" /><col class="col-keterangan" /><col class="col-paraf" /></colgroup>
+        <thead>
+          <tr class="page-gap" aria-hidden="true"><td colspan="3"></td></tr>
+          <tr><th>TANGGAL</th><th>K E T E R A N G A N</th><th>P A R A F</th></tr>
+        </thead>
+        <tfoot><tr class="page-gap-bottom" aria-hidden="true"><td colspan="3"></td></tr></tfoot>
         <tbody>{{catatanKonsultasiRows}}</tbody>
       </table>
     </main>

@@ -7,6 +7,14 @@ const UPLOAD_RULES = {
   SCAN: { extensions: [".pdf", ".jpg", ".jpeg", ".png"], maxBytes: 10 * MB, label: "PDF, JPG, atau PNG" },
   // Transkrip nilai at Pengajuan Disposisi Pembimbing and its re-upload in SK Penulisan.
   TRANSKRIP: { extensions: [".pdf", ".jpg", ".jpeg", ".png", ".xlsx"], maxBytes: 10 * MB, label: "PDF, JPG, PNG, atau XLSX" },
+  // Konsultasi Skripsi chapter files and the pembimbing's annotated file, and the whole Berkas Skripsi
+  // and Artikel Jurnal at Pengajuan Sidang. Capped at 10 MB like every other rule: production MySQL's
+  // max_allowed_packet is 16 MB and files are stored as base64 (+33%).
+  SKRIPSI_CHAPTER: { extensions: [".pdf", ".doc", ".docx"], maxBytes: 10 * MB, label: "PDF, DOC, atau DOCX" },
+  // File Skripsi and Artikel Penelitian at Pengumpulan Berkas Final (the student page accepts only PDF).
+  PDF: { extensions: [".pdf"], maxBytes: 10 * MB, label: "PDF" },
+  // Pas foto at Pengajuan Sidang.
+  PHOTO: { extensions: [".jpg", ".jpeg", ".png"], maxBytes: 2 * MB, label: "JPG atau PNG" },
 };
 
 // Decoded size of a base64 payload (optionally a data URL) without decoding it.

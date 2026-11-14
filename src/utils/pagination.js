@@ -36,11 +36,12 @@ function buildPagination({ page, limit, totalItems }) {
   };
 }
 
-function listResponse(res, { rows, pagination }) {
-  if (!pagination.enabled) return res.json({ ok: true, data: rows });
+function listResponse(res, { rows, pagination, extra = {} }) {
+  if (!pagination.enabled) return res.json({ ok: true, data: rows, ...extra });
   return res.json({
     ok: true,
     data: rows,
+    ...extra,
     pagination: buildPagination({
       page: pagination.page,
       limit: pagination.limit,

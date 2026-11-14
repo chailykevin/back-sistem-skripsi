@@ -25,6 +25,7 @@ const {
   generateHalamanPersetujuanFile,
 } = require("../services/skPenulisan.service");
 const {
+  getDekanFakultasIds,
   getStudentNpm,
   getStaffUsrId,
   getKaprodiProgramStudiIds,
@@ -303,19 +304,6 @@ async function upsertSkFile(
 function parseOutlineId(req) {
   const id = Number(req.params.outlineId);
   return Number.isFinite(id) && id > 0 ? id : null;
-}
-
-// Fakultas whose Dekan is this account. The Dekan columns are matched the same way the Dekan list
-// always has: the legacy NIDN if set, else the staff account.
-async function getDekanFakultasIds(userId) {
-  const [rows] = await db.query(
-    `SELECT f.id
-     FROM fakultas f
-     JOIN users u ON u.id = ? AND u.is_active = 1
-     WHERE COALESCE(f.dekan_nidn, f.dekan_staff_usr_id) = COALESCE(u.nidn, u.staff_usr_id)`,
-    [userId],
-  );
-  return rows.map((row) => Number(row.id));
 }
 
 // The owning student, Sekretariat, the Kaprodi of the student's prodi and the Dekan of its fakultas.

@@ -34,4 +34,13 @@ function formatTanggal(date) {
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-module.exports = { BULAN_ID, BULAN_ROMAWI, formatTanggal };
+// "2026-01-05" in the server's local time, for DATE columns (toISOString() would give the UTC date,
+// a day early before 07:00 WIB).
+function toIsoDate(date = new Date()) {
+  const d = new Date(date);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+module.exports = { BULAN_ID, BULAN_ROMAWI, formatTanggal, toIsoDate };

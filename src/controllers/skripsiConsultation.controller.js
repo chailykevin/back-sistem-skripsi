@@ -1,7 +1,12 @@
 ﻿const db = require("../db");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
-const path = require("path");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
+const { mimeFromFileName } = require("../utils/mime");
+const {
+  CHAPTER_ORDER,
+  resolveActiveKonsultasiSkripsiStage: resolveActiveStage,
+} = require("../utils/workflowStage");
 const {
   getOpenPeriod: getSidangOpenPeriod,
 } = require("../services/sidangSubmissionPeriod.service");
@@ -12,14 +17,16 @@ const {
   generateKartuPenulisanSkripsiFTI,
 } = require("../services/generateKartuPenulisanSkripsiFTI.js");
 const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-const { assertSignatures, getStaffSignature } = require("../utils/signature");
+const {
+  assertSignatures,
+  getStaffSignature,
+  hasSignature,
+} = require("../utils/signature");
 const {
   JENIS,
   requireJenis,
   resolveJenis,
 } = require("../services/sidangScope.service");
-
-const CHAPTER_ORDER = ["BAB_1", "BAB_2", "BAB_3", "BAB_4", "BAB_5"];
 
 // A Seminar Bisnis Digital record pauses after Bab 3 for its Seminar sidang; Bab 4 opens when the
 // Seminar revisi completes (finishSeminarPhase), when resolveJenis switches the record to SKRIPSI.
@@ -44,7 +51,7 @@ function isPausedForSeminar(jenis, stages) {
 async function ensurePengajuanSidangDraft(conn, skripsiId, jenis) {
   const [[existing]] = await conn.query(
     `SELECT id FROM pengajuan_sidang
-     WHERE skripsi_id = ? AND jenis = ? AND status NOT IN ('COMPLETED','REJECTED')
+     WHERE skripsi_id = ? AND jenis = ? AND status <> 'COMPLETED'
      ORDER BY id DESC LIMIT 1`,
     [skripsiId, requireJenis(jenis)],
   );
@@ -100,6 +107,28 @@ function hasRole(req, role) {
   return typeof req.user?.hasRole === "function" && req.user.hasRole(role);
 }
 
+// Student owner, either assigned pembimbing, or the Kaprodi of the student's prodi.
+async function canAccessSkripsiConsultation(
+  req,
+  { npm, pembimbing1_nidn, pembimbing2_nidn, program_studi_id },
+) {
+  if (req.user.userType === "STUDENT") {
+    const studentNpm = await getStudentNpm(req.user.id);
+    return Boolean(studentNpm) && studentNpm === npm;
+  }
+  const nidn = await getLecturerNidn(req.user.id);
+  if (nidn && (nidn === pembimbing1_nidn || nidn === pembimbing2_nidn)) {
+    return true;
+  }
+  if (!hasRole(req, "KAPRODI")) return false;
+  const staffUsrId = await getStaffUsrId(req.user.id);
+  if (!staffUsrId) return false;
+  const programStudiIds = await getKaprodiProgramStudiIds(staffUsrId);
+  return programStudiIds.includes(Number(program_studi_id));
+}
+
+const SUBMITTABLE_STAGE_STATUSES = ["WAITING_SUBMISSION", "NEED_REVISION"];
+
 function formatKartuDate(value) {
   if (!value) return "";
   return new Intl.DateTimeFormat("id-ID", {
@@ -111,14 +140,7 @@ function formatKartuDate(value) {
 }
 
 function getChapterGroupLabel(chapterGroup) {
-  const map = {
-    BAB_1: "Bab 1",
-    BAB_2: "Bab 2",
-    BAB_3: "Bab 3",
-    BAB_4: "Bab 4",
-    BAB_5: "Bab 5",
-  };
-  return map[chapterGroup] ?? chapterGroup ?? "";
+  return CHAPTER_LABEL[chapterGroup] ?? chapterGroup ?? "";
 }
 
 function getStageLabel(stage) {
@@ -135,54 +157,10 @@ function getDecisionLabel(status) {
 }
 
 function canReviewStageStatus(stageStatus) {
-  return stageStatus === "SUBMITTED" || stageStatus === "IN_REVIEW";
+  return stageStatus === "SUBMITTED";
 }
 
-function resolveActiveStage(stages) {
-  for (const chapterGroup of CHAPTER_ORDER) {
-    const p2 =
-      stages.find(
-        (s) => s.chapter_group === chapterGroup && s.stage === "PEMBIMBING_2",
-      ) ?? null;
-    const p1 =
-      stages.find(
-        (s) => s.chapter_group === chapterGroup && s.stage === "PEMBIMBING_1",
-      ) ?? null;
-
-    if (!p2) continue;
-    if (p2.current_status !== "CONTINUE") {
-      return {
-        chapterGroup,
-        activeStage: "PEMBIMBING_2",
-        activeStatus: p2.current_status,
-        stageRow: p2,
-      };
-    }
-    if (!p1) {
-      return {
-        chapterGroup,
-        activeStage: null,
-        activeStatus: null,
-        stageRow: null,
-      };
-    }
-    if (p1.current_status !== "ACCEPTED") {
-      return {
-        chapterGroup,
-        activeStage: "PEMBIMBING_1",
-        activeStatus: p1.current_status,
-        stageRow: p1,
-      };
-    }
-  }
-  return {
-    chapterGroup: null,
-    activeStage: null,
-    activeStatus: null,
-    stageRow: null,
-  };
-}
-
+// Every review is a kartu row; the PDF table grows onto more pages as needed.
 async function getKartuLogs(queryable, kartuId) {
   const [logs] = await queryable.query(
     `SELECT
@@ -201,8 +179,7 @@ async function getKartuLogs(queryable, kartuId) {
      LEFT JOIN dosen d ON d.nidn = u.nidn
      LEFT JOIN widya_miko.m_dosen sd ON sd.dsnId = st.pembimbing_nidn
      WHERE st.kartu_konsultasi_skripsi_id = ?
-     ORDER BY rv.reviewed_at ASC, rv.id ASC
-     LIMIT 53`,
+     ORDER BY rv.reviewed_at ASC, rv.id ASC`,
     [kartuId],
   );
   return logs;
@@ -248,7 +225,7 @@ function buildKartuKonsultasiSkripsiPdfData(kartu, logs, extra = {}) {
     ...(extra.tanggalSelesaiProposal !== undefined && {
       tanggalSelesaiMenulisProposal: extra.tanggalSelesaiProposal,
     }),
-    catatanKonsultasi: logs.slice(0, 53).map((log) => ({
+    catatanKonsultasi: logs.map((log) => ({
       tanggal: formatKartuDate(log.logged_at),
       keterangan: `${getChapterGroupLabel(log.chapter_group)} - ${getStageLabel(log.stage)} - ${getDecisionLabel(log.status)}: ${log.catatan_kartu ?? ""}`,
       parafBase64: log.reviewer_signature,
@@ -545,7 +522,9 @@ exports.getMyDetail = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT k.*, sk.npm, sk.judul AS judul_skripsi, sk.program_studi_id, sk.jalur,
+      `SELECT k.id, k.skripsi_id, k.is_completed, k.completed_at, k.file_name, k.mime_type,
+              k.generated_at, k.created_at, k.updated_at,
+              sk.npm, sk.judul AS judul_skripsi, sk.program_studi_id, sk.jalur,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
               m.nama AS nama_mahasiswa, ps.nama AS program_studi_nama,
               d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
@@ -647,6 +626,15 @@ exports.submitMyChapter = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "fileName is required" });
     }
+    const uploadError = validateUpload(
+      fileContent,
+      safeFileName,
+      UPLOAD_RULES.SKRIPSI_CHAPTER,
+      "File bab",
+    );
+    if (uploadError) {
+      return res.status(400).json({ ok: false, message: uploadError });
+    }
 
     const npm = await getStudentNpm(req.user.id);
     if (!npm) {
@@ -703,16 +691,19 @@ exports.submitMyChapter = async (req, res, next) => {
       });
     }
 
+    // A file can only be sent when the stage is waiting for one: not while the previous submission
+    // is still waiting for review, and not after the stage is finished.
     const activeStage = resolved.stageRow;
-    if (
-      activeStage.current_status === "ACCEPTED" ||
-      activeStage.current_status === "CONTINUE"
-    ) {
+    if (!SUBMITTABLE_STAGE_STATUSES.includes(activeStage.current_status)) {
       await conn.rollback();
       txStarted = false;
-      return res
-        .status(409)
-        .json({ ok: false, message: "Active stage is already completed" });
+      return res.status(409).json({
+        ok: false,
+        message:
+          activeStage.current_status === "SUBMITTED"
+            ? "File sebelumnya masih menunggu review dosen pembimbing"
+            : "Tahap ini tidak menerima pengajuan file",
+      });
     }
 
     const nextSubmissionNo = Number(activeStage.current_submission_no || 0) + 1;
@@ -793,9 +784,7 @@ exports.getSubmissionFile = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         s.id, s.konsultasi_skripsi_stage_id, s.submission_no,
-         s.file_content, s.file_name, s.submitted_at,
-         st.chapter_group, st.stage,
+         s.file_content, s.file_name,
          sk.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn, sk.program_studi_id
        FROM konsultasi_skripsi_submission s
        INNER JOIN konsultasi_skripsi_stage st ON st.id = s.konsultasi_skripsi_stage_id
@@ -812,23 +801,18 @@ exports.getSubmissionFile = async (req, res, next) => {
         .json({ ok: false, message: "Submission not found" });
     }
 
-    let isAuthorized = false;
-    if (req.user.userType === "STUDENT") {
-      const npm = await getStudentNpm(req.user.id);
-      isAuthorized = Boolean(npm) && npm === submission.npm;
-    } else if (req.user.userType === "LECTURER") {
-      const nidn = await getLecturerNidn(req.user.id);
-      isAuthorized =
-        Boolean(nidn) &&
-        (nidn === submission.pembimbing1_nidn ||
-          nidn === submission.pembimbing2_nidn);
-    }
-
-    if (!isAuthorized) {
+    if (!(await canAccessSkripsiConsultation(req, submission))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    return res.json({ ok: true, data: submission });
+    return res.json({
+      ok: true,
+      data: {
+        file_name: submission.file_name,
+        mime_type: mimeFromFileName(submission.file_name),
+        file_content: submission.file_content,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -843,8 +827,8 @@ exports.getReviewFile = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT
-         rf.id, rf.file_content, rf.file_name, rf.mime_type, rf.created_at,
-         sk.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn
+         rf.file_content, rf.file_name, rf.mime_type,
+         sk.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn, sk.program_studi_id
        FROM konsultasi_skripsi_review_file rf
        INNER JOIN konsultasi_skripsi_review r ON r.id = rf.konsultasi_skripsi_review_id
        INNER JOIN konsultasi_skripsi_stage st ON st.id = r.konsultasi_skripsi_stage_id
@@ -861,22 +845,18 @@ exports.getReviewFile = async (req, res, next) => {
         .json({ ok: false, message: "Review file not found" });
     }
 
-    let isAuthorized = false;
-    if (req.user.userType === "STUDENT") {
-      const npm = await getStudentNpm(req.user.id);
-      isAuthorized = Boolean(npm) && npm === file.npm;
-    } else if (req.user.userType === "LECTURER") {
-      const nidn = await getLecturerNidn(req.user.id);
-      isAuthorized =
-        Boolean(nidn) &&
-        (nidn === file.pembimbing1_nidn || nidn === file.pembimbing2_nidn);
-    }
-
-    if (!isAuthorized) {
+    if (!(await canAccessSkripsiConsultation(req, file))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
-    return res.json({ ok: true, data: file });
+    return res.json({
+      ok: true,
+      data: {
+        file_name: file.file_name,
+        mime_type: file.mime_type ?? mimeFromFileName(file.file_name),
+        file_content: file.file_content,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -895,13 +875,8 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid stageId" });
     }
 
-    const {
-      decisionStatus,
-      catatanKartu,
-      reviewFile,
-      reviewFileName,
-      reviewFileMimeType,
-    } = req.body || {};
+    const { decisionStatus, catatanKartu, reviewFile, reviewFileName } =
+      req.body || {};
 
     if (!decisionStatus || !String(catatanKartu || "").trim()) {
       return res.status(400).json({
@@ -921,14 +896,44 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         message: "reviewFileName is required when reviewFile is provided",
       });
     }
+    if (hasReviewFile) {
+      const uploadError = validateUpload(
+        reviewFile,
+        safeReviewFileName,
+        UPLOAD_RULES.SKRIPSI_CHAPTER,
+        "File review",
+      );
+      if (uploadError) {
+        return res.status(400).json({ ok: false, message: uploadError });
+      }
+    }
 
     const nidn = await getLecturerNidn(req.user.id);
     if (!nidn) {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
+    // Lock the kartu before the stage, the same order as submitMyChapter, so a student submit
+    // and a review can't deadlock. The kartu id is looked up before the transaction so this
+    // plain read doesn't fix the transaction's snapshot.
+    const [[stageKartuRow]] = await conn.query(
+      `SELECT kartu_konsultasi_skripsi_id AS kartu_id
+       FROM konsultasi_skripsi_stage
+       WHERE id = ? AND pembimbing_nidn = ?
+       LIMIT 1`,
+      [stageId, nidn],
+    );
+    if (!stageKartuRow) {
+      return res.status(404).json({ ok: false, message: "Stage not found" });
+    }
+
     await conn.beginTransaction();
     txStarted = true;
+
+    await conn.query(
+      `SELECT id FROM kartu_konsultasi_skripsi WHERE id = ? FOR UPDATE`,
+      [stageKartuRow.kartu_id],
+    );
 
     const [stageRows] = await conn.query(
       `SELECT s.*, k.id AS kartu_id, k.skripsi_id AS kartu_skripsi_id,
@@ -977,7 +982,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     const shouldRequireSignature =
       (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
       (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
-    let signatureImageValue = null;
     if (shouldRequireSignature) {
       const [[sigRow]] = await conn.query(
         `SELECT dsnTtd AS signature_image
@@ -986,7 +990,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
          LIMIT 1`,
         [stage.pembimbing_nidn],
       );
-      if (!sigRow?.signature_image) {
+      if (!hasSignature(sigRow?.signature_image)) {
         await conn.rollback();
         txStarted = false;
         return res.status(400).json({
@@ -995,7 +999,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             "No signature found in SIMIKO. Please update it in SIMIKO first.",
         });
       }
-      signatureImageValue = sigRow.signature_image;
     }
 
     const [subRows] = await conn.query(
@@ -1050,7 +1053,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           reviewIns.insertId,
           String(reviewFile),
           safeReviewFileName,
-          reviewFileMimeType ?? null,
+          mimeFromFileName(safeReviewFileName),
           req.user.id,
         ],
       );
@@ -1161,6 +1164,12 @@ exports.reviewStageByLecturer = async (req, res, next) => {
           stage.kartu_skripsi_id,
           JENIS.SKRIPSI,
         );
+        await conn.query(
+          `UPDATE skripsi
+           SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [stage.kartu_skripsi_id],
+        );
       }
     }
 
@@ -1230,12 +1239,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
             "SKRIPSI_CONSULTATION_COMPLETED",
             "Konsultasi skripsi Anda telah selesai",
             "/student/skripsi-consultations",
-          );
-          await conn.query(
-            `UPDATE skripsi
-             SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
-             WHERE id = ?`,
-            [kartuInfo.skripsi_id],
           );
         } else {
           await insertNotification(
@@ -1343,24 +1346,19 @@ exports.getLecturerStageDetail = async (req, res, next) => {
       [row.kartu_id],
     );
 
-    const [logs] = await db.query(
-      `SELECT
-         rv.id,
-         st.chapter_group,
-         st.stage,
-         rv.submission_no,
-         rv.decision_status AS status,
-         rv.catatan_kartu,
-         rv.reviewed_at     AS logged_at,
-         CASE WHEN rf.id IS NULL THEN 0 ELSE 1 END AS has_review_file,
-         rf.id AS review_file_id, rf.file_name AS review_file_name
-       FROM konsultasi_skripsi_review rv
-       JOIN konsultasi_skripsi_stage st ON st.id = rv.konsultasi_skripsi_stage_id
-       LEFT JOIN konsultasi_skripsi_review_file rf ON rf.konsultasi_skripsi_review_id = rv.id
-       WHERE st.kartu_konsultasi_skripsi_id = ?
-       ORDER BY rv.reviewed_at DESC`,
-      [row.kartu_id],
-    );
+    // The kartu log is the same review list under the field names the kartu uses.
+    const logs = reviews.map((r) => ({
+      id: r.id,
+      chapter_group: r.chapter_group,
+      stage: r.stage,
+      submission_no: r.submission_no,
+      status: r.decision_status,
+      catatan_kartu: r.catatan_kartu,
+      logged_at: r.reviewed_at,
+      has_review_file: r.has_review_file,
+      review_file_id: r.review_file_id,
+      review_file_name: r.review_file_name,
+    }));
 
     return res.json({
       ok: true,
@@ -1530,17 +1528,6 @@ exports.listForKaprodi = async (req, res, next) => {
       params.push(String(periodeAkademik));
     }
 
-    const [[countRow]] = await db.query(
-      `SELECT COUNT(*) AS total
-       FROM kartu_konsultasi_skripsi k
-       JOIN skripsi sk ON sk.id = k.skripsi_id
-       JOIN mahasiswa m ON m.npm = sk.npm
-       LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = sk.outline_id
-       LEFT JOIN outline_submission_period osp ON osp.id = psk.submission_period_id
-       WHERE ${where.join(" AND ")}`,
-      params,
-    );
-
     const [kartuRows] = await db.query(
       `SELECT
          k.id AS kartu_id, k.skripsi_id, sk.npm,
@@ -1600,7 +1587,7 @@ exports.listForKaprodi = async (req, res, next) => {
 
     const filteredRows = rows.filter((row) => {
       if (stage && ["PEMBIMBING_2", "PEMBIMBING_1"].includes(stage) && row.active_stage !== stage) return false;
-      if (status && ["WAITING_SUBMISSION", "SUBMITTED", "IN_REVIEW", "NEED_REVISION", "CONTINUE", "ACCEPTED"].includes(status) && row.active_status !== status) return false;
+      if (status && ["WAITING_SUBMISSION", "SUBMITTED", "NEED_REVISION", "CONTINUE", "ACCEPTED"].includes(status) && row.active_status !== status) return false;
       return true;
     });
     pagination.totalItems = filteredRows.length;
@@ -1635,26 +1622,7 @@ exports.getFinalKartuFile = async (req, res, next) => {
         .json({ ok: false, message: "Consultation not found" });
     }
 
-    let isAuthorized = false;
-    if (req.user.userType === "STUDENT") {
-      const npm = await getStudentNpm(req.user.id);
-      isAuthorized = Boolean(npm) && npm === kartu.npm;
-    } else if (req.user.userType === "LECTURER") {
-      const nidn = await getLecturerNidn(req.user.id);
-      isAuthorized =
-        Boolean(nidn) &&
-        (nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn);
-      if (!isAuthorized && hasRole(req, "KAPRODI")) {
-        const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(
-          await getStaffUsrId(req.user.id),
-        );
-        isAuthorized = kaprodiProgramStudiIds.includes(
-          Number(kartu.program_studi_id),
-        );
-      }
-    }
-
-    if (!isAuthorized) {
+    if (!(await canAccessSkripsiConsultation(req, kartu))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 
@@ -1665,13 +1633,10 @@ exports.getFinalKartuFile = async (req, res, next) => {
     }
 
     const fileBuffer = Buffer.from(kartu.file_content, "base64");
-    const mimeType =
-      kartu.mime_type ??
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Type", kartu.mime_type ?? "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${kartu.file_name ?? "kartu-konsultasi-skripsi.docx"}"`,
+      `attachment; filename="${kartu.file_name ?? "kartu-penulisan-skripsi.pdf"}"`,
     );
     res.setHeader("Content-Length", fileBuffer.length);
     return res.send(fileBuffer);
@@ -1815,7 +1780,7 @@ exports.getDetailForKaprodi = async (req, res, next) => {
   }
 };
 
-exports.previewKartuDocx = async (req, res, next) => {
+exports.previewKartuPdf = async (req, res, next) => {
   try {
     const skripsiId = Number(req.params.skripsiId);
     if (!Number.isFinite(skripsiId) || skripsiId <= 0) {
@@ -1823,7 +1788,7 @@ exports.previewKartuDocx = async (req, res, next) => {
     }
 
     const [kartuRows] = await db.query(
-      `SELECT k.id, k.skripsi_id, k.is_completed, k.completed_at, k.file_content, k.file_name, k.mime_type,
+      `SELECT k.id, k.skripsi_id, k.is_completed, k.completed_at,
               sk.npm, sk.pembimbing1_nidn, sk.pembimbing2_nidn, sk.program_studi_id
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
@@ -1837,26 +1802,7 @@ exports.previewKartuDocx = async (req, res, next) => {
         .json({ ok: false, message: "Consultation not found" });
     }
 
-    let isAuthorized = false;
-    if (req.user.userType === "STUDENT") {
-      const npm = await getStudentNpm(req.user.id);
-      isAuthorized = Boolean(npm) && npm === kartu.npm;
-    } else if (req.user.userType === "LECTURER") {
-      const nidn = await getLecturerNidn(req.user.id);
-      isAuthorized =
-        Boolean(nidn) &&
-        (nidn === kartu.pembimbing1_nidn || nidn === kartu.pembimbing2_nidn);
-      if (!isAuthorized && hasRole(req, "KAPRODI")) {
-        const kaprodiProgramStudiIds = await getKaprodiProgramStudiIds(
-          await getStaffUsrId(req.user.id),
-        );
-        isAuthorized = kaprodiProgramStudiIds.includes(
-          Number(kartu.program_studi_id),
-        );
-      }
-    }
-
-    if (!isAuthorized) {
+    if (!(await canAccessSkripsiConsultation(req, kartu))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
 

@@ -58,4 +58,40 @@ async function getStaffSignature(queryable, staffUsrId) {
   return rows[0]?.signature_image ?? null;
 }
 
-module.exports = { hasSignature, assertSignatures, getStaffSignature };
+// Dosen (pembimbing/penguji) signatures live in SIMIKO and are keyed by NIDN.
+async function getDosenSignature(queryable, nidn) {
+  if (!nidn) return null;
+  const [rows] = await queryable.query(
+    `SELECT dsnTtd AS signature_image FROM widya_miko.m_dosen WHERE dsnId = ? LIMIT 1`,
+    [nidn],
+  );
+  return rows[0]?.signature_image ?? null;
+}
+
+// Mahasiswa (and the institution accounts) keep theirs in users.signature_image.
+async function getUserSignature(queryable, userId) {
+  if (!userId) return null;
+  const [rows] = await queryable.query(
+    `SELECT signature_image FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
+    [userId],
+  );
+  return rows[0]?.signature_image ?? null;
+}
+
+async function getMahasiswaSignature(queryable, npm) {
+  if (!npm) return null;
+  const [rows] = await queryable.query(
+    `SELECT signature_image FROM users WHERE npm = ? AND is_active = 1 LIMIT 1`,
+    [npm],
+  );
+  return rows[0]?.signature_image ?? null;
+}
+
+module.exports = {
+  hasSignature,
+  assertSignatures,
+  getStaffSignature,
+  getDosenSignature,
+  getUserSignature,
+  getMahasiswaSignature,
+};

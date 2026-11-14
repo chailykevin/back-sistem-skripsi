@@ -12,15 +12,21 @@ const {
   generateNotulenPengujiFTI,
 } = require("../services/generateNotulenPengujiFTI");
 const {
+  getDekanFakultasIds,
   getStudentNpm,
   getLecturerNidn,
   getStaffUsrId,
   getKaprodiProgramStudiIds,
   isKaprodiOfProgramStudi,
 } = require("../utils/identity");
-const { assertSignatures, getStaffSignature } = require("../utils/signature");
+const {
+  assertSignatures,
+  getStaffSignature,
+  hasSignature,
+} = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
+const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
 const {
   generateNotulenSeminarProposalFTI,
 } = require("../services/generateNotulenSeminarProposalFTI");
@@ -30,7 +36,7 @@ const {
 const {
   JENIS,
   resolveJenis,
-  resolveReadJenis,
+  resolveReadTarget: resolveReadTargetShared,
   countSidang,
 } = require("../services/sidangScope.service");
 const { finishSeminarPhase } = require("../services/skSkripsiLanjutan.service");
@@ -49,7 +55,7 @@ const NOTULEN_ROLE_LABEL = {
 async function resolveUserId(conn, nidn) {
   if (!nidn) return null;
   const [[row]] = await conn.query(
-    `SELECT id FROM users WHERE COALESCE(nidn, staff_usr_id) = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
+    `SELECT id FROM users WHERE nidn = ? AND is_active = 1 ORDER BY id ASC LIMIT 1`,
     [nidn],
   );
   return row?.id ?? null;
@@ -122,13 +128,16 @@ function isRevisiParticipant(sidangRow, nidn) {
   );
 }
 
-// revisiRow needs npm, program_studi_id and the 4 participant NIDNs.
+// revisiRow needs npm, program_studi_id, fakultas_id (for the Dekan) and the 4 participant NIDNs.
 async function canAccessRevisi(req, revisiRow, { allowDekan = false } = {}) {
   if (req.user.hasRole("STUDENT")) {
     return (await getStudentNpm(req.user.id)) === revisiRow.npm;
   }
   if (req.user.hasRole("SEKRETARIAT")) return true;
-  if (allowDekan && req.user.hasRole("DEKAN")) return true;
+  if (allowDekan && req.user.hasRole("DEKAN")) {
+    const fakultasIds = await getDekanFakultasIds(req.user.id);
+    return fakultasIds.includes(Number(revisiRow.fakultas_id));
+  }
   if (req.user.hasRole("KAPRODI")) {
     return isKaprodiOfProgramStudi(req.user.id, revisiRow.program_studi_id);
   }
@@ -295,9 +304,111 @@ async function generateHalamanPengesahanSeminarDoc(conn, revisiRow) {
   });
 }
 
+const REVISI_CHANGED_MESSAGE =
+  "Data revisi berubah saat sedang diproses. Silakan muat ulang halaman dan kirim kembali.";
+const MAX_FILE_NAME_LENGTH = 255;
+
+// Reads take an optional ?sidangId= to open one specific attempt (one revisi per sidang) instead of
+// the latest sidang's revisi. Shared with the sidang file downloads (sidangScope.service.js); throws
+// 400/404, which the callers' catch passes to next(). Returns { jenis, sidangId }.
+function resolveReadTarget(req, _res, skripsiId) {
+  return resolveReadTargetShared(db, skripsiId, req.query ?? {});
+}
+
+// The role of a dosen caller in this sidang (same precedence as the lecturer list), or null.
+function callerRoleFor(sidangRow, nidn) {
+  if (!nidn) return null;
+  for (const role of ["PENGUJI_2", "PENGUJI_1", "PEMBIMBING_2", "PEMBIMBING_1"]) {
+    if (getNidnForRole(sidangRow, role) === nidn) return role;
+  }
+  return null;
+}
+
+// Signatures the revisi's remaining documents will need and that are missing now, using the same
+// lookups the generators use but without rendering. A 409 from the Dekan lookup (ambiguous SIMIKO
+// name) is reported as missing instead of failing the read.
+async function computeMissingSignatures(revisi, stages, jenis) {
+  if (revisi.is_completed) return [];
+  const isSeminar = jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+  const approved = new Set(
+    stages.filter((s) => s.current_status === "APPROVED").map((s) => s.signer_role),
+  );
+  const needs = new Map();
+  const needDosen = (role) =>
+    needs.set(`D:${getNidnForRole(revisi, role)}`, {
+      kind: "DOSEN",
+      role: getRoleLabel(role, jenis),
+      nama: getNidnForRole(revisi, role) ? (revisi[`${role.replace("_", "").toLowerCase()}_nama`] ?? "") : "",
+      nidn: getNidnForRole(revisi, role),
+    });
+  let needMahasiswa = false;
+  let needDekan = false;
+
+  if (isSeminar && revisi.hasil_sidang === "JUDUL_DITERIMA") {
+    ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1"].forEach(needDosen);
+  } else if (revisi.hasil_sidang === "LULUS") {
+    ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"].forEach(needDosen);
+    needMahasiswa = true;
+    needDekan = true;
+  } else if (revisi.hasil_sidang === "TIDAK_LULUS") {
+    const [notulen] = await db.query(
+      `SELECT role FROM sidang_notulen WHERE sidang_id = ? AND submitted_at IS NOT NULL`,
+      [revisi.sidang_id],
+    );
+    for (const { role } of notulen) {
+      if (!approved.has(role)) needDosen(role);
+    }
+  }
+
+  const missing = [];
+  const lookups = [];
+  for (const need of needs.values()) {
+    lookups.push(
+      getSigByNidn(db, need.nidn).then((sig) => {
+        if (!hasSignature(sig)) missing.push({ role: need.role, nama: need.nama, kind: "DOSEN" });
+      }),
+    );
+  }
+  if (needMahasiswa) {
+    lookups.push(
+      getSigByNpm(db, revisi.mahasiswa_npm).then((sig) => {
+        if (!hasSignature(sig)) {
+          missing.push({ role: "Mahasiswa", nama: revisi.nama_mahasiswa ?? "", kind: "MAHASISWA" });
+        }
+      }),
+    );
+  }
+  if (needDekan) {
+    lookups.push(
+      (async () => {
+        const [[prodi]] = await db.query(
+          `SELECT f.dekan_staff_usr_id, s.nama AS dekan_nama
+           FROM program_studi ps
+           LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+           LEFT JOIN staf s ON s.usr_id = f.dekan_staff_usr_id
+           WHERE ps.id = ? LIMIT 1`,
+          [revisi.program_studi_id],
+        );
+        let sig = null;
+        try {
+          sig = await getStaffSignature(db, prodi?.dekan_staff_usr_id ?? null);
+        } catch (err) {
+          if (err.statusCode !== 409) throw err;
+        }
+        if (!hasSignature(sig)) {
+          missing.push({ role: "Dekan", nama: prodi?.dekan_nama ?? "", kind: "DEKAN" });
+        }
+      })(),
+    );
+  }
+  await Promise.all(lookups);
+  const order = ["Mahasiswa", "Pembimbing 1", "Pembimbing 2", "Penguji", "Penguji 1", "Penguji 2", "Dekan"];
+  return missing.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
+}
+
 // POST /revisi-pasca-sidang/:skripsiId/init
 exports.initRevisi = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     const skripsiId = Number(req.params.skripsiId);
@@ -351,41 +462,62 @@ exports.initRevisi = async (req, res, next) => {
     }
     const firstRole = stageOrderFor(jenis)[0];
 
-    // Return existing if already created for the latest sidang
-    const [[existing]] = await db.query(
-      `SELECT id, is_completed FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
-      [sidang.id],
-    );
-    if (existing) {
-      const [[existingStage]] = await db.query(
-        `SELECT id FROM revisi_pasca_sidang_stages WHERE revisi_id = ? AND signer_role = ? LIMIT 1`,
-        [existing.id, firstRole],
-      );
-      if (!existingStage && !existing.is_completed) {
-        const firstUserId = await resolveUserId(
-          conn,
-          getNidnForRole(sidang, firstRole),
+    const respondExisting = async (existing) => {
+      if (!existing.is_completed) {
+        const [[existingStage]] = await db.query(
+          `SELECT id FROM revisi_pasca_sidang_stages WHERE revisi_id = ? AND signer_role = ? LIMIT 1`,
+          [existing.id, firstRole],
         );
-        await conn.query(
-          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
-           VALUES (?, ?, ?)`,
-          [existing.id, firstRole, firstUserId],
-        );
+        if (!existingStage) {
+          const firstUserId = await resolveUserId(
+            db,
+            getNidnForRole(sidang, firstRole),
+          );
+          await db.query(
+            `INSERT IGNORE INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id, started_at)
+             VALUES (?, ?, ?, NOW())`,
+            [existing.id, firstRole, firstUserId],
+          );
+        }
       }
       return res.json({
         ok: true,
         data: { id: existing.id, isCompleted: !!existing.is_completed },
       });
-    }
+    };
 
+    const findExisting = async () => {
+      const [[row]] = await db.query(
+        `SELECT id, is_completed FROM revisi_pasca_sidang WHERE sidang_id = ? LIMIT 1`,
+        [sidang.id],
+      );
+      return row ?? null;
+    };
+
+    const existing = await findExisting();
+    if (existing) return await respondExisting(existing);
+
+    conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
-    const [result] = await conn.query(
-      `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
-      [sidang.id],
-    );
-    const revisiId = result.insertId;
+    let revisiId;
+    try {
+      const [result] = await conn.query(
+        `INSERT INTO revisi_pasca_sidang (sidang_id) VALUES (?)`,
+        [sidang.id],
+      );
+      revisiId = result.insertId;
+    } catch (err) {
+      if (err.code !== "ER_DUP_ENTRY") throw err;
+      await conn.rollback();
+      txStarted = false;
+      conn.release();
+      conn = null;
+      const duplicate = await findExisting();
+      if (!duplicate) throw err;
+      return await respondExisting(duplicate);
+    }
 
     // Create first stage lazily: PENGUJI_2 (Skripsi) or the single penguji (Seminar)
     const firstUserId = await resolveUserId(
@@ -393,8 +525,8 @@ exports.initRevisi = async (req, res, next) => {
       getNidnForRole(sidang, firstRole),
     );
     await conn.query(
-      `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
-       VALUES (?, ?, ?)`,
+      `INSERT IGNORE INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id, started_at)
+       VALUES (?, ?, ?, NOW())`,
       [revisiId, firstRole, firstUserId],
     );
 
@@ -410,13 +542,13 @@ exports.initRevisi = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
 // POST /revisi-pasca-sidang/:skripsiId/submit
 exports.submitRevisi = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     const skripsiId = Number(req.params.skripsiId);
@@ -438,8 +570,29 @@ exports.submitRevisi = async (req, res, next) => {
         .status(400)
         .json({ ok: false, message: "fileContent dan fileName wajib diisi" });
     }
-    const jenis = await resolveJenis(conn, skripsiId);
+    if (typeof fileContent !== "string" || typeof fileName !== "string") {
+      return res
+        .status(400)
+        .json({ ok: false, message: "fileContent dan fileName harus berupa teks" });
+    }
+    if (fileName.length > MAX_FILE_NAME_LENGTH) {
+      return res.status(400).json({
+        ok: false,
+        message: `Nama file maksimal ${MAX_FILE_NAME_LENGTH} karakter`,
+      });
+    }
+    const uploadError = validateUpload(
+      fileContent,
+      fileName,
+      UPLOAD_RULES.DOCUMENT,
+      "File revisi",
+    );
+    if (uploadError) {
+      return res.status(400).json({ ok: false, message: uploadError });
+    }
+    const jenis = await resolveJenis(db, skripsiId);
 
+    conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
@@ -450,8 +603,8 @@ exports.submitRevisi = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
               d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
+       FROM sidang s
+       LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
        JOIN skripsi sk ON sk.id = s.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
@@ -463,7 +616,7 @@ exports.submitRevisi = async (req, res, next) => {
        WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId, jenis],
     );
-    if (!revisi) {
+    if (!revisi?.id) {
       await conn.rollback();
       txStarted = false;
       return res
@@ -529,9 +682,12 @@ exports.submitRevisi = async (req, res, next) => {
       [nextSubmissionNo, activeStage.id],
     );
 
+    const signerUserId =
+      activeStage.user_id ??
+      (await resolveUserId(conn, getNidnForRole(revisi, activeStage.signer_role)));
     await insertNotification(
       conn,
-      activeStage.user_id,
+      signerUserId,
       "REVISI_PASCA_SIDANG",
       `Mahasiswa ${revisi.nama_mahasiswa} telah mengunggah revisi dan menunggu review Anda`,
       `/pembimbing/revisi-pasca-sidang/${skripsiId}`,
@@ -554,13 +710,16 @@ exports.submitRevisi = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
 // POST /revisi-pasca-sidang/:skripsiId/review
+// Every PDF is rendered before the transaction (each render launches its own Chromium), so no row
+// lock or pool connection is held meanwhile; the transaction then re-checks that the stage is
+// still the one that was reviewed.
 exports.reviewRevisi = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     const skripsiId = Number(req.params.skripsiId);
@@ -575,43 +734,71 @@ exports.reviewRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Hanya dosen yang dapat mereview revisi" });
     }
 
-    const {
-      decision,
-      catatan,
-      reviewFile,
-      reviewFileName,
-      reviewFileMimeType,
-    } = req.body;
+    const { decision, catatan, reviewFile, reviewFileName } = req.body;
     if (!decision || !["APPROVED", "NEED_REVISION"].includes(decision)) {
       return res.status(400).json({
         ok: false,
         message: "decision harus APPROVED atau NEED_REVISION",
       });
     }
-    if (decision === "NEED_REVISION" && (!catatan || !catatan.trim())) {
+    if (catatan !== undefined && catatan !== null && typeof catatan !== "string") {
+      return res
+        .status(400)
+        .json({ ok: false, message: "catatan harus berupa teks" });
+    }
+    const catatanText = (catatan ?? "").trim();
+    if (catatanText.length > 5000) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Catatan maksimal 5000 karakter" });
+    }
+    if (decision === "NEED_REVISION" && !catatanText) {
       return res.status(400).json({
         ok: false,
         message: "catatan wajib diisi untuk NEED_REVISION",
       });
     }
 
+    if (
+      reviewFile !== undefined &&
+      reviewFile !== null &&
+      typeof reviewFile !== "string"
+    ) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "reviewFile harus berupa teks" });
+    }
     const hasReviewFile =
       reviewFile !== undefined &&
       reviewFile !== null &&
       String(reviewFile) !== "";
     const safeReviewFileName = String(reviewFileName ?? "").trim();
-    if (hasReviewFile && !safeReviewFileName) {
-      return res.status(400).json({
-        ok: false,
-        message: "reviewFileName is required when reviewFile is provided",
-      });
+    if (hasReviewFile) {
+      if (!safeReviewFileName) {
+        return res.status(400).json({
+          ok: false,
+          message: "reviewFileName is required when reviewFile is provided",
+        });
+      }
+      if (safeReviewFileName.length > MAX_FILE_NAME_LENGTH) {
+        return res.status(400).json({
+          ok: false,
+          message: `Nama file maksimal ${MAX_FILE_NAME_LENGTH} karakter`,
+        });
+      }
+      const uploadError = validateUpload(
+        reviewFile,
+        safeReviewFileName,
+        UPLOAD_RULES.SKRIPSI_CHAPTER,
+        "File review",
+      );
+      if (uploadError) {
+        return res.status(400).json({ ok: false, message: uploadError });
+      }
     }
-    const jenis = await resolveJenis(conn, skripsiId);
+    const jenis = await resolveJenis(db, skripsiId);
 
-    await conn.beginTransaction();
-    txStarted = true;
-
-    const [[revisi]] = await conn.query(
+    const [[revisi]] = await db.query(
       `SELECT rps.*,
               m.nama AS nama_mahasiswa, m.npm AS mahasiswa_npm,
               sk.judul AS judul_skripsi,
@@ -622,8 +809,8 @@ exports.reviewRevisi = async (req, res, next) => {
               d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
               d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
               s.hasil_sidang
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
+       FROM sidang s
+       LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
        JOIN skripsi sk ON sk.id = s.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
        JOIN program_studi prog ON prog.id = sk.program_studi_id
@@ -636,50 +823,37 @@ exports.reviewRevisi = async (req, res, next) => {
        WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
       [skripsiId, jenis],
     );
-    if (!revisi) {
-      await conn.rollback();
-      txStarted = false;
+    if (!revisi?.id) {
       return res
         .status(404)
         .json({ ok: false, message: "Revisi tidak ditemukan" });
     }
     if (revisi.is_completed) {
-      await conn.rollback();
-      txStarted = false;
       return res
         .status(409)
         .json({ ok: false, message: "Revisi sudah selesai" });
     }
 
-    const [stages] = await conn.query(
-      `SELECT * FROM revisi_pasca_sidang_stages WHERE revisi_id = ? FOR UPDATE`,
+    const [stages] = await db.query(
+      `SELECT * FROM revisi_pasca_sidang_stages WHERE revisi_id = ?`,
       [revisi.id],
     );
 
     const activeStage = resolveActiveStage(stages, jenis);
     if (!activeStage) {
-      await conn.rollback();
-      txStarted = false;
       return res
         .status(409)
         .json({ ok: false, message: "Tidak ada tahap aktif saat ini" });
     }
-    // Compare by NIDN so that any account sharing the same NIDN can review
-    // (resolveUserId picks the lowest-id account, but the caller may be on a different account)
-    const [[stageUserRow]] = await conn.query(
-      `SELECT COALESCE(nidn, staff_usr_id) AS nidn FROM users WHERE id = ? LIMIT 1`,
-      [activeStage.user_id],
-    );
-    if (!stageUserRow || stageUserRow.nidn !== nidn) {
-      await conn.rollback();
-      txStarted = false;
+    // The turn belongs to the NIDN of the stage's role; stage.user_id is only informational
+    // (it is NULL when the signer had no active account when the stage was created).
+    const roleNidn = getNidnForRole(revisi, activeStage.signer_role);
+    if (!roleNidn || roleNidn !== nidn) {
       return res
         .status(403)
         .json({ ok: false, message: "Belum giliran Anda untuk mereview" });
     }
     if (activeStage.current_status !== "SUBMITTED") {
-      await conn.rollback();
-      txStarted = false;
       if (
         activeStage.current_status === "WAITING_SUBMISSION" ||
         activeStage.current_status === "NEED_REVISION"
@@ -693,6 +867,151 @@ exports.reviewRevisi = async (req, res, next) => {
         .json({ ok: false, message: "Tidak dapat mereview saat ini" });
     }
 
+    const stageOrder = stageOrderFor(jenis);
+    const nextRole =
+      stageOrder[stageOrder.indexOf(activeStage.signer_role) + 1] ?? null;
+    const isFinalApproval = decision === "APPROVED" && !nextRole;
+
+    // Documents this approval produces, rendered one after another before any lock is taken.
+    let notulenRow = null;
+    let notulenBuffer = null;
+    let halamanSeminarBuffer = null;
+    let majelisBuffer = null;
+    let dekanBuffer = null;
+
+    if (
+      decision === "APPROVED" &&
+      ["PENGUJI_2", "PENGUJI_1"].includes(activeStage.signer_role)
+    ) {
+      const [[row]] = await db.query(
+        `SELECT sn.*,
+                m.npm, m.nama AS nama_mahasiswa,
+                prog.nama AS program_studi_nama,
+                sk.judul AS judul_skripsi,
+                d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
+                d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
+                psk_k.tanggal_sidang
+         FROM sidang_notulen sn
+         JOIN sidang s ON s.id = sn.sidang_id
+         JOIN skripsi sk ON sk.id = s.skripsi_id
+         JOIN mahasiswa m ON m.npm = sk.npm
+         JOIN program_studi prog ON prog.id = sk.program_studi_id
+         LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
+         LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
+         LEFT JOIN pengajuan_sidang_kaprodi psk_k
+                ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+         LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
+         LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
+         WHERE sn.sidang_id = ? AND sn.role = ?`,
+        [revisi.sidang_id, activeStage.signer_role],
+      );
+      notulenRow = row ?? null;
+      if (notulenRow && notulenRow.submitted_at) {
+        const sigImage = await getSigByNidn(db, roleNidn);
+        const namaPenguji =
+          activeStage.signer_role === "PENGUJI_1"
+            ? notulenRow.penguji1_nama
+            : notulenRow.penguji2_nama;
+        assertSignatures([
+          {
+            role: getRoleLabel(activeStage.signer_role, jenis),
+            nama: namaPenguji,
+            signatureImage: sigImage,
+          },
+        ]);
+        const mahasiswa = {
+          npm: notulenRow.npm,
+          nama: notulenRow.nama_mahasiswa,
+          programStudi: notulenRow.program_studi_nama,
+          judulSkripsi: notulenRow.judul_skripsi,
+        };
+        const pembimbing = {
+          pertama: notulenRow.pembimbing1_nama,
+          kedua: notulenRow.pembimbing2_nama,
+        };
+        const tanggal = notulenRow.tanggal_sidang
+          ? formatTanggal(new Date(notulenRow.tanggal_sidang))
+          : "";
+        // A Seminar revisi only exists for an accepted title, so its notulen says "Diterima".
+        notulenBuffer =
+          jenis === JENIS.SEMINAR_BISNIS_DIGITAL
+            ? await generateNotulenSeminarProposalFTI({
+                mahasiswa,
+                pembimbing,
+                tanggalSeminar: tanggal,
+                hasilSeminar: "Diterima",
+                penguji: { nama: namaPenguji, signatureBase64: sigImage },
+                note: notulenRow.note,
+              })
+            : await generateNotulenPengujiFTI({
+                mahasiswa,
+                pembimbing,
+                tanggalSidang: tanggal,
+                hasilSidang:
+                  notulenRow.hasil_sidang === "LULUS" ? "Lulus" : "Tidak Lulus",
+                penguji: {
+                  role: NOTULEN_ROLE_LABEL[activeStage.signer_role],
+                  nama: namaPenguji,
+                  signatureBase64: sigImage,
+                },
+                note: notulenRow.note,
+              });
+      }
+    }
+
+    if (isFinalApproval) {
+      if (revisi.hasil_sidang === "JUDUL_DITERIMA") {
+        halamanSeminarBuffer = await generateHalamanPengesahanSeminarDoc(db, revisi);
+      }
+      if (revisi.hasil_sidang === "LULUS") {
+        const sidangForDoc = {
+          judul_skripsi: revisi.judul_skripsi,
+          nama_mahasiswa: revisi.nama_mahasiswa,
+          npm: revisi.mahasiswa_npm,
+          tanggal_sidang: revisi.tanggal_sidang,
+          program_studi_id: revisi.program_studi_id,
+          program_studi_nama: revisi.program_studi_nama,
+          pembimbing1_nidn: revisi.pembimbing1_nidn,
+          pembimbing1_nama: revisi.pembimbing1_nama,
+          pembimbing2_nidn: revisi.pembimbing2_nidn,
+          pembimbing2_nama: revisi.pembimbing2_nama,
+          penguji1_nidn: revisi.penguji1_nidn,
+          penguji1_nama: revisi.penguji1_nama,
+          penguji2_nidn: revisi.penguji2_nidn,
+          penguji2_nama: revisi.penguji2_nama,
+        };
+        majelisBuffer = await generateHalamanPengesahanMajelisDoc(db, sidangForDoc);
+        dekanBuffer = await generateHalamanPengesahanDekanDoc(db, sidangForDoc);
+      }
+    }
+
+    conn = await db.getConnection();
+    await conn.beginTransaction();
+    txStarted = true;
+
+    const [[lockedRevisi]] = await conn.query(
+      `SELECT id, is_completed FROM revisi_pasca_sidang WHERE id = ? FOR UPDATE`,
+      [revisi.id],
+    );
+    const [lockedStages] = await conn.query(
+      `SELECT * FROM revisi_pasca_sidang_stages WHERE revisi_id = ? FOR UPDATE`,
+      [revisi.id],
+    );
+    const lockedActive = resolveActiveStage(lockedStages, jenis);
+    if (
+      !lockedRevisi ||
+      lockedRevisi.is_completed ||
+      !lockedActive ||
+      lockedActive.id !== activeStage.id ||
+      lockedActive.signer_role !== activeStage.signer_role ||
+      lockedActive.current_submission_no !== activeStage.current_submission_no ||
+      lockedActive.current_status !== "SUBMITTED"
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({ ok: false, message: REVISI_CHANGED_MESSAGE });
+    }
+
     const [reviewIns] = await conn.query(
       `INSERT INTO revisi_pasca_sidang_reviews (stage_id, submission_no, decision, catatan, reviewed_at)
        VALUES (?, ?, ?, ?, NOW())`,
@@ -700,7 +1019,7 @@ exports.reviewRevisi = async (req, res, next) => {
         activeStage.id,
         activeStage.current_submission_no,
         decision,
-        catatan?.trim() ?? null,
+        catatanText || null,
       ],
     );
 
@@ -713,7 +1032,7 @@ exports.reviewRevisi = async (req, res, next) => {
           reviewIns.insertId,
           String(reviewFile),
           safeReviewFileName,
-          reviewFileMimeType ?? null,
+          mimeFromFileName(safeReviewFileName),
           req.user.id,
         ],
       );
@@ -730,114 +1049,25 @@ exports.reviewRevisi = async (req, res, next) => {
         conn,
         studentUserId,
         "REVISI_PASCA_SIDANG",
-        `${getRoleLabel(activeStage.signer_role, jenis)} meminta revisi: ${catatan.trim()}`,
+        `${getRoleLabel(activeStage.signer_role, jenis)} meminta revisi: ${catatanText}`,
         `/student/revisi-pasca-sidang/${skripsiId}`,
       );
     } else {
-      // APPROVED
       await conn.query(
         `UPDATE revisi_pasca_sidang_stages SET current_status = 'APPROVED', finished_at = NOW(), updated_at = NOW() WHERE id = ?`,
         [activeStage.id],
       );
 
-      const stageOrder = stageOrderFor(jenis);
-      const currentRoleIndex = stageOrder.indexOf(activeStage.signer_role);
-      const nextRole = stageOrder[currentRoleIndex + 1] ?? null;
-
-      if (["PENGUJI_2", "PENGUJI_1"].includes(activeStage.signer_role)) {
-        const [[notulenRow]] = await conn.query(
-          `SELECT sn.*,
-                  m.npm, m.nama AS nama_mahasiswa,
-                  prog.nama AS program_studi_nama,
-                  sk.judul AS judul_skripsi,
-                  d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
-                  d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
-                  psk_k.tanggal_sidang
-           FROM sidang_notulen sn
-           JOIN sidang s ON s.id = sn.sidang_id
-           JOIN skripsi sk ON sk.id = s.skripsi_id
-           JOIN mahasiswa m ON m.npm = sk.npm
-           JOIN program_studi prog ON prog.id = sk.program_studi_id
-           LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn
-           LEFT JOIN dosen d2 ON d2.nidn = sk.pembimbing2_nidn
-           LEFT JOIN pengajuan_sidang_kaprodi psk_k
-                  ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-           LEFT JOIN dosen d_pg1 ON d_pg1.nidn = psk_k.penguji1_nidn
-           LEFT JOIN dosen d_pg2 ON d_pg2.nidn = psk_k.penguji2_nidn
-           WHERE sn.sidang_id = ? AND sn.role = ?`,
-          [revisi.sidang_id, activeStage.signer_role],
+      if (notulenBuffer) {
+        await conn.query(
+          `UPDATE sidang_notulen SET file_content = ?, file_name = ?, updated_at = NOW() WHERE sidang_id = ? AND role = ?`,
+          [
+            Buffer.from(notulenBuffer).toString("base64"),
+            `Notulen_${activeStage.signer_role}_${notulenRow.npm}.pdf`,
+            revisi.sidang_id,
+            activeStage.signer_role,
+          ],
         );
-        if (notulenRow && notulenRow.submitted_at) {
-          const sigImage = await getSigByNidn(
-            conn,
-            getNidnForRole(revisi, activeStage.signer_role),
-          );
-          assertSignatures([
-            {
-              role: getRoleLabel(activeStage.signer_role, jenis),
-              nama:
-                activeStage.signer_role === "PENGUJI_1"
-                  ? notulenRow.penguji1_nama
-                  : notulenRow.penguji2_nama,
-              signatureImage: sigImage,
-            },
-          ]);
-          try {
-            const mahasiswa = {
-              npm: notulenRow.npm,
-              nama: notulenRow.nama_mahasiswa,
-              programStudi: notulenRow.program_studi_nama,
-              judulSkripsi: notulenRow.judul_skripsi,
-            };
-            const pembimbing = {
-              pertama: notulenRow.pembimbing1_nama,
-              kedua: notulenRow.pembimbing2_nama,
-            };
-            const tanggal = notulenRow.tanggal_sidang
-              ? formatTanggal(new Date(notulenRow.tanggal_sidang))
-              : "";
-            const namaPenguji =
-              activeStage.signer_role === "PENGUJI_1"
-                ? notulenRow.penguji1_nama
-                : notulenRow.penguji2_nama;
-            // A Seminar revisi only exists for an accepted title, so its notulen says "Diterima".
-            const outputBuffer =
-              jenis === JENIS.SEMINAR_BISNIS_DIGITAL
-                ? await generateNotulenSeminarProposalFTI({
-                    mahasiswa,
-                    pembimbing,
-                    tanggalSeminar: tanggal,
-                    hasilSeminar: "Diterima",
-                    penguji: { nama: namaPenguji, signatureBase64: sigImage },
-                    note: notulenRow.note,
-                  })
-                : await generateNotulenPengujiFTI({
-                    mahasiswa,
-                    pembimbing,
-                    tanggalSidang: tanggal,
-                    hasilSidang:
-                      notulenRow.hasil_sidang === "LULUS" ? "Lulus" : "Tidak Lulus",
-                    penguji: {
-                      role: NOTULEN_ROLE_LABEL[activeStage.signer_role],
-                      nama: namaPenguji,
-                      signatureBase64: sigImage,
-                    },
-                    note: notulenRow.note,
-                  });
-            await conn.query(
-              `UPDATE sidang_notulen SET file_content = ?, file_name = ?, updated_at = NOW() WHERE sidang_id = ? AND role = ?`,
-              [
-                Buffer.from(outputBuffer).toString("base64"),
-                `Notulen_${activeStage.signer_role}_${notulenRow.npm}.pdf`,
-                revisi.sidang_id,
-                activeStage.signer_role,
-              ],
-            );
-          } catch (err) {
-            console.error("revisi notulen regeneration error (non-fatal):", err);
-            // non-fatal: notulen regeneration failure (unrelated to missing signatures) must not block revisi approval
-          }
-        }
       }
 
       if (nextRole) {
@@ -845,8 +1075,8 @@ exports.reviewRevisi = async (req, res, next) => {
         const nextUserId = await resolveUserId(conn, nextNidn);
 
         await conn.query(
-          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id)
-           VALUES (?, ?, ?)`,
+          `INSERT INTO revisi_pasca_sidang_stages (revisi_id, signer_role, user_id, started_at)
+           VALUES (?, ?, ?, NOW())`,
           [revisi.id, nextRole, nextUserId],
         );
 
@@ -868,11 +1098,7 @@ exports.reviewRevisi = async (req, res, next) => {
         );
       } else {
         // PEMBIMBING_1 approved — last stage
-        if (revisi.hasil_sidang === "JUDUL_DITERIMA") {
-          const halamanBuffer = await generateHalamanPengesahanSeminarDoc(
-            conn,
-            revisi,
-          );
+        if (halamanSeminarBuffer) {
           await conn.query(
             `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
              VALUES (?, 'HALAMAN_PENGESAHAN_SEMINAR_BD', ?, ?)
@@ -880,7 +1106,7 @@ exports.reviewRevisi = async (req, res, next) => {
             [
               revisi.id,
               `Halaman_Pengesahan_Proposal_Skripsi_${revisi.mahasiswa_npm}.pdf`,
-              Buffer.from(halamanBuffer).toString("base64"),
+              Buffer.from(halamanSeminarBuffer).toString("base64"),
             ],
           );
           await finishSeminarPhase(conn, {
@@ -888,28 +1114,7 @@ exports.reviewRevisi = async (req, res, next) => {
             seminarSidangId: revisi.sidang_id,
           });
         }
-        if (revisi.hasil_sidang === "LULUS") {
-          const sidangForDoc = {
-            judul_skripsi: revisi.judul_skripsi,
-            nama_mahasiswa: revisi.nama_mahasiswa,
-            npm: revisi.mahasiswa_npm,
-            tanggal_sidang: revisi.tanggal_sidang,
-            program_studi_id: revisi.program_studi_id,
-            program_studi_nama: revisi.program_studi_nama,
-            pembimbing1_nidn: revisi.pembimbing1_nidn,
-            pembimbing1_nama: revisi.pembimbing1_nama,
-            pembimbing2_nidn: revisi.pembimbing2_nidn,
-            pembimbing2_nama: revisi.pembimbing2_nama,
-            penguji1_nidn: revisi.penguji1_nidn,
-            penguji1_nama: revisi.penguji1_nama,
-            penguji2_nidn: revisi.penguji2_nidn,
-            penguji2_nama: revisi.penguji2_nama,
-          };
-
-          const majelisBuffer = await generateHalamanPengesahanMajelisDoc(
-            conn,
-            sidangForDoc,
-          );
+        if (majelisBuffer && dekanBuffer) {
           await conn.query(
             `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
              VALUES (?, 'HALAMAN_PENGESAHAN_MAJELIS_PENGUJI', ?, ?)
@@ -919,11 +1124,6 @@ exports.reviewRevisi = async (req, res, next) => {
               `Halaman_Pengesahan_Majelis_Penguji_${revisi.mahasiswa_npm}.pdf`,
               Buffer.from(majelisBuffer).toString("base64"),
             ],
-          );
-
-          const dekanBuffer = await generateHalamanPengesahanDekanDoc(
-            conn,
-            sidangForDoc,
           );
           await conn.query(
             `INSERT INTO revisi_pasca_sidang_files (revisi_id, file_type, file_name, file_content)
@@ -954,7 +1154,9 @@ exports.reviewRevisi = async (req, res, next) => {
           studentUserId,
           "REVISI_PASCA_SIDANG",
           completionMessage,
-          `/student/revisi-pasca-sidang/${skripsiId}`,
+          revisi.hasil_sidang === "TIDAK_LULUS"
+            ? "/student/pengajuan-sidang"
+            : `/student/revisi-pasca-sidang/${skripsiId}`,
         );
 
         if (revisi.hasil_sidang === "TIDAK_LULUS") {
@@ -981,7 +1183,7 @@ exports.reviewRevisi = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    conn?.release();
   }
 };
 
@@ -993,7 +1195,9 @@ exports.getRevisi = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const jenis = await resolveReadJenis(db, skripsiId, req.query?.jenis);
+    const target = await resolveReadTarget(req, res, skripsiId);
+    if (!target) return;
+    const { jenis, sidangId } = target;
     const [[revisi]] = await db.query(
       `SELECT rps.*,
               sk.pembimbing1_nidn, sk.pembimbing2_nidn,
@@ -1007,8 +1211,8 @@ exports.getRevisi = async (req, res, next) => {
               dq1.nama AS penguji1_nama,
               dq2.nama AS penguji2_nama,
               s.status AS sidang_status, s.hasil_sidang, s.judul_baru
-       FROM revisi_pasca_sidang rps
-       JOIN sidang s ON s.id = rps.sidang_id
+       FROM sidang s
+       LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
        JOIN skripsi sk ON sk.id = s.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
        JOIN program_studi ps ON ps.id = sk.program_studi_id
@@ -1019,10 +1223,10 @@ exports.getRevisi = async (req, res, next) => {
        LEFT JOIN dosen dq1 ON dq1.nidn = psk_k.penguji1_nidn
        LEFT JOIN dosen dq2 ON dq2.nidn = psk_k.penguji2_nidn
        LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
-       WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
-      [skripsiId, jenis],
+       WHERE s.skripsi_id = ? AND ${sidangId ? "s.id = ?" : "s.jenis = ?"} ORDER BY s.id DESC LIMIT 1`,
+      [skripsiId, sidangId ?? jenis],
     );
-    if (!revisi) {
+    if (!revisi?.id) {
       return res
         .status(404)
         .json({ ok: false, message: "Revisi tidak ditemukan" });
@@ -1031,6 +1235,12 @@ exports.getRevisi = async (req, res, next) => {
     if (!(await canAccessRevisi(req, { ...revisi, npm: revisi.mahasiswa_npm }))) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
     }
+
+    const [[latest]] = await db.query(
+      `SELECT MAX(id) AS id FROM sidang WHERE skripsi_id = ? AND jenis = ?`,
+      [skripsiId, jenis],
+    );
+    const isLatestAttempt = Number(latest?.id) === Number(revisi.sidang_id);
 
     const [stages] = await db.query(
       `SELECT id, signer_role, user_id, current_status, current_submission_no, started_at, finished_at
@@ -1100,6 +1310,13 @@ exports.getRevisi = async (req, res, next) => {
 
     const activeStage = resolveActiveStage(stages, jenis);
 
+    const callerRole = req.user.hasRole("STUDENT")
+      ? null
+      : callerRoleFor(revisi, await getLecturerNidn(req.user.id));
+    const missingSignatures = isLatestAttempt
+      ? await computeMissingSignatures(revisi, stages, jenis)
+      : [];
+
     const [files] = await db.query(
       `SELECT id, file_type, file_name, created_at
        FROM revisi_pasca_sidang_files
@@ -1114,6 +1331,10 @@ exports.getRevisi = async (req, res, next) => {
       data: {
         revisi: { ...revisiBase, npm: mahasiswa_npm },
         jenis,
+        sidang_id: revisi.sidang_id,
+        isLatestAttempt,
+        callerRole,
+        missingSignatures,
         activeStage: activeStage
           ? {
               signerRole: activeStage.signer_role,
@@ -1147,7 +1368,7 @@ exports.getLecturerRevisi = async (req, res, next) => {
     const [rows] = await db.query(
       `SELECT
          rps.id, rps.is_completed,
-         s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa,
+         s.id AS sidang_id, s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa,
          COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi, psk_k.tanggal_sidang,
          sk.pembimbing1_nidn, sk.pembimbing2_nidn,
          psk_k.penguji1_nidn, psk_k.penguji2_nidn,
@@ -1240,7 +1461,7 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     const pagination = parsePagination(req.query);
     const q = String(req.query.q ?? "").trim();
     const status = String(req.query.status ?? "").trim();
-    const validStatuses = ["MENUNGGU_TTD", "PERLU_REVISI", "SELESAI"];
+    const validStatuses = ["MENUNGGU_TTD", "MENUNGGU_MAHASISWA", "PERLU_REVISI", "SELESAI"];
     if (status && !validStatuses.includes(status)) {
       return res.status(400).json({ ok: false, message: "status tidak valid" });
     }
@@ -1249,7 +1470,11 @@ exports.getKaprodiRevisi = async (req, res, next) => {
       ? await getKaprodiProgramStudiIds(staffUsrId)
       : [];
     if (programStudiIds.length === 0) {
-      return res.json({ ok: true, data: [] });
+      return res.json({
+        ok: true,
+        data: [],
+        summary: { total: 0, menungguTtd: 0, menungguMahasiswa: 0, selesai: 0 },
+      });
     }
 
     const placeholders = programStudiIds.map(() => "?").join(",");
@@ -1257,11 +1482,13 @@ exports.getKaprodiRevisi = async (req, res, next) => {
       ? req.query.jenis
       : null;
     const searchCondition = [
-      q ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ?)" : "",
+      q
+        ? "AND (m.nama LIKE ? OR m.npm LIKE ? OR sk.judul LIKE ? OR lanjutan.judul_seminar LIKE ? OR s.judul_baru LIKE ?)"
+        : "",
       jenisFilter ? "AND s.jenis = ?" : "",
     ].join(" ");
     const searchParams = [
-      ...(q ? [`%${q}%`, `%${q}%`, `%${q}%`] : []),
+      ...(q ? Array(5).fill(`%${q}%`) : []),
       ...(jenisFilter ? [jenisFilter] : []),
     ];
     const activeStageStatus = `(SELECT rs.current_status
@@ -1275,8 +1502,32 @@ exports.getKaprodiRevisi = async (req, res, next) => {
         : status === "PERLU_REVISI"
           ? `AND rps.is_completed = 0 AND ${activeStageStatus} = 'NEED_REVISION'`
           : status === "MENUNGGU_TTD"
-            ? `AND rps.is_completed = 0 AND ${activeStageStatus} IS NOT NULL AND ${activeStageStatus} != 'NEED_REVISION'`
-            : "";
+            ? `AND rps.is_completed = 0 AND ${activeStageStatus} = 'SUBMITTED'`
+            : status === "MENUNGGU_MAHASISWA"
+              ? `AND rps.is_completed = 0 AND ${activeStageStatus} IN ('WAITING_SUBMISSION', 'NEED_REVISION')`
+              : "";
+    // Card counters: the same filters except status and pagination.
+    const [[summaryRow]] = await db.query(
+      `SELECT
+         COUNT(*) AS total,
+         COALESCE(SUM(rps.is_completed = 0 AND ${activeStageStatus} = 'SUBMITTED'), 0) AS menunggu_ttd,
+         COALESCE(SUM(rps.is_completed = 0 AND ${activeStageStatus} IN ('WAITING_SUBMISSION', 'NEED_REVISION')), 0) AS menunggu_mahasiswa,
+         COALESCE(SUM(rps.is_completed = 1), 0) AS selesai
+       FROM revisi_pasca_sidang rps
+       JOIN sidang s ON s.id = rps.sidang_id
+       JOIN skripsi sk ON sk.id = s.skripsi_id
+       JOIN mahasiswa m ON m.npm = sk.npm
+       JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
+       WHERE prog.id IN (${placeholders}) ${searchCondition}`,
+      [...programStudiIds, ...searchParams],
+    );
+    const summary = {
+      total: Number(summaryRow.total),
+      menungguTtd: Number(summaryRow.menunggu_ttd),
+      menungguMahasiswa: Number(summaryRow.menunggu_mahasiswa),
+      selesai: Number(summaryRow.selesai),
+    };
     const [[countRow]] = await db.query(
       `SELECT COUNT(*) AS total
        FROM revisi_pasca_sidang rps
@@ -1284,13 +1535,14 @@ exports.getKaprodiRevisi = async (req, res, next) => {
        JOIN skripsi sk ON sk.id = s.skripsi_id
        JOIN mahasiswa m ON m.npm = sk.npm
        JOIN program_studi prog ON prog.id = sk.program_studi_id
+       LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        WHERE prog.id IN (${placeholders}) ${searchCondition} ${statusCondition}`,
       [...programStudiIds, ...searchParams],
     );
     const [rows] = await db.query(
       `SELECT
          rps.id, rps.is_completed,
-         s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa,
+         s.id AS sidang_id, s.skripsi_id, s.jenis, m.npm, m.nama AS nama_mahasiswa,
          COALESCE(lanjutan.judul_seminar, sk.judul) AS judul_skripsi, psk_k.tanggal_sidang,
          sk.pembimbing1_nidn, d1.nama AS pembimbing1_nama,
          sk.pembimbing2_nidn, d2.nama AS pembimbing2_nama,
@@ -1375,7 +1627,7 @@ exports.getKaprodiRevisi = async (req, res, next) => {
     }
 
     pagination.totalItems = Number(countRow.total);
-    return listResponse(res, { rows, pagination });
+    return listResponse(res, { rows, pagination, extra: { summary } });
   } catch (err) {
     next(err);
   }
@@ -1394,22 +1646,23 @@ function sendDocx(res, fileRow) {
 
 // The revisi file downloads share this lookup: identity and participant NIDNs for the access check.
 // Pass jenis to read a specific type's revisi (e.g. the Seminar one after the record moved on).
-async function getRevisiForFileAccess(skripsiId, jenis) {
-  jenis = jenis ?? (await resolveJenis(db, skripsiId));
+async function getRevisiForFileAccess(skripsiId, jenis, sidangId = null) {
+  if (!sidangId) jenis = jenis ?? (await resolveJenis(db, skripsiId));
   const [[revisi]] = await db.query(
-    `SELECT rps.id, m.npm, sk.program_studi_id,
+    `SELECT rps.id, m.npm, sk.program_studi_id, ps.fakultas_id,
             sk.pembimbing1_nidn, sk.pembimbing2_nidn,
             psk_k.penguji1_nidn, psk_k.penguji2_nidn
-     FROM revisi_pasca_sidang rps
-     JOIN sidang s ON s.id = rps.sidang_id
+     FROM sidang s
+     LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
      JOIN skripsi sk ON sk.id = s.skripsi_id
      JOIN mahasiswa m ON m.npm = sk.npm
+     JOIN program_studi ps ON ps.id = sk.program_studi_id
      LEFT JOIN pengajuan_sidang_kaprodi psk_k
             ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
-     WHERE s.skripsi_id = ? AND s.jenis = ? ORDER BY s.id DESC LIMIT 1`,
-    [skripsiId, jenis],
+     WHERE s.skripsi_id = ? AND ${sidangId ? "s.id = ?" : "s.jenis = ?"} ORDER BY s.id DESC LIMIT 1`,
+    [skripsiId, sidangId ?? jenis],
   );
-  return revisi ?? null;
+  return revisi?.id ? revisi : null;
 }
 
 // GET /revisi-pasca-sidang/:skripsiId/files/submission
@@ -1420,10 +1673,9 @@ exports.getSubmissionFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const revisi = await getRevisiForFileAccess(
-      skripsiId,
-      await resolveReadJenis(db, skripsiId, req.query?.jenis),
-    );
+    const target = await resolveReadTarget(req, res, skripsiId);
+    if (!target) return;
+    const revisi = await getRevisiForFileAccess(skripsiId, target.jenis, target.sidangId);
     if (!revisi) {
       return res
         .status(404)
@@ -1520,7 +1772,13 @@ exports.getHalamanMajelisFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const revisi = await getRevisiForFileAccess(skripsiId);
+    const target = await resolveReadTarget(req, res, skripsiId);
+    if (!target) return;
+    const revisi = await getRevisiForFileAccess(
+      skripsiId,
+      target.sidangId ? target.jenis : undefined,
+      target.sidangId,
+    );
     if (!revisi) {
       return res
         .status(404)
@@ -1598,7 +1856,13 @@ exports.getHalamanDekanFile = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
     }
 
-    const revisi = await getRevisiForFileAccess(skripsiId);
+    const target = await resolveReadTarget(req, res, skripsiId);
+    if (!target) return;
+    const revisi = await getRevisiForFileAccess(
+      skripsiId,
+      target.sidangId ? target.jenis : undefined,
+      target.sidangId,
+    );
     if (!revisi) {
       return res
         .status(404)

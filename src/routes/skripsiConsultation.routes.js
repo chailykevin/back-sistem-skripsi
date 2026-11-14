@@ -7,7 +7,7 @@ router.post("/skripsi-consultations/:skripsiId/init", auth, c.initKartu);
 router.get("/skripsi-consultations/:skripsiId", auth, c.getMyDetail);
 router.post("/skripsi-consultations/:skripsiId/submissions", auth, c.submitMyChapter);
 router.get("/skripsi-consultations/:skripsiId/kartu/final", auth, c.getFinalKartuFile);
-router.get("/skripsi-consultations/:skripsiId/kartu/preview-docx", auth, c.previewKartuDocx);
+router.get("/skripsi-consultations/:skripsiId/kartu/preview-docx", auth, c.previewKartuPdf);
 
 // File download routes
 router.get("/skripsi-consultations/submissions/:submissionId/file", auth, c.getSubmissionFile);

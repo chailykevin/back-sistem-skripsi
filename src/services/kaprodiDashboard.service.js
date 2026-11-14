@@ -44,7 +44,7 @@ function revisiSignerLabel(role, jenis) {
 const CHAPTER_LABELS = { BAB_1: "Bab 1", BAB_2: "Bab 2", BAB_3: "Bab 3", BAB_4: "Bab 4", BAB_5: "Bab 5" };
 const BERKAS_FINAL_UNITS = { PERPUSTAKAAN: "Perpustakaan", LPPM: "LPPM" };
 
-const WAITING_ON_DOSEN_STATUSES = new Set(["SUBMITTED", "IN_REVIEW"]);
+const WAITING_ON_DOSEN_STATUSES = new Set(["SUBMITTED"]);
 
 function groupBy(rows, keyField) {
   const map = new Map();
@@ -242,13 +242,12 @@ async function loadPipelineData(programStudiIds) {
     for (const r of pengumpulanRows) data.pengumpulanBySkripsiId.set(r.skripsi_id, r);
     if (pengumpulanRows.length > 0) {
       const [confirmationRows] = await db.query(
-        `SELECT pengumpulan_id, recipient_role, nidn, confirmed_at
+        `SELECT pengumpulan_id, recipient_role, confirmed_at
          FROM pengumpulan_berkas_final_confirmations
          WHERE pengumpulan_id IN (?)`,
         [pengumpulanRows.map((r) => r.id)],
       );
       data.confirmationsByPengumpulanId = groupBy(confirmationRows, "pengumpulan_id");
-      dosenNidns.push(...confirmationRows.map((r) => r.nidn));
     }
   }
 
@@ -396,6 +395,13 @@ function resolveStudentPosition(npm, data, today) {
       return at("BERKAS_FINAL", "MAHASISWA", "Belum mengirim berkas final", pengumpulan.updated_at, { href });
     }
     const confirmations = data.confirmationsByPengumpulanId.get(pengumpulan.id) ?? [];
+    const finalPsk = sidang?.jenis === "SKRIPSI" ? (data.pskByPengajuanSidangId.get(sidang.pengajuan_sidang_id) ?? null) : null;
+    const berkasFinalDosenNidn = (role) =>
+      ({
+        ...pembimbingNidn,
+        PENGUJI_1: finalPsk?.penguji1_nidn ?? null,
+        PENGUJI_2: finalPsk?.penguji2_nidn ?? null,
+      })[role] ?? null;
     const lastConfirmedAt = maxDate(...confirmations.map((c) => c.confirmed_at));
     if (pengumpulan.status === "WAITING_SIGNATURE") {
       return at("BERKAS_FINAL", "UNIT", "Menunggu tanda tangan Sekretaris Prodi", maxDate(pengumpulan.updated_at, lastConfirmedAt), {
@@ -405,7 +411,7 @@ function resolveStudentPosition(npm, data, today) {
     }
     const holders = confirmations
       .filter((c) => !c.confirmed_at)
-      .map((c) => (BERKAS_FINAL_UNITS[c.recipient_role] ? unit(BERKAS_FINAL_UNITS[c.recipient_role]) : dosen(c.nidn)))
+      .map((c) => (BERKAS_FINAL_UNITS[c.recipient_role] ? unit(BERKAS_FINAL_UNITS[c.recipient_role]) : dosen(berkasFinalDosenNidn(c.recipient_role))))
       .filter(Boolean);
     return at(
       "BERKAS_FINAL",
@@ -421,7 +427,6 @@ function resolveStudentPosition(npm, data, today) {
     const href = `/kaprodi/pengajuan-sidang/${skripsi.id}`;
     const ujianUlang = pengajuanSidang.ujian_ke > 1 ? ` · ujian ke-${pengajuanSidang.ujian_ke}` : "";
     const pre = seminarPrefix(pengajuanSidang);
-    if (pengajuanSidang.status === "REJECTED" || psk?.status === "REJECTED") return null;
     const skripsiGateApplies =
       pengajuanSidang.jenis !== SEMINAR && skripsi.jalur === SEMINAR && (!psk || psk.status === "DRAFT");
     if (skripsiGateApplies && skSkripsiPending) return skSkripsiStage();
@@ -723,8 +728,7 @@ async function getRecap(programStudiIds, term) {
   );
   for (const r of pengajuanSidangRows) {
     let bucket;
-    if (r.status === "REJECTED" || r.kaprodi_status === "REJECTED") bucket = "rejected";
-    else if (["COMPLETED", "VERIFIED"].includes(r.status)) bucket = "done";
+    if (["COMPLETED", "VERIFIED"].includes(r.status)) bucket = "done";
     else if (r.status === "WAITING_FOR_DISPOSISI" || r.kaprodi_status === "SUBMITTED") bucket = "you";
     else if (["DRAFT", "NEED_REVISION"].includes(r.kaprodi_status)) bucket = "student";
     else if (["SUBMITTED", "WAITING_FOR_SURAT"].includes(r.status)) bucket = "other";

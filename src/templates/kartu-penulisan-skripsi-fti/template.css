@@ -2,9 +2,10 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body { color: #000; font-family: "Times New Roman", serif; font-size: 12pt; }
-.page { position: relative; width: 210mm; min-height: 297mm; padding: 10.5mm 13.5mm 8.5mm; }
-/* The source DOCX uses Word's 1.5 pt double page-border style. */
-.page::before { content: ""; position: absolute; inset: 3mm; border: 1.5pt double #000; pointer-events: none; }
+.page { padding: 10.5mm 13.5mm 8.5mm; }
+/* The source DOCX uses Word's 1.5 pt double page-border style. A fixed element repeats on every
+   printed page; @page keeps no margin because Chromium clips fixed elements to the page area. */
+.page::before { content: ""; position: fixed; inset: 3mm; border: 1.5pt double #000; pointer-events: none; }
 .page > * { position: relative; }
 .masthead { display: flex; align-items: center; gap: 5mm; font-size: 10pt; font-weight: bold; line-height: 1.2; }
 .masthead img { width: 18mm; height: 18mm; object-fit: contain; }
@@ -21,15 +22,22 @@ h1 { margin: 5mm 0 1mm; text-align: center; font-size: 12pt; font-weight: bold; 
 .approvals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; margin-top: 8mm; text-align: center; line-height: 1.15; }
 .signature-space { display: flex; align-items: center; justify-content: center; height: 10mm; margin: 0 auto; }
 .signature-image { max-width: 28mm; max-height: 10mm; }
-h2 { margin: 6mm 0 4mm; text-align: center; font-size: 12pt; font-weight: bold; }
+/* The bottom margin absorbs the thead's page-top spacer row on the first page. */
+h2 { margin: 6mm 0 -6.5mm; text-align: center; font-size: 12pt; font-weight: bold; }
 .consultation-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .consultation-table th, .consultation-table td { border: 1px solid #000; padding: 1mm 2mm; text-align: center; vertical-align: middle; line-height: 1.15; }
 .consultation-table th { height: 7mm; background: #DDEBF7; font-weight: normal; }
-.consultation-table th:nth-child(1), .consultation-table td:nth-child(1) { width: 18%; }
-.consultation-table th:nth-child(2), .consultation-table td:nth-child(2) { width: 64%; }
-.consultation-table th:nth-child(3), .consultation-table td:nth-child(3) { width: 18%; }
+/* On <col>: with a fixed layout the first row sets the widths, and that row is the spacer. */
+.consultation-table .col-tanggal { width: 18%; }
+.consultation-table .col-keterangan { width: 64%; }
+.consultation-table .col-paraf { width: 18%; }
 .consultation-table tbody tr { height: 7.5mm; break-inside: avoid; }
 .consultation-table thead { display: table-header-group; }
+.consultation-table tfoot { display: table-footer-group; }
+/* Spacer rows repeated with the header/footer on every page of a long log: the page's top and
+   bottom margins, since @page has none. */
+.consultation-table .page-gap td { height: 10.5mm; padding: 0; border: none; }
+.consultation-table .page-gap-bottom td { height: 8.5mm; padding: 0; border: none; }
 
 /* Normalized signatures: 40mm wide, name overlap, and a 2mm upward shift. */
 .signature-space {

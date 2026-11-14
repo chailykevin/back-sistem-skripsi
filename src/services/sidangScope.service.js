@@ -17,7 +17,6 @@ const NON_EDITABLE_PENGAJUAN_STATUSES = [
   "WAITING_FOR_DISPOSISI",
   "WAITING_FOR_SURAT",
   "COMPLETED",
-  "REJECTED",
 ];
 
 function requireJenis(jenis) {
@@ -109,7 +108,43 @@ async function resolveReadJenis(queryable, skripsiId, requested) {
   return requested;
 }
 
+// Read target for endpoints that can open one specific attempt: optional ?sidangId= (positive integer,
+// must belong to this skripsi) wins over "latest of a jenis"; its jenis comes from the row, and a
+// ?jenis= that disagrees is a 400. Returns { jenis, sidangId } (sidangId null = latest of jenis).
+async function resolveReadTarget(
+  queryable,
+  skripsiId,
+  { sidangId: rawSidangId, jenis: requestedJenis } = {},
+) {
+  if (rawSidangId === undefined || rawSidangId === null || rawSidangId === "") {
+    return {
+      jenis: await resolveReadJenis(queryable, skripsiId, requestedJenis),
+      sidangId: null,
+    };
+  }
+  const sidangId = Number(rawSidangId);
+  if (!Number.isInteger(sidangId) || sidangId <= 0) {
+    throw Object.assign(new Error("Invalid sidangId"), { statusCode: 400 });
+  }
+  const [[row]] = await queryable.query(
+    `SELECT id, jenis FROM sidang WHERE id = ? AND skripsi_id = ? LIMIT 1`,
+    [sidangId, skripsiId],
+  );
+  if (!row) {
+    throw Object.assign(new Error("Sidang tidak ditemukan"), { statusCode: 404 });
+  }
+  if (requestedJenis !== undefined && requestedJenis !== null && requestedJenis !== "") {
+    if (requestedJenis !== row.jenis) {
+      throw Object.assign(new Error("jenis tidak sesuai dengan sidangId"), {
+        statusCode: 400,
+      });
+    }
+  }
+  return { jenis: row.jenis, sidangId };
+}
+
 module.exports = {
+  resolveReadTarget,
   JENIS,
   BISNIS_DIGITAL_PROGRAM_STUDI_KODE,
   requireJenis,

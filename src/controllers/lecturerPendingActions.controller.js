@@ -35,7 +35,7 @@ exports.getPendingActions = async (req, res, next) => {
       db.query(
         `SELECT COUNT(*) AS c
          FROM konsultasi_skripsi_stage s
-         WHERE s.pembimbing_nidn = ? AND s.current_status IN ('SUBMITTED', 'IN_REVIEW')`,
+         WHERE s.pembimbing_nidn = ? AND s.current_status = 'SUBMITTED'`,
         [nidn],
       ),
       db.query(
@@ -93,16 +93,35 @@ exports.getPendingActions = async (req, res, next) => {
       db.query(
         `SELECT COUNT(*) AS c
          FROM revisi_pasca_sidang_stages st
-         JOIN users u ON u.id = st.user_id
-         WHERE u.nidn = ? AND st.current_status = 'SUBMITTED'`,
+         JOIN revisi_pasca_sidang rps ON rps.id = st.revisi_id
+         JOIN sidang si ON si.id = rps.sidang_id
+         JOIN skripsi sk ON sk.id = si.skripsi_id
+         LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = si.pengajuan_sidang_id
+         WHERE st.current_status = 'SUBMITTED'
+           -- the stage's signer is whoever holds that role's NIDN; st.user_id can be NULL
+           AND CASE st.signer_role
+                 WHEN 'PENGUJI_2' THEN psk.penguji2_nidn
+                 WHEN 'PENGUJI_1' THEN psk.penguji1_nidn
+                 WHEN 'PEMBIMBING_2' THEN sk.pembimbing2_nidn
+                 WHEN 'PEMBIMBING_1' THEN sk.pembimbing1_nidn
+               END = ?`,
         [nidn],
       ),
       db.query(
         `SELECT COUNT(*) AS c
          FROM pengumpulan_berkas_final_confirmations c
          JOIN pengumpulan_berkas_final p ON p.id = c.pengumpulan_id
-         JOIN users u ON u.id = c.user_id
-         WHERE u.nidn = ? AND c.confirmed_at IS NULL AND p.status != 'DRAFT'`,
+         JOIN skripsi sk ON sk.id = p.skripsi_id
+         LEFT JOIN sidang si ON si.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = p.skripsi_id AND jenis = 'SKRIPSI')
+         LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = si.pengajuan_sidang_id
+         WHERE c.confirmed_at IS NULL AND p.status != 'DRAFT'
+           -- the recipient is whoever holds that role's NIDN; c.user_id can be NULL
+           AND CASE c.recipient_role
+                 WHEN 'PEMBIMBING_1' THEN sk.pembimbing1_nidn
+                 WHEN 'PEMBIMBING_2' THEN sk.pembimbing2_nidn
+                 WHEN 'PENGUJI_1' THEN psk.penguji1_nidn
+                 WHEN 'PENGUJI_2' THEN psk.penguji2_nidn
+               END = ?`,
         [nidn],
       ),
     ]);

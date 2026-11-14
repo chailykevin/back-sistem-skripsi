@@ -14,6 +14,9 @@ const { getStudentNpm, getLecturerNidn, getStaffUsrId, getKaprodiProgramStudiIds
 const { getSkSubmissionPeriod } = require("../services/outlineSubmissionPeriod.service");
 const { getCurrentOutlineId } = require("../services/outline.service");
 const { hasSignature, assertSignatures } = require("../utils/signature");
+const {
+  resolveActiveKonsultasiOutlineStage: resolveActiveStage,
+} = require("../utils/workflowStage");
 
 function buildKartuFileName(npm, namaMahasiswa, suffix) {
   const safeNpm = String(npm ?? "")
@@ -96,54 +99,6 @@ async function canAccessOutlineConsultation(req, { npm, pembimbing1Nidn, pembimb
   return isKaprodiOfProdi(req, programStudiId);
 }
 
-function resolveActiveStage(stages, isCompleted) {
-  const p2 = stages.find((s) => s.stage === "PEMBIMBING_2") ?? null;
-  const p1 = stages.find((s) => s.stage === "PEMBIMBING_1") ?? null;
-
-  if (isCompleted || p1?.current_status === "ACCEPTED") {
-    return {
-      activeStage: p1?.stage ?? "PEMBIMBING_1",
-      activeStatus: p1?.current_status ?? "ACCEPTED",
-      isCompleted: true,
-      stageRow: p1,
-    };
-  }
-
-  if (!p2) {
-    return {
-      activeStage: null,
-      activeStatus: null,
-      isCompleted: false,
-      stageRow: null,
-    };
-  }
-
-  if (p2.current_status !== "CONTINUE") {
-    return {
-      activeStage: "PEMBIMBING_2",
-      activeStatus: p2.current_status,
-      isCompleted: false,
-      stageRow: p2,
-    };
-  }
-
-  if (!p1) {
-    return {
-      activeStage: null,
-      activeStatus: null,
-      isCompleted: false,
-      stageRow: null,
-    };
-  }
-
-  return {
-    activeStage: "PEMBIMBING_1",
-    activeStatus: p1.current_status,
-    isCompleted: false,
-    stageRow: p1,
-  };
-}
-
 const TITLE_CHANGE_PENDING_STATUSES = [
   "WAITING_PEMBIMBING_2",
   "WAITING_PEMBIMBING_1",
@@ -177,6 +132,23 @@ async function getTitleChangesByOutlineId(conn, outlineId) {
 }
 
 const SUBMITTABLE_STAGE_STATUSES = ["WAITING_SUBMISSION", "NEED_REVISION"];
+
+const STAGE_FILTERS = ["PEMBIMBING_2", "PEMBIMBING_1"];
+const STATUS_FILTERS = [
+  "WAITING_SUBMISSION",
+  "SUBMITTED",
+  "NEED_REVISION",
+  "CONTINUE",
+  "ACCEPTED",
+];
+
+// `?stage=` / `?status=` on the list endpoints; an unknown value is ignored on its own and never
+// switches off the other filter.
+function matchesActiveFilter(row, stage, status) {
+  if (STAGE_FILTERS.includes(stage) && row.active_stage !== stage) return false;
+  if (STATUS_FILTERS.includes(status) && row.active_status !== status) return false;
+  return true;
+}
 
 function canReviewStageStatus(stageStatus) {
   return stageStatus === "SUBMITTED";
@@ -221,10 +193,8 @@ function getDecisionLabel(status) {
   return status ?? "";
 }
 
-// The kartu has 18 consultation rows. Signatures are only selected for PDF generation, never for a
-// response.
-const KARTU_LOG_LIMIT = 18;
-
+// Every review is a kartu row; the PDF table grows onto more pages as needed. Signatures are only
+// selected for PDF generation, never for a response.
 async function getKartuLogs(queryable, kartuId, { withSignatures = false } = {}) {
   const [logs] = await queryable.query(
     `SELECT
@@ -247,8 +217,7 @@ async function getKartuLogs(queryable, kartuId, { withSignatures = false } = {})
      LEFT JOIN konsultasi_outline_review_file rf
        ON rf.konsultasi_outline_review_id = r.id
      WHERE s.kartu_konsultasi_outline_id = ?
-     ORDER BY r.reviewed_at ASC, r.id ASC
-     LIMIT ${KARTU_LOG_LIMIT}`,
+     ORDER BY r.reviewed_at ASC, r.id ASC`,
     [kartuId],
   );
   return logs;
@@ -1227,7 +1196,9 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          s.current_submission_no,
          s.started_at,
          s.finished_at,
-         latest_submission.latest_submitted_at,
+         (SELECT MAX(sub.submitted_at)
+            FROM konsultasi_outline_submission sub
+           WHERE sub.konsultasi_outline_stage_id = s.id) AS latest_submitted_at,
          k.id AS kartu_id,
          k.outline_id,
          m.nama AS nama_mahasiswa,
@@ -1236,14 +1207,6 @@ exports.listAssignedToLecturer = async (req, res, next) => {
          o.judul AS judul_skripsi,
          k.is_completed
        FROM konsultasi_outline_stage s
-       LEFT JOIN (
-         SELECT
-           konsultasi_outline_stage_id,
-           MAX(submitted_at) AS latest_submitted_at
-         FROM konsultasi_outline_submission
-         GROUP BY konsultasi_outline_stage_id
-       ) latest_submission
-         ON latest_submission.konsultasi_outline_stage_id = s.id
        INNER JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
        JOIN outline o ON o.id = k.outline_id
        JOIN mahasiswa m ON m.npm = o.npm
@@ -1365,30 +1328,7 @@ exports.listMySupervisedConsultations = async (req, res, next) => {
           stages,
         };
       })
-      .filter((row) => {
-        if (stage && stage !== "PEMBIMBING_2" && stage !== "PEMBIMBING_1") {
-          return true;
-        }
-        if (stage && row.active_stage !== stage) {
-          return false;
-        }
-        if (
-          status &&
-          ![
-            "WAITING_SUBMISSION",
-            "SUBMITTED",
-            "NEED_REVISION",
-            "CONTINUE",
-            "ACCEPTED",
-          ].includes(status)
-        ) {
-          return true;
-        }
-        if (status && row.active_status !== status) {
-          return false;
-        }
-        return true;
-      });
+      .filter((row) => matchesActiveFilter(row, stage, status));
 
     return res.json({ ok: true, data: rows });
   } catch (err) {
@@ -1515,30 +1455,7 @@ exports.listForKaprodi = async (req, res, next) => {
           stages,
         };
       })
-      .filter((row) => {
-        if (stage && stage !== "PEMBIMBING_2" && stage !== "PEMBIMBING_1") {
-          return true;
-        }
-        if (stage && row.active_stage !== stage) {
-          return false;
-        }
-        if (
-          status &&
-          ![
-            "WAITING_SUBMISSION",
-            "SUBMITTED",
-            "NEED_REVISION",
-            "CONTINUE",
-            "ACCEPTED",
-          ].includes(status)
-        ) {
-          return true;
-        }
-        if (status && row.active_status !== status) {
-          return false;
-        }
-        return true;
-      });
+      .filter((row) => matchesActiveFilter(row, stage, status));
 
     pagination.totalItems = rows.length;
     const pageRows = pagination.enabled
