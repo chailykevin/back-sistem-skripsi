@@ -102,14 +102,23 @@ function validateIpk(ipk) {
 function validateTglLahir(raw) {
   const trimmed = String(raw ?? "").trim();
   if (!trimmed) return { error: null, value: null };
-  const date = new Date(trimmed);
-  if (Number.isNaN(date.getTime())) {
-    return { error: "Tanggal lahir tidak valid", value: null };
+  const date = new Date(`${trimmed}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(trimmed) ||
+    Number.isNaN(date.getTime()) ||
+    date.toISOString().slice(0, 10) !== trimmed
+  ) {
+    return { error: "Tanggal lahir tidak valid (format YYYY-MM-DD)", value: null };
   }
   if (date.getTime() > Date.now()) {
     return { error: "Tanggal lahir tidak boleh di masa depan", value: null };
   }
   return { error: null, value: trimmed };
+}
+
+function textOrNull(v) {
+  if (v === null || v === undefined) return null;
+  return String(v).trim() || null;
 }
 
 function validatePengujiAssignment({
@@ -387,6 +396,16 @@ const KAPRODI_REQUIRED_FILE_TYPES = KAPRODI_FILE_TYPES.filter(
 // BERKAS_SKRIPSI), Sekretariat the rest (REKAP_NILAI holds the Data Perkembangan Akademik); the
 // Kartu Penulisan and the Seminar SK are attached by the system.
 const SEMINAR_KAPRODI_FILE_TYPES = ["BERKAS_SKRIPSI"];
+const KAPRODI_LOCKED_STATUSES = ["VALID", "DISPOSISI_SENT", "COMPLETED"];
+
+// Types Kaprodi checks; once Kaprodi has approved, they can no longer be replaced or sent back.
+function isKaprodiCheckedType(jenis, fileType) {
+  const types =
+    jenis === JENIS.SEMINAR_BISNIS_DIGITAL
+      ? SEMINAR_KAPRODI_FILE_TYPES
+      : [...KAPRODI_REQUIRED_FILE_TYPES, ...KAPRODI_OPTIONAL_FILE_TYPES];
+  return types.includes(fileType);
+}
 const SEMINAR_SEKRETARIAT_FILE_TYPES = [
   "PAS_FOTO",
   "KTM",
@@ -586,6 +605,13 @@ async function attachOpenSidangPeriodIfMissing(conn, sidang, openPeriod) {
     [period.id, sidang.id],
   );
   return { attached: true, period };
+}
+
+// Whether the student's next write on this pengajuan needs an open sidang period (ujian ulang is exempt).
+function isSidangPeriodRequired(sidang, { firstSubmit = false } = {}) {
+  if (Number(sidang.ujian_ke) !== 1) return false;
+  if (sidang.sidang_submission_period_id == null) return true;
+  return firstSubmit && sidang.status === "DRAFT";
 }
 
 exports.initPengajuanSidang = async (req, res, next) => {
@@ -848,6 +874,7 @@ exports.getPengajuanSidang = async (req, res, next) => {
         currentJenis,
         pengujiRule,
         skripsiRegistrationBlock,
+        periodRequired: isSidangPeriodRequired(sidang, { firstSubmit: true }),
       },
     });
   } catch (err) {
@@ -898,6 +925,12 @@ exports.uploadFiles = async (req, res, next) => {
         return res.status(400).json({
           ok: false,
           message: `fileName wajib diisi untuk ${f.fileType}`,
+        });
+      }
+      if (String(f.fileName).trim().length > 255) {
+        return res.status(400).json({
+          ok: false,
+          message: `fileName untuk ${f.fileType} maksimal 255 karakter`,
         });
       }
       const uploadError = validateUpload(
@@ -965,31 +998,31 @@ exports.uploadFiles = async (req, res, next) => {
       }
     }
 
-    if (
-      isSeminar &&
-      ["VALID", "DISPOSISI_SENT", "COMPLETED"].includes(kaprodiRow?.status) &&
-      files.some((f) => SEMINAR_KAPRODI_FILE_TYPES.includes(f.fileType))
-    ) {
-      return res.status(400).json({
-        ok: false,
-        message: "Proposal sudah disetujui Kaprodi dan tidak dapat diganti.",
-      });
-    }
-
-    // No Kaprodi row yet (an ujian ulang draft before the Kaprodi step) counts as not yet VALID.
-    if (kaprodiRow?.status !== "VALID") {
-      const uploadableBeforeValid = isSeminar
-        ? SEMINAR_KAPRODI_FILE_TYPES
-        : [...KAPRODI_REQUIRED_FILE_TYPES, ...KAPRODI_OPTIONAL_FILE_TYPES];
-      const forbidden = files.filter(
-        (f) => !uploadableBeforeValid.includes(f.fileType),
-      );
-      if (forbidden.length > 0) {
-        return res.status(400).json({
-          ok: false,
-          message: `File berikut belum bisa diunggah sebelum Kaprodi menyetujui: ${forbidden.map((f) => f.fileType).join(", ")}`,
-        });
+    const kaprodiPhaseError = (kaprodiStatus) => {
+      if (
+        KAPRODI_LOCKED_STATUSES.includes(kaprodiStatus) &&
+        files.some((f) => isKaprodiCheckedType(sidang.jenis, f.fileType))
+      ) {
+        return "File ini sudah disetujui Kaprodi dan tidak dapat diganti.";
       }
+      // No Kaprodi row yet (an ujian ulang draft before the Kaprodi step) counts as not yet VALID.
+      if (kaprodiStatus !== "VALID") {
+        const uploadableBeforeValid = isSeminar
+          ? SEMINAR_KAPRODI_FILE_TYPES
+          : [...KAPRODI_REQUIRED_FILE_TYPES, ...KAPRODI_OPTIONAL_FILE_TYPES];
+        const forbidden = files.filter(
+          (f) => !uploadableBeforeValid.includes(f.fileType),
+        );
+        if (forbidden.length > 0) {
+          return `File berikut belum bisa diunggah sebelum Kaprodi menyetujui: ${forbidden.map((f) => f.fileType).join(", ")}`;
+        }
+      }
+      return null;
+    };
+
+    const earlyPhaseError = kaprodiPhaseError(kaprodiRow?.status);
+    if (earlyPhaseError) {
+      return res.status(400).json({ ok: false, message: earlyPhaseError });
     }
 
     const conn = await db.getConnection();
@@ -1011,6 +1044,18 @@ exports.uploadFiles = async (req, res, next) => {
           message:
             "File hanya bisa diunggah saat status DRAFT atau NEED_REVISION",
         });
+      }
+
+      // Same lock order as reviewKaprodi (pengajuan_sidang, then the Kaprodi row).
+      const [[lockedKaprodi]] = await conn.query(
+        `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? FOR UPDATE`,
+        [sidang.id],
+      );
+      const lockedPhaseError = kaprodiPhaseError(lockedKaprodi?.status);
+      if (lockedPhaseError) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({ ok: false, message: lockedPhaseError });
       }
 
       for (const f of files) {
@@ -1152,10 +1197,7 @@ exports.submitPengajuanSidang = async (req, res, next) => {
 
     // Gate original first submissions by period, and repair legacy/auto-created
     // drafts that predate an open period by assigning it once.
-    const requiresOpenPeriod =
-      sidang.ujian_ke === 1 &&
-      (sidang.status === "DRAFT" || sidang.sidang_submission_period_id == null);
-    if (requiresOpenPeriod) {
+    if (isSidangPeriodRequired(sidang, { firstSubmit: true })) {
       const openPeriod = await getSidangOpenPeriod(jenis);
       if (!openPeriod) {
         await conn.rollback();
@@ -1183,41 +1225,24 @@ exports.submitPengajuanSidang = async (req, res, next) => {
     );
     const existingTypes = new Set(existingFiles.map((f) => f.file_type));
 
-    if (sidang.ujian_ke > 1) {
-      // Ujian ulang: only BUKTI_PEMBAYARAN and BERKAS_SKRIPSI required
-      const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BERKAS_SKRIPSI"];
-      const missing = ujianUlangRequired.filter((t) => !existingTypes.has(t));
-      if (missing.length > 0) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: `File berikut belum diunggah: ${missing.join(", ")}`,
-        });
-      }
-    } else {
-      // Original flow: all required uploads must be present
-      const requiredUploads = isSeminar
-        ? [...SEMINAR_KAPRODI_FILE_TYPES, ...SEMINAR_SEKRETARIAT_FILE_TYPES]
-        : REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
-      const missingUploads = requiredUploads.filter(
-        (t) => !existingTypes.has(t),
-      );
-      if (missingUploads.length > 0) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: `File berikut belum diunggah: ${missingUploads.join(", ")}`,
-        });
-      }
-      if (perluSuratKeterangan && !existingTypes.has("SURAT_KETERANGAN")) {
-        await conn.rollback();
-        txStarted = false;
-        return res
-          .status(400)
-          .json({ ok: false, message: "File SURAT_KETERANGAN belum diunggah" });
-      }
+    const requiredUploads = isSeminar
+      ? [...SEMINAR_KAPRODI_FILE_TYPES, ...SEMINAR_SEKRETARIAT_FILE_TYPES]
+      : REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
+    const missingUploads = requiredUploads.filter((t) => !existingTypes.has(t));
+    if (missingUploads.length > 0) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: `File berikut belum diunggah: ${missingUploads.join(", ")}`,
+      });
+    }
+    if (perluSuratKeterangan && !existingTypes.has("SURAT_KETERANGAN")) {
+      await conn.rollback();
+      txStarted = false;
+      return res
+        .status(400)
+        .json({ ok: false, message: "File SURAT_KETERANGAN belum diunggah" });
     }
 
     await conn.query(
@@ -1324,6 +1349,22 @@ exports.reviewFile = async (req, res, next) => {
       return res
         .status(404)
         .json({ ok: false, message: `File ${fileType} tidak ditemukan` });
+    }
+
+    if (status === "NEED_REUPLOAD" && isKaprodiCheckedType(sidang.jenis, fileType)) {
+      const [[kaprodiForReview]] = await conn.query(
+        `SELECT status FROM pengajuan_sidang_kaprodi WHERE pengajuan_sidang_id = ? LIMIT 1`,
+        [sidang.id],
+      );
+      if (KAPRODI_LOCKED_STATUSES.includes(kaprodiForReview?.status)) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message:
+            "File ini sudah disetujui Kaprodi; Sekretariat tidak dapat meminta unggah ulang.",
+        });
+      }
     }
 
     await conn.query(
@@ -1454,55 +1495,39 @@ exports.finalizePengajuanSidang = async (req, res, next) => {
       fileRows.map((f) => [f.file_type, f.status]),
     );
 
-    if (sidang.ujian_ke > 1) {
-      // Ujian ulang: only check BUKTI_PEMBAYARAN and BERKAS_SKRIPSI
-      const ujianUlangRequired = ["BUKTI_PEMBAYARAN", "BERKAS_SKRIPSI"];
-      const unverified = ujianUlangRequired.filter(
-        (t) => fileMap[t] !== "VERIFIED",
-      );
-      if (unverified.length > 0) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
-        });
-      }
-    } else {
-      const [[skripsiForVerify]] = await conn.query(
-        `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
-        [skripsiId],
-      );
-      const isSeminar = sidang.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
-      const perluSuratKeterangan =
-        !isSeminar && skripsiForVerify?.perlu_surat_pengantar === 1;
+    const [[skripsiForVerify]] = await conn.query(
+      `SELECT perlu_surat_pengantar FROM skripsi WHERE id = ? LIMIT 1`,
+      [skripsiId],
+    );
+    const isSeminar = sidang.jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+    const perluSuratKeterangan =
+      !isSeminar && skripsiForVerify?.perlu_surat_pengantar === 1;
 
-      // The Seminar proposal is Kaprodi's to check, so Sekretariat only answers for the rest.
-      const sekretariatFileTypes = isSeminar
-        ? SEMINAR_SEKRETARIAT_FILE_TYPES
-        : REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
-      const unverified = sekretariatFileTypes.filter(
-        (t) => fileMap[t] !== "VERIFIED",
-      );
-      if (unverified.length > 0) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
-        });
-      }
-      if (
-        perluSuratKeterangan &&
-        fileMap["SURAT_KETERANGAN"] !== "VERIFIED"
-      ) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message: "File SURAT_KETERANGAN belum diverifikasi",
-        });
-      }
+    // The Seminar proposal is Kaprodi's to check, so Sekretariat only answers for the rest.
+    const sekretariatFileTypes = isSeminar
+      ? SEMINAR_SEKRETARIAT_FILE_TYPES
+      : REQUIRED_FILE_TYPES.filter((t) => !SYSTEM_FILE_TYPES.includes(t));
+    const unverified = sekretariatFileTypes.filter(
+      (t) => fileMap[t] !== "VERIFIED",
+    );
+    if (unverified.length > 0) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: `File berikut belum diverifikasi: ${unverified.join(", ")}`,
+      });
+    }
+    if (
+      perluSuratKeterangan &&
+      fileMap["SURAT_KETERANGAN"] !== "VERIFIED"
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(400).json({
+        ok: false,
+        message: "File SURAT_KETERANGAN belum diverifikasi",
+      });
     }
 
     await conn.query(
@@ -1917,6 +1942,7 @@ exports.getKaprodi = async (req, res, next) => {
         currentJenis,
         pengujiRule,
         skripsiRegistrationBlock,
+        periodRequired: isSidangPeriodRequired(activeSidangForGet),
       },
     });
   } catch (err) {
@@ -2007,7 +2033,7 @@ exports.updateKaprodi = async (req, res, next) => {
     const params = [];
 
     if (tempatLahir !== undefined) {
-      const tempatLahirVal = String(tempatLahir).trim();
+      const tempatLahirVal = textOrNull(tempatLahir) ?? "";
       if (tempatLahirVal.length > 100) {
         return res.status(400).json({
           ok: false,
@@ -2027,7 +2053,7 @@ exports.updateKaprodi = async (req, res, next) => {
       params.push(tglLahirVal);
     }
     if (alamat !== undefined) {
-      const alamatVal = String(alamat).trim();
+      const alamatVal = textOrNull(alamat) ?? "";
       if (alamatVal.length > 500) {
         return res.status(400).json({
           ok: false,
@@ -2038,7 +2064,7 @@ exports.updateKaprodi = async (req, res, next) => {
       params.push(alamatVal || null);
     }
     if (noHp !== undefined) {
-      const noHpVal = String(noHp).trim();
+      const noHpVal = textOrNull(noHp) ?? "";
       if (noHpVal && !/^08[0-9]{7,13}$/.test(noHpVal)) {
         return res.status(400).json({
           ok: false,
@@ -2049,7 +2075,7 @@ exports.updateKaprodi = async (req, res, next) => {
       params.push(noHpVal || null);
     }
     if (noWa !== undefined) {
-      const noWaVal = String(noWa).trim();
+      const noWaVal = textOrNull(noWa) ?? "";
       if (noWaVal && !/^08[0-9]{7,13}$/.test(noWaVal)) {
         return res.status(400).json({
           ok: false,
@@ -2060,13 +2086,19 @@ exports.updateKaprodi = async (req, res, next) => {
       params.push(noWaVal || null);
     }
     if (statusPernikahan !== undefined) {
+      if (
+        statusPernikahan !== null &&
+        statusPernikahan !== "" &&
+        statusPernikahan !== "Belum Menikah" &&
+        statusPernikahan !== "Sudah Menikah"
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message: "Status pernikahan harus 'Belum Menikah' atau 'Sudah Menikah'",
+        });
+      }
       setClauses.push("status_pernikahan = ?");
-      params.push(
-        statusPernikahan === "Belum Menikah" ||
-          statusPernikahan === "Sudah Menikah"
-          ? statusPernikahan
-          : null,
-      );
+      params.push(statusPernikahan || null);
     }
     if (ipk !== undefined) {
       const ipkError = validateIpk(ipk);
@@ -2135,10 +2167,17 @@ exports.updateKaprodi = async (req, res, next) => {
     }
 
     params.push(kaprodi.id);
-    await db.query(
-      `UPDATE pengajuan_sidang_kaprodi SET ${setClauses.join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    const [updateResult] = await db.query(
+      `UPDATE pengajuan_sidang_kaprodi SET ${setClauses.join(", ")}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND status IN ('DRAFT','NEED_REVISION')`,
       params,
     );
+    if (updateResult.affectedRows === 0) {
+      return res.status(409).json({
+        ok: false,
+        message: "Form sudah dikirim dan sedang ditinjau Kaprodi.",
+      });
+    }
 
     const [[updated]] = await db.query(
       `SELECT * FROM pengajuan_sidang_kaprodi WHERE id = ? LIMIT 1`,
@@ -2417,6 +2456,23 @@ exports.submitKaprodi = async (req, res, next) => {
       });
     }
 
+    const [uploadedKaprodiFiles] = await db.query(
+      `SELECT file_type FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ?`,
+      [pengajuan.id],
+    );
+    const uploadedKaprodiTypes = new Set(uploadedKaprodiFiles.map((f) => f.file_type));
+    const missingKaprodiFiles = (
+      isSeminar ? SEMINAR_KAPRODI_FILE_TYPES : KAPRODI_REQUIRED_FILE_TYPES
+    ).filter((t) => !uploadedKaprodiTypes.has(t));
+    if (missingKaprodiFiles.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        message: `File berikut belum diunggah: ${missingKaprodiFiles
+          .map((t) => FILE_LABELS[t] ?? t)
+          .join(", ")}`,
+      });
+    }
+
     const [[skripsiProdiRow]] = await db.query(
       `SELECT program_studi_id FROM skripsi WHERE id = ? LIMIT 1`,
       [skripsiId],
@@ -2438,8 +2494,7 @@ exports.submitKaprodi = async (req, res, next) => {
     }
 
     // An original pengajuan auto-created before any period opened takes the period open now.
-    const needsPeriod =
-      Number(pengajuan.ujian_ke) === 1 && pengajuan.sidang_submission_period_id == null;
+    const needsPeriod = isSidangPeriodRequired(pengajuan);
     const openPeriod = needsPeriod ? await getSidangOpenPeriod(pengajuan.jenis) : null;
     if (needsPeriod && !openPeriod) {
       return res.status(409).json({
@@ -2710,6 +2765,13 @@ exports.reviewKaprodi = async (req, res, next) => {
 
     await conn.beginTransaction();
     txStarted = true;
+
+    // Same lock order as uploadFiles: pengajuan_sidang first, then the Kaprodi row.
+    if (activeSidangForReview) {
+      await conn.query(`SELECT id FROM pengajuan_sidang WHERE id = ? FOR UPDATE`, [
+        activeSidangForReview.id,
+      ]);
+    }
 
     const [[kaprodi]] = activeSidangForReview
       ? await conn.query(
