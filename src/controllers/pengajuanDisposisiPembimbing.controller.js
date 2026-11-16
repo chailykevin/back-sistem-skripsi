@@ -52,7 +52,6 @@ async function generateNomorSkSuratPengantar(conn, programStudiId) {
   return `${String(Number(maxSeq) + 1).padStart(3, "0")}${suffix}`;
 }
 
-const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
 
 async function upsertFileByType(
@@ -164,7 +163,6 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       perluSuratPengantar,
       namaPerusahaan,
       alamatPerusahaan,
-      syaratTranskrip,
       fileTranskrip,
       fileTranskripName,
     } = req.body || {};
@@ -302,7 +300,7 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         nomorSkSuratPengantar,
         namaPerusahaanVal || null,
         alamatPerusahaanVal || null,
-        toBit(syaratTranskrip, 0),
+        0,
       ],
     );
 
@@ -518,6 +516,7 @@ exports.getById = async (req, res, next) => {
           pj.perlu_surat_pengantar,
           pj.nama_perusahaan,
           pj.alamat_perusahaan,
+          pj.syarat_transkrip,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -737,7 +736,6 @@ exports.resubmit = async (req, res, next) => {
       perluSuratPengantar,
       namaPerusahaan,
       alamatPerusahaan,
-      syaratTranskrip,
       fileTranskrip,
       fileTranskripName,
     } = req.body || {};
@@ -787,7 +785,6 @@ exports.resubmit = async (req, res, next) => {
       perluSuratProvided ||
       (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
       (alamatPerusahaanVal !== null && alamatPerusahaanVal.length > 0) ||
-      syaratTranskrip !== undefined ||
       (fileTranskripVal !== null && fileTranskripVal.length > 0);
 
     if (!hasMeaningfulUpdate) {
@@ -989,9 +986,10 @@ exports.resubmit = async (req, res, next) => {
       sets.push("alamat_perusahaan = ?");
       params.push(alamatPerusahaanVal);
     }
-    const currentRow = rows[0];
-    sets.push("syarat_transkrip = ?");
-    params.push(toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0));
+    // Kaprodi's checklist: a new transkrip needs a new check, otherwise their tick stays.
+    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
+      sets.push("syarat_transkrip = 0");
+    }
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
     sets.push("disposisi_at = NULL");

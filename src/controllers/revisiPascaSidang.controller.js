@@ -22,7 +22,9 @@ const {
 const {
   assertSignatures,
   getStaffSignature,
-  hasSignature,
+  staffSignatureExists,
+  dosenSignatureExists,
+  mahasiswaSignatureExists,
 } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
@@ -360,48 +362,33 @@ async function computeMissingSignatures(revisi, stages, jenis) {
     }
   }
 
+  // Sequential on purpose: the pool is small and this runs on every read.
   const missing = [];
-  const lookups = [];
   for (const need of needs.values()) {
-    lookups.push(
-      getSigByNidn(db, need.nidn).then((sig) => {
-        if (!hasSignature(sig)) missing.push({ role: need.role, nama: need.nama, kind: "DOSEN" });
-      }),
-    );
+    if (!(await dosenSignatureExists(db, need.nidn))) {
+      missing.push({ role: need.role, nama: need.nama, kind: "DOSEN" });
+    }
   }
-  if (needMahasiswa) {
-    lookups.push(
-      getSigByNpm(db, revisi.mahasiswa_npm).then((sig) => {
-        if (!hasSignature(sig)) {
-          missing.push({ role: "Mahasiswa", nama: revisi.nama_mahasiswa ?? "", kind: "MAHASISWA" });
-        }
-      }),
-    );
+  if (needMahasiswa && !(await mahasiswaSignatureExists(db, revisi.mahasiswa_npm))) {
+    missing.push({ role: "Mahasiswa", nama: revisi.nama_mahasiswa ?? "", kind: "MAHASISWA" });
   }
   if (needDekan) {
-    lookups.push(
-      (async () => {
-        const [[prodi]] = await db.query(
-          `SELECT f.dekan_staff_usr_id, s.nama AS dekan_nama
-           FROM program_studi ps
-           LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-           LEFT JOIN staf s ON s.usr_id = f.dekan_staff_usr_id
-           WHERE ps.id = ? LIMIT 1`,
-          [revisi.program_studi_id],
-        );
-        let sig = null;
-        try {
-          sig = await getStaffSignature(db, prodi?.dekan_staff_usr_id ?? null);
-        } catch (err) {
-          if (err.statusCode !== 409) throw err;
-        }
-        if (!hasSignature(sig)) {
-          missing.push({ role: "Dekan", nama: prodi?.dekan_nama ?? "", kind: "DEKAN" });
-        }
-      })(),
+    const [[prodi]] = await db.query(
+      `SELECT f.dekan_staff_usr_id, s.nama AS dekan_nama
+       FROM program_studi ps
+       LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+       LEFT JOIN staf s ON s.usr_id = f.dekan_staff_usr_id
+       WHERE ps.id = ? LIMIT 1`,
+      [revisi.program_studi_id],
     );
+    let exists = false;
+    try {
+      exists = await staffSignatureExists(db, prodi?.dekan_staff_usr_id ?? null);
+    } catch (err) {
+      if (err.statusCode !== 409) throw err;
+    }
+    if (!exists) missing.push({ role: "Dekan", nama: prodi?.dekan_nama ?? "", kind: "DEKAN" });
   }
-  await Promise.all(lookups);
   const order = ["Mahasiswa", "Pembimbing 1", "Pembimbing 2", "Penguji", "Penguji 1", "Penguji 2", "Dekan"];
   return missing.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
 }

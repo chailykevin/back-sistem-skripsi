@@ -22,6 +22,11 @@ const {
   getDosenSignature,
   getUserSignature,
   getMahasiswaSignature,
+  staffSignatureExists,
+  dosenSignatureExists,
+  userSignatureExists,
+  mahasiswaSignatureExists,
+  roleSignatureExists,
 } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
@@ -187,14 +192,12 @@ async function getSekprodiOfProgramStudi(queryable, programStudiId) {
   return row ?? null;
 }
 
-// A 409 (ambiguous SIMIKO name) means the signature cannot be determined: treat it as missing.
-async function getStaffSignatureOrNull(queryable, staffUsrId) {
-  try {
-    return await getStaffSignature(queryable, staffUsrId);
-  } catch (err) {
-    if (err.statusCode !== 409) throw err;
-    return null;
+// Existence-only twin of getInstitutionSignature, without loading the signature blobs.
+async function institutionSignatureExists(queryable, recipientRole, confirmation) {
+  if (confirmation?.confirmed_at && confirmation.user_id) {
+    return userSignatureExists(queryable, confirmation.user_id);
   }
+  return roleSignatureExists(queryable, INSTITUTION_ROLE_CODE[recipientRole]);
 }
 
 // Signatures the Surat Pernyataan Penyerahan will need that are missing now (no rendering, one round
@@ -203,34 +206,35 @@ async function computeMissingSignatures(ctx, confirmations) {
   if (ctx.is_completed) return [];
   const confByRole = new Map(confirmations.map((c) => [c.recipient_role, c]));
   const missing = [];
-  const check = (role, nama, kind, promise) =>
-    promise.then((sig) => {
-      if (!hasSignature(sig)) missing.push({ role, nama: nama ?? "", kind });
-    });
+  // Sequential on purpose: the pool is small and this runs on every read.
+  const check = async (role, nama, kind, exists) => {
+    if (!(await exists())) missing.push({ role, nama: nama ?? "", kind });
+  };
 
-  const lookups = [
-    check("Mahasiswa", ctx.nama_mahasiswa, "MAHASISWA", getMahasiswaSignature(db, ctx.npm)),
-    check("Perpustakaan", "", "PERPUSTAKAAN", getInstitutionSignature(db, "PERPUSTAKAAN", confByRole.get("PERPUSTAKAAN"))),
-    check("LPPM", "", "LPPM", getInstitutionSignature(db, "LPPM", confByRole.get("LPPM"))),
-  ];
+  await check("Mahasiswa", ctx.nama_mahasiswa, "MAHASISWA", () => mahasiswaSignatureExists(db, ctx.npm));
+  await check("Perpustakaan", "", "PERPUSTAKAAN", () =>
+    institutionSignatureExists(db, "PERPUSTAKAAN", confByRole.get("PERPUSTAKAAN")),
+  );
+  await check("LPPM", "", "LPPM", () => institutionSignatureExists(db, "LPPM", confByRole.get("LPPM")));
   for (const [role, label] of [
     ["PEMBIMBING_1", "Pembimbing 1"],
     ["PEMBIMBING_2", "Pembimbing 2"],
     ["PENGUJI_1", "Penguji 1"],
     ["PENGUJI_2", "Penguji 2"],
   ]) {
-    lookups.push(check(label, dosenNamaForRole(ctx, role), "DOSEN", getDosenSignature(db, dosenNidnForRole(ctx, role))));
+    await check(label, dosenNamaForRole(ctx, role), "DOSEN", () =>
+      dosenSignatureExists(db, dosenNidnForRole(ctx, role)),
+    );
   }
   const sekprodi = await getSekprodiOfProgramStudi(db, ctx.program_studi_id);
-  lookups.push(
-    check(
-      "Sekretaris Prodi",
-      sekprodi?.nama,
-      "SEKPRODI",
-      sekprodi?.staff_usr_id ? getStaffSignatureOrNull(db, sekprodi.staff_usr_id) : Promise.resolve(null),
-    ),
-  );
-  await Promise.all(lookups);
+  await check("Sekretaris Prodi", sekprodi?.nama, "SEKPRODI", async () => {
+    try {
+      return await staffSignatureExists(db, sekprodi?.staff_usr_id);
+    } catch (err) {
+      if (err.statusCode !== 409) throw err;
+      return false;
+    }
+  });
 
   const order = ["Mahasiswa", "Perpustakaan", "LPPM", "Pembimbing 1", "Pembimbing 2", "Penguji 1", "Penguji 2", "Sekretaris Prodi"];
   return missing.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));

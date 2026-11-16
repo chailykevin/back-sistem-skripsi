@@ -1,4 +1,5 @@
 ﻿const db = require("../db");
+const { attachmentDisposition } = require("../utils/contentDisposition");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
 const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
@@ -1636,7 +1637,7 @@ exports.getFinalKartuFile = async (req, res, next) => {
     res.setHeader("Content-Type", kartu.mime_type ?? "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${kartu.file_name ?? "kartu-penulisan-skripsi.pdf"}"`,
+      attachmentDisposition(kartu.file_name ?? "kartu-penulisan-skripsi.pdf"),
     );
     res.setHeader("Content-Length", fileBuffer.length);
     return res.send(fileBuffer);
@@ -1821,7 +1822,7 @@ exports.previewKartuPdf = async (req, res, next) => {
     );
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Content-Disposition", attachmentDisposition(fileName));
     res.setHeader("Content-Length", outputBuffer.length);
     return res.send(outputBuffer);
   } catch (err) {

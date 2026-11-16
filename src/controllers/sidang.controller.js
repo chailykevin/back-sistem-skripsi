@@ -1,4 +1,5 @@
 ﻿const db = require("../db");
+const { attachmentDisposition } = require("../utils/contentDisposition");
 const path = require("path");
 const { insertNotification } = require("../utils/notify");
 const { parsePagination, listResponse } = require("../utils/pagination");
@@ -1271,7 +1272,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
           hasilSidang === "GAGAL" ? "SIDANG_GAGAL" : "SIDANG_JUDUL_DITOLAK",
           hasilSidang === "GAGAL"
             ? "Skripsi Anda dinyatakan GAGAL karena terindikasi plagiat. Anda dapat mengulang dari awal pada semester berikutnya."
-            : `Judul Anda tidak diterima dalam seminar proposal (nilai ${rata.toFixed(2)}, grade ${grade}). Silakan mengulang dari pengajuan outline.`,
+            : `Judul Anda tidak diterima dalam seminar proposal. Silakan mengulang dari pengajuan outline.`,
           `/student/sidang`,
         );
       }
@@ -1334,9 +1335,9 @@ exports.submitHasilPenilaian = async (req, res, next) => {
     if (studentRow) {
       const studentMsg =
         hasilSidang === "JUDUL_DITERIMA"
-          ? `Selamat! Judul Anda diterima dalam seminar proposal dengan nilai ${rata.toFixed(2)} (${grade}). Silakan lanjut ke revisi.${judulBaruNote}`
+          ? `Selamat! Judul Anda diterima dalam seminar proposal. Silakan lanjut ke revisi.${judulBaruNote}`
           : hasilSidang === "LULUS"
-            ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi dengan nilai ${rata.toFixed(2)} (${grade}).`
+            ? `Selamat! Anda dinyatakan LULUS dalam sidang skripsi.`
             : "Anda dinyatakan TIDAK LULUS dalam sidang skripsi. Anda dapat mengikuti ujian ulang.";
       await insertNotification(
         conn,
@@ -1784,7 +1785,7 @@ function sendPdf(res, fileRow, downloadFileName) {
   res.setHeader("Content-Type", MIME_PDF);
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="${downloadFileName ?? fileRow.file_name}"`,
+    attachmentDisposition(downloadFileName ?? fileRow.file_name),
   );
   return res.send(buffer);
 }
@@ -1984,7 +1985,7 @@ exports.getNotulenFile = async (req, res, next) => {
     }
 
     const [[fileRow]] = await db.query(
-      `SELECT file_name, file_content FROM sidang_notulen WHERE sidang_id = ? AND role = ? AND submitted_at IS NOT NULL LIMIT 1`,
+      `SELECT file_name, file_content FROM sidang_notulen WHERE sidang_id = ? AND role = ? AND submitted_at IS NOT NULL AND file_content IS NOT NULL LIMIT 1`,
       [sidang.id, role],
     );
     if (!fileRow) {

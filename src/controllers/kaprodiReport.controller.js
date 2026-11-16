@@ -1,3 +1,4 @@
+const { attachmentDisposition } = require("../utils/contentDisposition");
 const db = require("../db");
 const ExcelJS = require("exceljs");
 const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
@@ -44,7 +45,7 @@ async function sendWorkbook(res, workbook, fileName) {
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   );
-  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.setHeader("Content-Disposition", attachmentDisposition(fileName));
   await workbook.xlsx.write(res);
   res.end();
 }

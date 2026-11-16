@@ -2,6 +2,18 @@ const MIME_DOCX =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 async function upsertSystemFile(conn, pengajuanSidangId, fileType, row) {
+  // Re-attaching must not wipe the Kaprodi/Sekretariat review of a file whose content is unchanged.
+  const [[current]] = await conn.query(
+    `SELECT file_content, file_name FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = ? LIMIT 1`,
+    [pengajuanSidangId, fileType],
+  );
+  if (
+    current &&
+    current.file_content === row.file_content &&
+    current.file_name === row.file_name
+  ) {
+    return;
+  }
   await conn.query(
     `DELETE FROM pengajuan_sidang_files WHERE pengajuan_sidang_id = ? AND file_type = ?`,
     [pengajuanSidangId, fileType],
