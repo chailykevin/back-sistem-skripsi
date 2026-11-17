@@ -8,5 +8,10 @@ router.get("/sk-skripsi-lanjutan/:skripsiId", auth, c.getDetail);
 router.post("/sk-skripsi-lanjutan/:skripsiId/forward", auth, c.forward);
 router.post("/sk-skripsi-lanjutan/:skripsiId/issue", auth, c.issue);
 router.get("/sk-skripsi-lanjutan/:skripsiId/file", auth, c.getFile);
+router.get(
+  "/sk-skripsi-lanjutan/:skripsiId/formulir-perubahan-judul",
+  auth,
+  c.getFormulirPerubahanJudul,
+);
 
 module.exports = router;

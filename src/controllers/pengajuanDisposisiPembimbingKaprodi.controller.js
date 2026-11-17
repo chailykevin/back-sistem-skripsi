@@ -6,9 +6,13 @@ const path = require("path");
 const {
   generateFormulirPengajuanDisposisiPembimbingSkripsiFTI,
 } = require("../services/generateFormulirPengajuanDisposisiPembimbingSkripsiFTI.js");
+const {
+  generateFormPengajuanTopikSeminarFTI,
+} = require("../services/generateFormPengajuanTopikSeminarFTI.js");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { BULAN_ID } = require("../utils/dates");
+const { SEMINAR_SYARAT, isSeminarTahap } = require("../services/topikSeminar.service");
 
 const toBit = (v, fallback = 0) => (v === undefined ? fallback : v ? 1 : 0);
 
@@ -17,7 +21,7 @@ function formatDateId(date) {
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-function buildFormulirFileName(npm, namaMahasiswa) {
+function buildFormulirFileName(npm, namaMahasiswa, documentName) {
   const safeNpm = String(npm ?? "")
     .trim()
     .replace(/[^\w.-]+/g, "_");
@@ -25,7 +29,44 @@ function buildFormulirFileName(npm, namaMahasiswa) {
     .trim()
     .replace(/[^\w\s.-]+/g, "")
     .replace(/\s+/g, " ");
-  return `${safeNpm} - ${safeNama} - Formulir Pengajuan Disposisi Pembimbing.pdf`;
+  return `${safeNpm} - ${safeNama} - ${documentName}.pdf`;
+}
+
+// Form Pengajuan Topik Seminar Bisnis Digital: no proposed pembimbing, five Kaprodi syarat.
+async function generateFormTopikSeminarDoc(rd, { catatan, kaprodiSignature }) {
+  const outputBuffer = await generateFormPengajuanTopikSeminarFTI({
+    mahasiswa: {
+      npm: rd.npm,
+      nama: rd.nama_mahasiswa,
+      programStudi: rd.program_studi_nama,
+      nomorHp: rd.no_hp,
+      judulDiajukan: rd.judul_skripsi,
+    },
+    pengajuan: {
+      perluSuratPengantar: Boolean(rd.perlu_surat_pengantar),
+      namaPerusahaan: rd.nama_perusahaan ?? "",
+      alamatPerusahaan: rd.alamat_perusahaan ?? "",
+      syarat: {
+        ktm: Boolean(rd.syarat_ktm),
+        dataPerkembanganAkademik: Boolean(rd.syarat_transkrip),
+        sksMin: Boolean(rd.syarat_sks_min),
+        simulasiBisnis: Boolean(rd.syarat_simulasi_bisnis),
+        nilaiD: Boolean(rd.syarat_nilai_d),
+      },
+      tanggal: formatDateId(rd.submitted_at ? new Date(rd.submitted_at) : new Date()),
+      signatureBase64: rd.student_signature,
+    },
+    disposisi: {
+      tanggal: formatDateId(new Date()),
+      keputusan: "Judul Diterima",
+      dosenPembimbingUtama: rd.pembimbing1_ditetapkan_nama ?? "",
+      dosenPembimbingKedua: rd.pembimbing2_ditetapkan_nama ?? "",
+      catatan: catatan || "-",
+      namaKetuaProgramStudi: rd.kaprodi_nama ?? "",
+      signatureBase64: kaprodiSignature,
+    },
+  });
+  return Buffer.from(outputBuffer).toString("base64");
 }
 
 async function generateFormulirDoc(data) {
@@ -103,8 +144,9 @@ async function generateAndStoreFormulir(conn, id, catatan) {
        pj.npm, pj.no_hp, pj.perlu_surat_pengantar, pj.nama_perusahaan,
        pj.alamat_perusahaan,
        pj.submitted_at,
-       pj.syarat_transkrip,
-       m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks,
+       pj.syarat_transkrip, pj.syarat_ktm, pj.syarat_sks_min,
+       pj.syarat_simulasi_bisnis, pj.syarat_nilai_d,
+       m.nama AS nama_mahasiswa, m.sks AS mahasiswa_sks, m.tahap_tugas_akhir,
        ps.nama AS program_studi_nama, ps.kaprodi_staff_usr_id,
        o.judul AS judul_skripsi,
        d1.nama AS pembimbing1_diajukan_nama,
@@ -134,6 +176,17 @@ async function generateAndStoreFormulir(conn, id, catatan) {
     { role: "Mahasiswa", nama: rd.nama_mahasiswa, signatureImage: rd.student_signature },
     { role: "Kaprodi", nama: rd.kaprodi_nama, signatureImage: kaprodiSignature },
   ]);
+
+  if (isSeminarTahap(rd.tahap_tugas_akhir)) {
+    await upsertFileByType(
+      conn,
+      id,
+      "PENGAJUAN_DISPOSISI_PEMBIMBING",
+      await generateFormTopikSeminarDoc(rd, { catatan, kaprodiSignature }),
+      buildFormulirFileName(rd.npm, rd.nama_mahasiswa, "Form Pengajuan Topik Seminar"),
+    );
+    return;
+  }
 
   const formulirBase64 = await generateFormulirDoc({
     npm: rd.npm,
@@ -167,7 +220,7 @@ async function generateAndStoreFormulir(conn, id, catatan) {
     id,
     "PENGAJUAN_DISPOSISI_PEMBIMBING",
     formulirBase64,
-    buildFormulirFileName(rd.npm, rd.nama_mahasiswa),
+    buildFormulirFileName(rd.npm, rd.nama_mahasiswa, "Formulir Pengajuan Disposisi Pembimbing"),
   );
 }
 
@@ -237,6 +290,7 @@ exports.listForKaprodi = async (req, res, next) => {
         m.npm,
         m.nama AS nama_mahasiswa,
         m.sks AS mahasiswa_sks,
+        m.tahap_tugas_akhir,
         ps.nama AS program_studi,
         o.submission_period_id,
         osp.tahun_akademik AS period_tahun_akademik,
@@ -270,6 +324,7 @@ exports.listForKaprodi = async (req, res, next) => {
         fileRows.map((fr) => [fr.pengajuan_disposisi_pembimbing_id, fr.file_name]),
       );
       for (const row of rows) {
+        row.is_seminar = isSeminarTahap(row.tahap_tugas_akhir);
         row.has_file_pengajuan_disposisi_pembimbing = fileNames.has(row.id);
         row.file_pengajuan_disposisi_pembimbing_name = fileNames.get(row.id) ?? null;
       }
@@ -297,13 +352,13 @@ exports.review = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "ID pengajuan tidak valid" });
     }
 
+    const body = req.body || {};
     const {
       status,
       pembimbing1DitapkanNidn,
       pembimbing2DitapkanNidn,
       catatanKaprodi,
-      syaratTranskrip,
-    } = req.body || {};
+    } = body;
 
     const pembimbing1Val =
       pembimbing1DitapkanNidn != null
@@ -346,7 +401,8 @@ exports.review = async (req, res, next) => {
     // Pastikan pengajuan ini memang milik prodinya Kaprodi
     const [check] = await db.query(
       `
-      SELECT pj.id, pj.program_studi_id, pj.syarat_transkrip
+      SELECT pj.id, pj.program_studi_id, pj.syarat_transkrip, pj.syarat_ktm, pj.syarat_sks_min,
+             pj.syarat_simulasi_bisnis, pj.syarat_nilai_d, m.tahap_tugas_akhir
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       WHERE pj.id = ?
@@ -364,12 +420,20 @@ exports.review = async (req, res, next) => {
       });
     }
 
-    // Approving means the transkrip was checked and needs no revision.
-    const effectiveSyaratTranskrip = toBit(syaratTranskrip, check[0].syarat_transkrip ?? 0);
-    if (status === "APPROVED" && !effectiveSyaratTranskrip) {
+    const seminar = isSeminarTahap(check[0].tahap_tugas_akhir);
+    // Kaprodi's ticks after this review: a field left out of the body keeps its stored value.
+    const syaratFields = seminar ? SEMINAR_SYARAT : { syaratTranskrip: "syarat_transkrip" };
+    const effectiveSyarat = Object.fromEntries(
+      Object.entries(syaratFields).map(([field, col]) => [col, toBit(body[field], check[0][col] ?? 0)]),
+    );
+
+    // Approving means every syarat was checked and needs no revision.
+    if (status === "APPROVED" && Object.values(effectiveSyarat).some((v) => !v)) {
       return res.status(400).json({
         ok: false,
-        message: "Transkrip nilai harus dicentang (valid) sebelum pengajuan disetujui",
+        message: seminar
+          ? "Kelima syarat administratif harus dicentang sebelum pengajuan disetujui"
+          : "Transkrip nilai harus dicentang (valid) sebelum pengajuan disetujui",
       });
     }
 
@@ -557,15 +621,13 @@ exports.review = async (req, res, next) => {
       }
     }
 
-    if (syaratTranskrip !== undefined) {
-      const currentRow = check[0];
-      await conn.query(
-        `UPDATE pengajuan_disposisi_pembimbing
-         SET syarat_transkrip = ?
-         WHERE id = ?`,
-        [toBit(syaratTranskrip, currentRow.syarat_transkrip ?? 0), id],
-      );
-    }
+    const syaratCols = Object.keys(effectiveSyarat);
+    await conn.query(
+      `UPDATE pengajuan_disposisi_pembimbing
+       SET ${syaratCols.map((col) => `${col} = ?`).join(", ")}
+       WHERE id = ?`,
+      [...syaratCols.map((col) => effectiveSyarat[col]), id],
+    );
 
     // The formulir records a final decision (its Keputusan field is Diterima/Ditolak), so it's only
     // made on approval; Perlu Revisi just returns the note to the student.
@@ -593,10 +655,10 @@ exports.review = async (req, res, next) => {
           NEED_REVISION: "TITLE_NEED_REVISION",
           APPROVED: "TITLE_APPROVED",
         };
+        const subject = seminar ? "Pengajuan topik seminar" : "Pengajuan disposisi pembimbing";
         const msgMap = {
-          NEED_REVISION:
-            "Pengajuan disposisi pembimbing Anda memerlukan revisi",
-          APPROVED: "Pengajuan disposisi pembimbing Anda disetujui",
+          NEED_REVISION: `${subject} Anda memerlukan revisi`,
+          APPROVED: `${subject} Anda disetujui`,
         };
         await insertNotification(
           conn,

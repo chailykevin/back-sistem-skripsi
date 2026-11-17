@@ -6,6 +6,7 @@ const {
   getStaffUsrId,
   getKaprodiProgramStudiIds,
   isKaprodiOfProgramStudi,
+  getDekanFakultasIds,
 } = require("../utils/identity");
 const { assertSignatures, getStaffSignature } = require("../utils/signature");
 const { formatTanggal } = require("../utils/dates");
@@ -28,6 +29,7 @@ const LIST_SELECT = `
   SELECT
     l.id, l.skripsi_id, l.status, l.judul_seminar, l.judul_skripsi, l.nomor_surat,
     l.forwarded_at, l.completed_at, l.created_at,
+    (l.formulir_perubahan_judul_file_content IS NOT NULL) AS has_formulir_perubahan_judul,
     sk.npm, m.nama AS nama_mahasiswa, sk.program_studi_id, ps.nama AS program_studi_nama,
     psk.submission_period_id,
     d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
@@ -171,6 +173,7 @@ exports.getDetail = async (req, res, next) => {
       data: {
         ...(req.user.hasRole("STUDENT") ? studentRow : row),
         judul_berubah: row.judul_skripsi !== row.judul_seminar,
+        has_formulir_perubahan_judul: !!row.has_formulir_perubahan_judul,
         has_halaman_pengesahan_seminar: !!halaman,
         has_sk_skripsi: row.status === "COMPLETED",
       },
@@ -294,6 +297,7 @@ exports.issue = async (req, res, next) => {
 
     const [[row]] = await conn.query(
       `SELECT l.id, l.status, l.judul_seminar, l.judul_skripsi,
+              (l.formulir_perubahan_judul_file_content IS NOT NULL) AS has_formulir,
               sk.npm, sk.program_studi_id,
               m.nama AS nama_mahasiswa,
               ps.nama AS program_studi_nama, ps.kode AS ps_kode,
@@ -325,6 +329,21 @@ exports.issue = async (req, res, next) => {
           row.status === "COMPLETED"
             ? "SK Penulisan Skripsi sudah diterbitkan"
             : "Pengajuan belum diteruskan oleh Kaprodi",
+      });
+    }
+    // A changed title is only official with the signed Formulir Perubahan Judul (made at the end of
+    // the Seminar revisi); without it nothing is generated.
+    if (
+      row.judul_skripsi != null &&
+      row.judul_skripsi !== row.judul_seminar &&
+      !row.has_formulir
+    ) {
+      await conn.rollback();
+      txStarted = false;
+      return res.status(409).json({
+        ok: false,
+        message:
+          "Formulir Perubahan Judul belum tersedia, sehingga SK Penulisan Skripsi belum dapat diterbitkan.",
       });
     }
     if (!row.f_kode || !row.dekan_staff_usr_id) {
@@ -418,6 +437,64 @@ exports.issue = async (req, res, next) => {
     next(err);
   } finally {
     conn.release();
+  }
+};
+
+// GET /sk-skripsi-lanjutan/:skripsiId/formulir-perubahan-judul — owner, both pembimbing, the Seminar
+// penguji, Kaprodi of the prodi, Sekretariat, Dekan of the fakultas.
+exports.getFormulirPerubahanJudul = async (req, res, next) => {
+  try {
+    const skripsiId = parseSkripsiId(req);
+    if (!skripsiId) {
+      return res.status(400).json({ ok: false, message: "Invalid skripsiId" });
+    }
+    const [[row]] = await db.query(
+      `SELECT l.formulir_perubahan_judul_file_name AS file_name,
+              l.formulir_perubahan_judul_mime_type AS mime_type,
+              l.formulir_perubahan_judul_file_content AS file_content,
+              sk.npm, sk.program_studi_id, sk.pembimbing1_nidn, sk.pembimbing2_nidn,
+              psk_k.penguji1_nidn, ps.fakultas_id
+       FROM pengajuan_sk_skripsi_lanjutan l
+       JOIN skripsi sk ON sk.id = l.skripsi_id
+       JOIN program_studi ps ON ps.id = sk.program_studi_id
+       JOIN sidang sd ON sd.id = l.seminar_sidang_id
+       LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = sd.pengajuan_sidang_id
+       WHERE l.skripsi_id = ? LIMIT 1`,
+      [skripsiId],
+    );
+    if (!row) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "Pengajuan SK Penulisan Skripsi tidak ditemukan" });
+    }
+    let allowed = await canRead(req, row);
+    if (!allowed && req.user.hasRole("DEKAN")) {
+      allowed = (await getDekanFakultasIds(req.user.id)).includes(Number(row.fakultas_id));
+    }
+    if (!allowed) {
+      const nidn = await getLecturerNidn(req.user.id);
+      allowed =
+        !!nidn &&
+        [row.pembimbing1_nidn, row.pembimbing2_nidn, row.penguji1_nidn].includes(nidn);
+    }
+    if (!allowed) {
+      return res.status(403).json({ ok: false, message: "Forbidden" });
+    }
+    if (!row.file_content) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "Formulir Perubahan Judul tidak tersedia" });
+    }
+    return res.json({
+      ok: true,
+      data: {
+        file_name: row.file_name,
+        mime_type: row.mime_type ?? "application/pdf",
+        file_content: row.file_content,
+      },
+    });
+  } catch (err) {
+    next(err);
   }
 };
 

@@ -1429,7 +1429,8 @@ exports.listSkForDekan = async (req, res, next) => {
              JOIN sidang sd ON sd.id = rps.sidang_id
              JOIN revisi_pasca_sidang_files rf ON rf.revisi_id = rps.id AND rf.file_type = 'HALAMAN_PENGESAHAN_DEKAN'
              WHERE sd.jenis = 'SKRIPSI' AND sd.skripsi_id = s.id
-           ) AS has_halaman_pengesahan
+           ) AS has_halaman_pengesahan,
+           (l.formulir_perubahan_judul_file_content IS NOT NULL) AS has_formulir_perubahan_judul
          FROM pengajuan_sk_skripsi_lanjutan l
          JOIN skripsi s ON s.id = l.skripsi_id
          JOIN mahasiswa m ON m.npm = s.npm

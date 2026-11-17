@@ -13,6 +13,14 @@ const { assertSignatures } = require("../utils/signature");
 const { BULAN_ROMAWI } = require("../utils/dates");
 const { mimeFromFileName } = require("../utils/mime");
 const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
+const {
+  DATA_AKADEMIK_SYARAT_COLUMNS,
+  isSeminarTahap,
+  isSeminarStudent,
+} = require("../services/topikSeminar.service");
+
+const SEMINAR_NO_PEMBIMBING_MESSAGE =
+  "Mahasiswa Seminar Bisnis Digital tidak mengajukan dosen pembimbing; Kaprodi yang menetapkannya.";
 
 // Next sequence is MAX of the existing numbers for this prodi/month/year rather than a
 // COUNT by submitted_at: resubmit resets submitted_at, and toggling perlu_surat_pengantar
@@ -94,6 +102,9 @@ async function hydratePengajuanDisposisiPembimbingReadData(baseRow) {
     file_pengajuan_disposisi_pembimbing_name: byType.get("PENGAJUAN_DISPOSISI_PEMBIMBING") ?? null,
     has_file_transkrip: byType.has("TRANSKRIP"),
     file_transkrip_name: byType.get("TRANSKRIP") ?? null,
+    has_file_ktm: byType.has("KTM"),
+    file_ktm_name: byType.get("KTM") ?? null,
+    is_seminar: isSeminarTahap(baseRow.tahap_tugas_akhir),
   };
 }
 
@@ -165,23 +176,39 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
       alamatPerusahaan,
       fileTranskrip,
       fileTranskripName,
+      fileKtm,
+      fileKtmName,
     } = req.body || {};
+
+    const seminar = await isSeminarStudent(db, npm);
+    const transkripLabel = seminar ? "Data Perkembangan Akademik" : "File transkrip nilai";
 
     // Required: SK Penelitian later pulls it as TRANSKRIP_NILAI and refuses to submit without it.
     if (fileTranskrip == null || String(fileTranskrip).trim().length === 0) {
       return res.status(400).json({
         ok: false,
-        message: "File transkrip nilai wajib diunggah",
+        message: seminar
+          ? "Data Perkembangan Akademik wajib diunggah"
+          : "File transkrip nilai wajib diunggah",
       });
     }
     const transkripError = validateUpload(
       fileTranskrip,
       fileTranskripName,
-      UPLOAD_RULES.TRANSKRIP,
-      "File transkrip nilai",
+      seminar ? UPLOAD_RULES.SCAN : UPLOAD_RULES.TRANSKRIP,
+      transkripLabel,
     );
     if (transkripError) {
       return res.status(400).json({ ok: false, message: transkripError });
+    }
+    if (seminar) {
+      if (fileKtm == null || String(fileKtm).trim().length === 0) {
+        return res.status(400).json({ ok: false, message: "Fotocopy KTM wajib diunggah" });
+      }
+      const ktmError = validateUpload(fileKtm, fileKtmName, UPLOAD_RULES.SCAN, "Fotocopy KTM");
+      if (ktmError) {
+        return res.status(400).json({ ok: false, message: ktmError });
+      }
     }
 
     const noHpVal = noHp != null ? String(noHp).trim() : "";
@@ -201,43 +228,49 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         ? String(pembimbing2DiajukanNidn).trim()
         : "";
 
-    if (!pembimbing1Val || !pembimbing2Val) {
+    if (seminar) {
+      if (pembimbing1Val || pembimbing2Val) {
+        return res.status(400).json({ ok: false, message: SEMINAR_NO_PEMBIMBING_MESSAGE });
+      }
+    } else if (!pembimbing1Val || !pembimbing2Val) {
       return res.status(400).json({
         ok: false,
         message: "Dosen pembimbing 1 dan 2 wajib diisi",
       });
     }
 
-    if (pembimbing1Val === pembimbing2Val) {
-      return res.status(400).json({
-        ok: false,
-        message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
-      });
-    }
+    if (!seminar) {
+      if (pembimbing1Val === pembimbing2Val) {
+        return res.status(400).json({
+          ok: false,
+          message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
+        });
+      }
 
-    const [dosenRows] = await db.query(
-      `SELECT nidn FROM dosen WHERE nidn IN (?, ?)`,
-      [pembimbing1Val, pembimbing2Val],
-    );
-    const foundNidns = new Set(dosenRows.map((row) => row.nidn));
-    if (!foundNidns.has(pembimbing1Val) || !foundNidns.has(pembimbing2Val)) {
-      return res.status(400).json({
-        ok: false,
-        message: "Dosen pembimbing yang dipilih tidak valid",
-      });
-    }
+      const [dosenRows] = await db.query(
+        `SELECT nidn FROM dosen WHERE nidn IN (?, ?)`,
+        [pembimbing1Val, pembimbing2Val],
+      );
+      const foundNidns = new Set(dosenRows.map((row) => row.nidn));
+      if (!foundNidns.has(pembimbing1Val) || !foundNidns.has(pembimbing2Val)) {
+        return res.status(400).json({
+          ok: false,
+          message: "Dosen pembimbing yang dipilih tidak valid",
+        });
+      }
 
-    if (
-      !(await dosenBimbingProdiService.areEligible(programStudiId, [
-        pembimbing1Val,
-        pembimbing2Val,
-      ]))
-    ) {
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
-      });
+      if (
+        !(await dosenBimbingProdiService.areEligible(programStudiId, [
+          pembimbing1Val,
+          pembimbing2Val,
+        ]))
+      ) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
+        });
+      }
     }
 
     const namaPerusahaanVal =
@@ -294,8 +327,8 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         npm,
         programStudiId,
         noHpVal,
-        pembimbing1Val,
-        pembimbing2Val,
+        pembimbing1Val || null,
+        pembimbing2Val || null,
         perluSuratPengantar ? 1 : 0,
         nomorSkSuratPengantar,
         namaPerusahaanVal || null,
@@ -344,6 +377,15 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         ? String(fileTranskripName).trim()
         : null,
     );
+    if (seminar) {
+      await upsertFileByType(
+        conn,
+        pengajuanDisposisiPembimbingId,
+        "KTM",
+        String(fileKtm),
+        fileKtmName != null ? String(fileKtmName).trim() : null,
+      );
+    }
 
     const [mahasiswaRows] = await conn.query(
       `SELECT m.nama FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
@@ -356,7 +398,9 @@ exports.createPengajuanDisposisiPembimbing = async (req, res, next) => {
         conn,
         kaprodiUserId,
         "TITLE_SUBMITTED",
-        `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
+        seminar
+          ? `Mahasiswa ${namaMahasiswa} mengajukan topik judul`
+          : `Mahasiswa ${namaMahasiswa} mengajukan judul skripsi`,
         "/kaprodi/pengajuan-outline/pengajuan-disposisi-pembimbing",
       );
     }
@@ -449,6 +493,7 @@ exports.getLatestMine = async (req, res, next) => {
          o.judul AS outline_judul,
          m.nama AS mahasiswa_nama,
          m.sks AS sks_diperoleh,
+         m.tahap_tugas_akhir,
          ps.id AS program_studi_id,
          ps.nama AS program_studi_nama,
          d1.nama AS pembimbing1_diajukan_nama,
@@ -517,6 +562,10 @@ exports.getById = async (req, res, next) => {
           pj.nama_perusahaan,
           pj.alamat_perusahaan,
           pj.syarat_transkrip,
+          pj.syarat_ktm,
+          pj.syarat_sks_min,
+          pj.syarat_simulasi_bisnis,
+          pj.syarat_nilai_d,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -531,6 +580,7 @@ exports.getById = async (req, res, next) => {
 
           m.nama AS mahasiswa_nama,
           m.sks AS sks_diperoleh,
+          m.tahap_tugas_akhir,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
           dkap.nama AS kaprodi_nama,
@@ -591,6 +641,10 @@ exports.getById = async (req, res, next) => {
           pj.nama_perusahaan,
           pj.alamat_perusahaan,
           pj.syarat_transkrip,
+          pj.syarat_ktm,
+          pj.syarat_sks_min,
+          pj.syarat_simulasi_bisnis,
+          pj.syarat_nilai_d,
           pj.status,
           pj.submitted_at,
           pj.pembimbing1_ditetapkan_nidn,
@@ -605,6 +659,7 @@ exports.getById = async (req, res, next) => {
 
           m.nama AS mahasiswa_nama,
           m.sks AS sks_diperoleh,
+          m.tahap_tugas_akhir,
           ps.id AS program_studi_id,
           ps.nama AS program_studi_nama,
           dkap.nama AS kaprodi_nama,
@@ -648,7 +703,7 @@ exports.getById = async (req, res, next) => {
   }
 };
 
-const DOWNLOADABLE_FILE_TYPES = new Set(["PENGAJUAN_DISPOSISI_PEMBIMBING", "TRANSKRIP"]);
+const DOWNLOADABLE_FILE_TYPES = new Set(["PENGAJUAN_DISPOSISI_PEMBIMBING", "TRANSKRIP", "KTM"]);
 
 // GET /:id/files/:fileType — one file instead of getById's every file, for download buttons.
 // Same visibility as getById: the student who owns it, or the Kaprodi of its prodi.
@@ -738,6 +793,8 @@ exports.resubmit = async (req, res, next) => {
       alamatPerusahaan,
       fileTranskrip,
       fileTranskripName,
+      fileKtm,
+      fileKtmName,
     } = req.body || {};
 
     const noHpVal =
@@ -777,6 +834,22 @@ exports.resubmit = async (req, res, next) => {
       fileTranskripName !== undefined && fileTranskripName !== null
         ? String(fileTranskripName).trim()
         : null;
+    const fileKtmVal =
+      fileKtm !== undefined && fileKtm !== null ? String(fileKtm) : null;
+    const fileKtmNameVal =
+      fileKtmName !== undefined && fileKtmName !== null
+        ? String(fileKtmName).trim()
+        : null;
+    const hasNewTranskrip = fileTranskripVal !== null && fileTranskripVal.length > 0;
+
+    const npm = await getStudentNpm(req.user.id);
+    if (!npm) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mahasiswa tidak valid" });
+    }
+    const seminar = await isSeminarStudent(db, npm);
+    const hasNewKtm = seminar && fileKtmVal !== null && fileKtmVal.length > 0;
 
     const hasMeaningfulUpdate =
       (noHpVal !== null && noHpVal.length > 0) ||
@@ -785,7 +858,8 @@ exports.resubmit = async (req, res, next) => {
       perluSuratProvided ||
       (namaPerusahaanVal !== null && namaPerusahaanVal.length > 0) ||
       (alamatPerusahaanVal !== null && alamatPerusahaanVal.length > 0) ||
-      (fileTranskripVal !== null && fileTranskripVal.length > 0);
+      hasNewTranskrip ||
+      hasNewKtm;
 
     if (!hasMeaningfulUpdate) {
       return res.status(400).json({
@@ -794,15 +868,25 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
-    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
+    if (seminar && (pembimbing1Val || pembimbing2Val)) {
+      return res.status(400).json({ ok: false, message: SEMINAR_NO_PEMBIMBING_MESSAGE });
+    }
+
+    if (hasNewTranskrip) {
       const transkripError = validateUpload(
         fileTranskripVal,
         fileTranskripNameVal,
-        UPLOAD_RULES.TRANSKRIP,
-        "File transkrip nilai",
+        seminar ? UPLOAD_RULES.SCAN : UPLOAD_RULES.TRANSKRIP,
+        seminar ? "Data Perkembangan Akademik" : "File transkrip nilai",
       );
       if (transkripError) {
         return res.status(400).json({ ok: false, message: transkripError });
+      }
+    }
+    if (hasNewKtm) {
+      const ktmError = validateUpload(fileKtmVal, fileKtmNameVal, UPLOAD_RULES.SCAN, "Fotocopy KTM");
+      if (ktmError) {
+        return res.status(400).json({ ok: false, message: ktmError });
       }
     }
 
@@ -869,20 +953,14 @@ exports.resubmit = async (req, res, next) => {
       }
     }
 
-    const npm = await getStudentNpm(req.user.id);
-    if (!npm) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Mahasiswa tidak valid" });
-    }
-
     conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
     const [rows] = await conn.query(
       `SELECT id, status, program_studi_id, pembimbing1_diajukan_nidn, pembimbing2_diajukan_nidn,
-              syarat_transkrip, nomor_sk_surat_pengantar
+              syarat_transkrip, syarat_ktm, syarat_sks_min, syarat_simulasi_bisnis, syarat_nilai_d,
+              nomor_sk_surat_pengantar
        FROM pengajuan_disposisi_pembimbing
        WHERE id = ? AND npm = ?
        LIMIT 1
@@ -909,36 +987,54 @@ exports.resubmit = async (req, res, next) => {
       });
     }
 
-    const effectivePembimbing1 =
-      pembimbing1Val && pembimbing1Val.length > 0
-        ? pembimbing1Val
-        : rows[0].pembimbing1_diajukan_nidn;
-    const effectivePembimbing2 =
-      pembimbing2Val && pembimbing2Val.length > 0
-        ? pembimbing2Val
-        : rows[0].pembimbing2_diajukan_nidn;
-    // Compared after the update, so changing only one of them can't make both the same dosen.
-    if (effectivePembimbing1 === effectivePembimbing2) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
-      });
-    }
-    if (
-      !(await dosenBimbingProdiService.areEligible(rows[0].program_studi_id, [
-        effectivePembimbing1,
-        effectivePembimbing2,
-      ]))
-    ) {
-      await conn.rollback();
-      txStarted = false;
-      return res.status(400).json({
-        ok: false,
-        message:
-          "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
-      });
+    if (seminar) {
+      // Kaprodi's unticked syarat say what to re-upload: KTM for its own tick, a newer Data
+      // Perkembangan Akademik for any of the four ticks judged from it.
+      const missing = [];
+      if (!rows[0].syarat_ktm && !hasNewKtm) missing.push("Fotocopy KTM");
+      if (DATA_AKADEMIK_SYARAT_COLUMNS.some((col) => !rows[0][col]) && !hasNewTranskrip) {
+        missing.push("Data Perkembangan Akademik");
+      }
+      if (missing.length) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: `Unggah ulang dokumen berikut sesuai catatan Kaprodi: ${missing.join(", ")}`,
+        });
+      }
+    } else {
+      const effectivePembimbing1 =
+        pembimbing1Val && pembimbing1Val.length > 0
+          ? pembimbing1Val
+          : rows[0].pembimbing1_diajukan_nidn;
+      const effectivePembimbing2 =
+        pembimbing2Val && pembimbing2Val.length > 0
+          ? pembimbing2Val
+          : rows[0].pembimbing2_diajukan_nidn;
+      // Compared after the update, so changing only one of them can't make both the same dosen.
+      if (effectivePembimbing1 === effectivePembimbing2) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message: "Pembimbing 1 dan Pembimbing 2 tidak boleh dosen yang sama",
+        });
+      }
+      if (
+        !(await dosenBimbingProdiService.areEligible(rows[0].program_studi_id, [
+          effectivePembimbing1,
+          effectivePembimbing2,
+        ]))
+      ) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(400).json({
+          ok: false,
+          message:
+            "Dosen pembimbing yang dipilih tidak tersedia untuk program studi Anda",
+        });
+      }
     }
 
     const sets = [];
@@ -986,9 +1082,14 @@ exports.resubmit = async (req, res, next) => {
       sets.push("alamat_perusahaan = ?");
       params.push(alamatPerusahaanVal);
     }
-    // Kaprodi's checklist: a new transkrip needs a new check, otherwise their tick stays.
-    if (fileTranskripVal !== null && fileTranskripVal.length > 0) {
-      sets.push("syarat_transkrip = 0");
+    // Kaprodi's checklist: a new file needs a new check, otherwise their tick stays.
+    if (hasNewTranskrip) {
+      for (const col of seminar ? DATA_AKADEMIK_SYARAT_COLUMNS : ["syarat_transkrip"]) {
+        sets.push(`${col} = 0`);
+      }
+    }
+    if (hasNewKtm) {
+      sets.push("syarat_ktm = 0");
     }
     sets.push("status = 'SUBMITTED'");
     sets.push("submitted_at = CURRENT_TIMESTAMP");
@@ -1045,6 +1146,9 @@ exports.resubmit = async (req, res, next) => {
           : null,
       );
     }
+    if (hasNewKtm) {
+      await upsertFileByType(conn, id, "KTM", fileKtmVal, fileKtmNameVal || null);
+    }
 
     const [resubMahasiswaRows] = await conn.query(
       `SELECT m.nama, m.program_studi_id FROM mahasiswa m WHERE m.npm = ? LIMIT 1`,
@@ -1058,7 +1162,9 @@ exports.resubmit = async (req, res, next) => {
           conn,
           kaprodiUserId,
           "TITLE_RESUBMITTED",
-          `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
+          seminar
+            ? `Mahasiswa ${resubNama} mengajukan ulang topik judul`
+            : `Mahasiswa ${resubNama} mengajukan ulang judul skripsi`,
           "/kaprodi/pengajuan-outline/pengajuan-disposisi-pembimbing",
         );
       }

@@ -1,0 +1,27 @@
+/* Source DOCX: "FORMULIR PERUBAHAN JUDUL PROPOSAL" (Bisnis Digital) — A4, no masthead, student signature
+   on the right, then a 2×2 grid (pembimbing; Kaprodi / Dekan). The form's dotted fill lines are for
+   handwriting, so the generated copy leaves them out. */
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { color: #000; font-family: "Times New Roman", serif; font-size: 12pt; line-height: 1.25; }
+.page { width: 210mm; min-height: 297mm; padding: 18mm 25mm 12mm; }
+
+h1 { margin: 0 0 6mm; font-size: 13pt; font-weight: bold; text-align: center; }
+p { margin: 0 0 1mm; }
+
+.fields { margin-bottom: 5mm; }
+.fields > div { display: grid; grid-template-columns: 50mm 4mm 1fr; }
+.value { min-height: 6mm; line-height: 6mm; overflow-wrap: anywhere; }
+.judul { margin-bottom: 3mm; }
+.judul .value b { font-weight: bold; }
+
+.footnote { margin-top: -3mm; font-size: 9pt; }
+.closing { margin-top: 5mm; }
+
+.signatures { display: grid; grid-template-columns: 1fr 1fr; column-gap: 10mm; row-gap: 3mm; margin-top: 5mm; }
+.signer { text-align: center; break-inside: avoid; }
+.mahasiswa { grid-column: 2; }
+.signature-space { position: relative; height: 15mm; }
+.signature-space > .signature-image { position: absolute; inset: 0; margin: auto; width: 40mm; max-width: 100%; height: 100%; object-fit: contain; mix-blend-mode: multiply; }
+.signer-name { font-weight: bold; text-decoration: underline; min-height: 6mm; overflow-wrap: anywhere; }

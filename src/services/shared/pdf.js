@@ -1,13 +1,17 @@
 const fs = require("node:fs/promises");
 const puppeteer = require("puppeteer");
-/** Loads a template pair, renders supplied HTML, and returns its PDF buffer. */
-async function renderPdf({ templatePath, cssPath, renderHtml }) {
+/**
+ * Loads a template pair, renders supplied HTML, and returns its PDF buffer. `beforePdf(page)` runs
+ * after the CSS is applied, for layout adjustments measured in the browser.
+ */
+async function renderPdf({ templatePath, cssPath, renderHtml, beforePdf }) {
   const [template, css] = await Promise.all([fs.readFile(templatePath, "utf8"), fs.readFile(cssPath, "utf8")]);
   const browser = await puppeteer.launch();
   try {
     const page = await browser.newPage();
     await page.setContent(await renderHtml(template), { waitUntil: "load" });
     await page.addStyleTag({ content: css });
+    if (beforePdf) await beforePdf(page);
     return await page.pdf({
       preferCSSPageSize: true,
       printBackground: true,

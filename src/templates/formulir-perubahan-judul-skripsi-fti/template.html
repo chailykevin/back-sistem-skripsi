@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Formulir Perubahan Judul Skripsi</title>
+  </head>
+  <body>
+    <main class="page">
+      <h1>FORMULIR PERUBAHAN JUDUL SKRIPSI</h1>
+
+      <p>Yang bertanda tangan di bawah ini:</p>
+      <section class="fields">
+        <div><span>Nama</span><span>:</span><span class="value">{{namaMahasiswa}}</span></div>
+        <div><span>NPM</span><span>:</span><span class="value">{{npm}}</span></div>
+        <div><span>No Handphone</span><span>:</span><span class="value">{{noHp}}</span></div>
+        <div><span>No SK</span><span>:</span><span class="value">{{nomorSk}}</span></div>
+      </section>
+
+      <p>Telah mengikuti Seminar Proposal dengan rincian sebagai berikut:</p>
+      <section class="fields">
+        <div><span>Tanggal</span><span>:</span><span class="value">{{tanggalSeminar}}</span></div>
+        <div><span>Dosen Pembimbing Utama</span><span>:</span><span class="value">{{namaPembimbingUtama}}</span></div>
+        <div><span>Dosen Pembimbing Kedua</span><span>:</span><span class="value">{{namaPembimbingKedua}}</span></div>
+        <div><span>Dosen Penguji</span><span>:</span><span class="value">{{namaPenguji}}</span></div>
+      </section>
+
+      <p>Berdasarkan hasil Seminar Proposal, Saya mengajukan perubahan judul skripsi sebagai berikut:</p>
+      <section class="fields">
+        <div class="judul"><span>Judul lama</span><span>:</span><span class="value">{{judulLama}}</span></div>
+        <div class="judul"><span>Judul baru</span><span>:</span><span class="value">{{judulBaru}}</span></div>
+      </section>
+      <p class="footnote">*Bagian yang direvisi mohon ditebalkan (<em>bold</em>)/diberi stabillo supaya jelas.</p>
+
+      <p class="closing">Demikian permohonan ini Saya sampaikan. Atas perhatiannya Saya ucapkan terima kasih.</p>
+
+      <section class="signatures">
+        <div class="signer mahasiswa">
+          <div>Pontianak, {{tanggal}}</div>
+          <div>Mahasiswa,</div>
+          <div class="signature-space">{{signatureMahasiswa}}</div>
+          <div class="signer-name">{{namaMahasiswa}}</div>
+        </div>
+
+        <div class="signer">
+          <div>Dosen Pembimbing Utama,</div>
+          <div class="signature-space">{{signaturePembimbingUtama}}</div>
+          <div class="signer-name">{{namaPembimbingUtama}}</div>
+        </div>
+        <div class="signer">
+          <div>Dosen Pembimbing Kedua,</div>
+          <div class="signature-space">{{signaturePembimbingKedua}}</div>
+          <div class="signer-name">{{namaPembimbingKedua}}</div>
+        </div>
+
+        <div class="signer">
+          <div>Mengetahui</div>
+          <div>Ketua Program Studi {{programStudi}}</div>
+          <div class="signature-space">{{signatureKaprodi}}</div>
+          <div class="signer-name">{{namaKaprodi}}</div>
+        </div>
+        <div class="signer">
+          <div>Menyetujui</div>
+          <div>Dekan Fakultas Teknologi Informasi</div>
+          <div class="signature-space">{{signatureDekan}}</div>
+          <div class="signer-name">{{namaDekan}}</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

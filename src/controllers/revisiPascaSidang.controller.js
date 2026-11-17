@@ -42,6 +42,9 @@ const {
   countSidang,
 } = require("../services/sidangScope.service");
 const { finishSeminarPhase } = require("../services/skSkripsiLanjutan.service");
+const {
+  generateFormulirPerubahanJudulSkripsiFTI,
+} = require("../services/generateFormulirPerubahanJudulSkripsiFTI");
 const { revisiStageOrderFor } = require("../utils/workflowStage");
 
 // A Seminar Bisnis Digital has a single penguji (stored as PENGUJI_1), so its chain has 3 stages.
@@ -306,6 +309,76 @@ async function generateHalamanPengesahanSeminarDoc(conn, revisiRow) {
   });
 }
 
+// A Seminar that accepted the proposal under a new title (sidang.judul_baru) needs the Formulir Perubahan
+// Judul; same condition finishSeminarPhase uses to apply the new title. judul_skripsi must be the
+// original (Seminar) title.
+function needsFormulirPerubahanJudul(revisiRow) {
+  return (
+    revisiRow.hasil_sidang === "JUDUL_DITERIMA" &&
+    !!revisiRow.judul_baru &&
+    revisiRow.judul_baru !== revisiRow.judul_skripsi
+  );
+}
+
+// Formulir Perubahan Judul Skripsi: mahasiswa, both pembimbing, Kaprodi and Dekan sign; dated today.
+async function generateFormulirPerubahanJudulDoc(conn, revisiRow) {
+  const [[extra]] = await conn.query(
+    `SELECT psk_k.no_hp, psk.nomor_surat AS nomor_sk,
+            ps.kaprodi_staff_usr_id, st_k.nama AS kaprodi_nama,
+            f.dekan_staff_usr_id, st_d.nama AS dekan_nama
+     FROM sidang s
+     JOIN skripsi sk ON sk.id = s.skripsi_id
+     JOIN program_studi ps ON ps.id = sk.program_studi_id
+     LEFT JOIN fakultas f ON f.id = ps.fakultas_id
+     LEFT JOIN staf st_k ON st_k.usr_id = ps.kaprodi_staff_usr_id
+     LEFT JOIN staf st_d ON st_d.usr_id = f.dekan_staff_usr_id
+     LEFT JOIN pengajuan_sidang_kaprodi psk_k ON psk_k.pengajuan_sidang_id = s.pengajuan_sidang_id
+     LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = sk.outline_id
+     WHERE s.id = ? LIMIT 1`,
+    [revisiRow.sidang_id],
+  );
+
+  const [sigMhs, sig1, sig2, sigKaprodi, sigDekan] = await Promise.all([
+    getSigByNpm(conn, revisiRow.mahasiswa_npm),
+    getSigByNidn(conn, revisiRow.pembimbing1_nidn),
+    getSigByNidn(conn, revisiRow.pembimbing2_nidn),
+    getStaffSignature(conn, extra?.kaprodi_staff_usr_id ?? null),
+    getStaffSignature(conn, extra?.dekan_staff_usr_id ?? null),
+  ]);
+
+  assertSignatures([
+    { role: "Mahasiswa", nama: revisiRow.nama_mahasiswa, signatureImage: sigMhs },
+    { role: "Pembimbing 1", nama: revisiRow.pembimbing1_nama, signatureImage: sig1 },
+    { role: "Pembimbing 2", nama: revisiRow.pembimbing2_nama, signatureImage: sig2 },
+    { role: "Kaprodi", nama: extra?.kaprodi_nama, signatureImage: sigKaprodi },
+    { role: "Dekan", nama: extra?.dekan_nama, signatureImage: sigDekan },
+  ]);
+
+  return generateFormulirPerubahanJudulSkripsiFTI({
+    mahasiswa: {
+      nama: revisiRow.nama_mahasiswa,
+      npm: revisiRow.mahasiswa_npm,
+      noHp: extra?.no_hp ?? "",
+      signatureBase64: sigMhs,
+    },
+    nomorSk: extra?.nomor_sk ?? "",
+    tanggalSeminar: revisiRow.tanggal_sidang
+      ? formatTanggal(new Date(revisiRow.tanggal_sidang))
+      : "",
+    pembimbing: {
+      utama: { nama: revisiRow.pembimbing1_nama, signatureBase64: sig1 },
+      kedua: { nama: revisiRow.pembimbing2_nama, signatureBase64: sig2 },
+    },
+    penguji: { nama: revisiRow.penguji1_nama ?? "" },
+    judulLama: revisiRow.judul_skripsi,
+    judulBaru: revisiRow.judul_baru,
+    tanggal: formatTanggal(new Date()),
+    programStudi: revisiRow.program_studi_nama,
+    kaprodi: { nama: extra?.kaprodi_nama ?? "", signatureBase64: sigKaprodi },
+    dekan: { nama: extra?.dekan_nama ?? "", signatureBase64: sigDekan },
+  });
+}
+
 const REVISI_CHANGED_MESSAGE =
   "Data revisi berubah saat sedang diproses. Silakan muat ulang halaman dan kirim kembali.";
 const MAX_FILE_NAME_LENGTH = 255;
@@ -345,9 +418,15 @@ async function computeMissingSignatures(revisi, stages, jenis) {
     });
   let needMahasiswa = false;
   let needDekan = false;
+  let needKaprodi = false;
 
   if (isSeminar && revisi.hasil_sidang === "JUDUL_DITERIMA") {
     ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1"].forEach(needDosen);
+    if (needsFormulirPerubahanJudul(revisi)) {
+      needMahasiswa = true;
+      needKaprodi = true;
+      needDekan = true;
+    }
   } else if (revisi.hasil_sidang === "LULUS") {
     ["PEMBIMBING_1", "PEMBIMBING_2", "PENGUJI_1", "PENGUJI_2"].forEach(needDosen);
     needMahasiswa = true;
@@ -372,24 +451,33 @@ async function computeMissingSignatures(revisi, stages, jenis) {
   if (needMahasiswa && !(await mahasiswaSignatureExists(db, revisi.mahasiswa_npm))) {
     missing.push({ role: "Mahasiswa", nama: revisi.nama_mahasiswa ?? "", kind: "MAHASISWA" });
   }
-  if (needDekan) {
+  if (needDekan || needKaprodi) {
     const [[prodi]] = await db.query(
-      `SELECT f.dekan_staff_usr_id, s.nama AS dekan_nama
+      `SELECT f.dekan_staff_usr_id, sd.nama AS dekan_nama,
+              ps.kaprodi_staff_usr_id, sk.nama AS kaprodi_nama
        FROM program_studi ps
        LEFT JOIN fakultas f ON f.id = ps.fakultas_id
-       LEFT JOIN staf s ON s.usr_id = f.dekan_staff_usr_id
+       LEFT JOIN staf sd ON sd.usr_id = f.dekan_staff_usr_id
+       LEFT JOIN staf sk ON sk.usr_id = ps.kaprodi_staff_usr_id
        WHERE ps.id = ? LIMIT 1`,
       [revisi.program_studi_id],
     );
-    let exists = false;
-    try {
-      exists = await staffSignatureExists(db, prodi?.dekan_staff_usr_id ?? null);
-    } catch (err) {
-      if (err.statusCode !== 409) throw err;
+    const staffExists = async (staffUsrId) => {
+      try {
+        return await staffSignatureExists(db, staffUsrId ?? null);
+      } catch (err) {
+        if (err.statusCode !== 409) throw err;
+        return false;
+      }
+    };
+    if (needKaprodi && !(await staffExists(prodi?.kaprodi_staff_usr_id))) {
+      missing.push({ role: "Kaprodi", nama: prodi?.kaprodi_nama ?? "", kind: "KAPRODI" });
     }
-    if (!exists) missing.push({ role: "Dekan", nama: prodi?.dekan_nama ?? "", kind: "DEKAN" });
+    if (needDekan && !(await staffExists(prodi?.dekan_staff_usr_id))) {
+      missing.push({ role: "Dekan", nama: prodi?.dekan_nama ?? "", kind: "DEKAN" });
+    }
   }
-  const order = ["Mahasiswa", "Pembimbing 1", "Pembimbing 2", "Penguji", "Penguji 1", "Penguji 2", "Dekan"];
+  const order = ["Mahasiswa", "Pembimbing 1", "Pembimbing 2", "Penguji", "Penguji 1", "Penguji 2", "Kaprodi", "Dekan"];
   return missing.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
 }
 
@@ -795,7 +883,7 @@ exports.reviewRevisi = async (req, res, next) => {
               psk_k.penguji1_nidn, psk_k.penguji2_nidn,
               d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
               d_pg1.nama AS penguji1_nama, d_pg2.nama AS penguji2_nama,
-              s.hasil_sidang
+              s.hasil_sidang, s.judul_baru
        FROM sidang s
        LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -863,6 +951,7 @@ exports.reviewRevisi = async (req, res, next) => {
     let notulenRow = null;
     let notulenBuffer = null;
     let halamanSeminarBuffer = null;
+    let formulirPerubahanJudulBuffer = null;
     let majelisBuffer = null;
     let dekanBuffer = null;
 
@@ -949,6 +1038,9 @@ exports.reviewRevisi = async (req, res, next) => {
     if (isFinalApproval) {
       if (revisi.hasil_sidang === "JUDUL_DITERIMA") {
         halamanSeminarBuffer = await generateHalamanPengesahanSeminarDoc(db, revisi);
+        if (needsFormulirPerubahanJudul(revisi)) {
+          formulirPerubahanJudulBuffer = await generateFormulirPerubahanJudulDoc(db, revisi);
+        }
       }
       if (revisi.hasil_sidang === "LULUS") {
         const sidangForDoc = {
@@ -1100,6 +1192,20 @@ exports.reviewRevisi = async (req, res, next) => {
             skripsiId,
             seminarSidangId: revisi.sidang_id,
           });
+          if (formulirPerubahanJudulBuffer) {
+            await conn.query(
+              `UPDATE pengajuan_sk_skripsi_lanjutan
+               SET formulir_perubahan_judul_file_name = ?,
+                   formulir_perubahan_judul_mime_type = 'application/pdf',
+                   formulir_perubahan_judul_file_content = ?
+               WHERE skripsi_id = ?`,
+              [
+                `${revisi.mahasiswa_npm} - ${revisi.nama_mahasiswa} - Formulir Perubahan Judul.pdf`,
+                Buffer.from(formulirPerubahanJudulBuffer).toString("base64"),
+                skripsiId,
+              ],
+            );
+          }
         }
         if (majelisBuffer && dekanBuffer) {
           await conn.query(
@@ -1197,7 +1303,8 @@ exports.getRevisi = async (req, res, next) => {
               d2.nama AS pembimbing2_nama,
               dq1.nama AS penguji1_nama,
               dq2.nama AS penguji2_nama,
-              s.status AS sidang_status, s.hasil_sidang, s.judul_baru
+              s.status AS sidang_status, s.hasil_sidang, s.judul_baru,
+              (lanjutan.formulir_perubahan_judul_file_content IS NOT NULL) AS has_formulir_perubahan_judul
        FROM sidang s
        LEFT JOIN revisi_pasca_sidang rps ON rps.sidang_id = s.id
        JOIN skripsi sk ON sk.id = s.skripsi_id
@@ -1311,13 +1418,14 @@ exports.getRevisi = async (req, res, next) => {
       [revisi.id],
     );
 
-    const { mahasiswa_npm, ...revisiBase } = revisi;
+    const { mahasiswa_npm, has_formulir_perubahan_judul, ...revisiBase } = revisi;
 
     return res.json({
       ok: true,
       data: {
         revisi: { ...revisiBase, npm: mahasiswa_npm },
         jenis,
+        has_formulir_perubahan_judul: !!has_formulir_perubahan_judul,
         sidang_id: revisi.sidang_id,
         isLatestAttempt,
         callerRole,
