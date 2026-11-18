@@ -91,17 +91,13 @@ async function getProgramStudiRows(conn) {
 }
 
 async function upsertMahasiswa(conn, mahasiswa) {
-  // email is intentionally omitted from ON DUPLICATE KEY UPDATE: it's only
-  // set on first insert (seed data carries none). Re-seeding an existing
-  // student must never erase an email they've since captured/verified.
   await conn.query(
-    `INSERT INTO mahasiswa (npm, nama, tempat_lahir, tanggal_lahir, email, sks, ipk, tahap_tugas_akhir, program_studi_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO mahasiswa (npm, nama, tempat_lahir, tanggal_lahir, sks, ipk, tahap_tugas_akhir, program_studi_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        nama = VALUES(nama),
        tempat_lahir = VALUES(tempat_lahir),
        tanggal_lahir = VALUES(tanggal_lahir),
-       email = VALUES(email),
        sks = VALUES(sks),
        ipk = VALUES(ipk),
        tahap_tugas_akhir = VALUES(tahap_tugas_akhir),
@@ -111,7 +107,6 @@ async function upsertMahasiswa(conn, mahasiswa) {
       mahasiswa.nama,
       mahasiswa.tempatLahir ?? null,
       mahasiswa.tanggalLahir ?? null,
-      mahasiswa.email ?? null,
       mahasiswa.sks,
       mahasiswa.ipk,
       mahasiswa.tahapTugasAkhir ?? null,
@@ -246,7 +241,6 @@ async function getPredefinedMahasiswa(programRows, conn) {
     return {
       npm: item.npm,
       nama: item.nama,
-      email: null,
       tempatLahir: item.tempatLahir,
       tanggalLahir: item.tanggalLahir,
       sks: item.sks,

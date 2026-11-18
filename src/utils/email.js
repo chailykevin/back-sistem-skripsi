@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const { escapeHtml } = require("../services/shared/html");
 
 function createTransport() {
   return nodemailer.createTransport({
@@ -114,106 +115,71 @@ async function sendSuratUndangan({
   });
 }
 
-/**
- * Send a password reset link.
- * Best-effort — caller should catch and log errors; do not roll back DB.
- *
- * @param {object} opts
- * @param {string} opts.to
- * @param {string} opts.resetUrl
- * @param {string} [opts.recipientName]
- */
-async function sendPasswordResetEmail({ to, resetUrl, recipientName }) {
-  if (!to) return;
-
-  const transporter = createTransport();
-
-  const html = `
+function simpleEmailHtml(recipientName, bodyHtml) {
+  return `
 <!DOCTYPE html>
 <html lang="id">
 <head><meta charset="UTF-8"></head>
 <body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <p>Halo${recipientName ? ` ${recipientName}` : ""},</p>
-
-  <p>
-    Kami menerima permintaan untuk mereset kata sandi akun Anda pada Sistem Skripsi.
-    Klik tautan di bawah ini untuk membuat kata sandi baru. Tautan ini berlaku selama 1 jam.
-  </p>
-
-  <p>
-    <a href="${resetUrl}" style="color: #a14ad4;">${resetUrl}</a>
-  </p>
-
-  <p>
-    Jika Anda tidak meminta reset kata sandi, abaikan email ini.
-  </p>
-
+  <p>Halo${recipientName ? ` ${escapeHtml(recipientName)}` : ""},</p>
+  ${bodyHtml}
   <br>
   <p style="margin: 0;">Hormat kami,</p>
   <p style="margin: 0; font-weight: bold;">Sistem Skripsi</p>
 </body>
 </html>
   `.trim();
+}
 
-  await transporter.sendMail({
+/**
+ * Send the password reset OTP. Throws on failure: without the email the code is useless,
+ * so the caller reports the error instead of pretending it was sent.
+ */
+async function sendPasswordResetOtpEmail({ to, otp, recipientName, expiresInMinutes }) {
+  const html = simpleEmailHtml(
+    recipientName,
+    `
+  <p>Kami menerima permintaan untuk mengatur ulang kata sandi akun Anda. Masukkan kode berikut:</p>
+  <p style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 16px 0;">${escapeHtml(otp)}</p>
+  <p>Kode ini berlaku selama ${expiresInMinutes} menit. Jangan berikan kode ini kepada siapa pun.</p>
+  <p>Kata sandi ini juga dipakai di sistem kampus lain yang menggunakan akun SIMIKO.</p>
+  <p>Jika Anda tidak meminta pengaturan ulang kata sandi, abaikan email ini.</p>`,
+  );
+
+  await createTransport().sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to,
-    subject: "Reset Kata Sandi - Sistem Skripsi",
+    subject: "Kode Atur Ulang Kata Sandi - Sistem Skripsi",
     html,
   });
 }
 
 /**
- * Send an email verification link.
- * Best-effort — caller should catch and log errors; do not roll back DB.
- *
- * @param {object} opts
- * @param {string} opts.to
- * @param {string} opts.verifyUrl
- * @param {string} [opts.recipientName]
+ * Tell the owner their password changed. Best-effort — caller catches and logs errors.
  */
-async function sendEmailVerificationEmail({ to, verifyUrl, recipientName }) {
+async function sendPasswordChangedEmail({ to, recipientName, method }) {
   if (!to) return;
+  const how =
+    method === "RESET"
+      ? "diatur ulang melalui fitur Lupa Kata Sandi"
+      : "diubah melalui halaman profil";
+  const html = simpleEmailHtml(
+    recipientName,
+    `
+  <p>Kata sandi akun Anda baru saja ${how} di Sistem Skripsi. Perubahan ini juga berlaku di sistem kampus lain yang menggunakan akun SIMIKO.</p>
+  <p>Jika Anda tidak melakukan perubahan ini, segera hubungi IT.</p>`,
+  );
 
-  const transporter = createTransport();
-
-  const html = `
-<!DOCTYPE html>
-<html lang="id">
-<head><meta charset="UTF-8"></head>
-<body style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <p>Halo${recipientName ? ` ${recipientName}` : ""},</p>
-
-  <p>
-    Silakan verifikasi alamat email Anda pada Sistem Skripsi dengan mengklik tautan di bawah ini.
-    Email yang terverifikasi digunakan untuk pemulihan kata sandi akun Anda.
-  </p>
-
-  <p>
-    <a href="${verifyUrl}" style="color: #a14ad4;">${verifyUrl}</a>
-  </p>
-
-  <p>
-    Jika Anda tidak merasa mendaftarkan email ini, abaikan email ini.
-  </p>
-
-  <br>
-  <p style="margin: 0;">Hormat kami,</p>
-  <p style="margin: 0; font-weight: bold;">Sistem Skripsi</p>
-</body>
-</html>
-  `.trim();
-
-  await transporter.sendMail({
+  await createTransport().sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to,
-    subject: "Verifikasi Email - Sistem Skripsi",
+    subject: "Kata Sandi Anda Telah Diubah - Sistem Skripsi",
     html,
   });
 }
 
 module.exports = {
   sendSuratUndangan,
-  sendPasswordResetEmail,
-  sendEmailVerificationEmail,
+  sendPasswordResetOtpEmail,
+  sendPasswordChangedEmail,
 };

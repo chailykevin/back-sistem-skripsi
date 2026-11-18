@@ -1,4 +1,5 @@
 const authService = require("../services/auth.service");
+const passwordResetService = require("../services/passwordReset.service");
 
 exports.login = async (req, res, next) => {
   try {
@@ -37,22 +38,27 @@ exports.me = async (req, res, next) => {
   }
 };
 
-exports.forgotPassword = async (req, res, next) => {
+exports.requestPasswordResetOtp = async (req, res, next) => {
   try {
     const { username } = req.body;
-
-    if (!username) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Username is required" });
+    if (typeof username !== "string" || !username.trim()) {
+      return res.status(400).json({ ok: false, message: "Username wajib diisi." });
     }
+    const data = await passwordResetService.requestOtp(username, req.ip);
+    return res.json({ ok: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
 
-    const data = await authService.forgotPassword(username);
-
-    return res.json({
-      ok: true,
-      data,
-    });
+exports.verifyPasswordResetOtp = async (req, res, next) => {
+  try {
+    const { username, otp } = req.body;
+    if (typeof username !== "string" || !username.trim()) {
+      return res.status(400).json({ ok: false, message: "Username wajib diisi." });
+    }
+    const data = await passwordResetService.verifyOtp(username, otp);
+    return res.json({ ok: true, data });
   } catch (err) {
     next(err);
   }
@@ -60,44 +66,14 @@ exports.forgotPassword = async (req, res, next) => {
 
 exports.resetPassword = async (req, res, next) => {
   try {
-    const { token, newPassword } = req.body;
-
-    if (!token || !newPassword) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Token and newPassword are required" });
-    }
-    if (String(newPassword).length < 6) {
-      return res.status(400).json({
-        ok: false,
-        message: "Kata sandi baru minimal 6 karakter.",
-      });
-    }
-
-    const data = await authService.resetPassword(token, newPassword);
-
-    return res.json({
-      ok: true,
-      data,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.verifyEmail = async (req, res, next) => {
-  try {
-    const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ ok: false, message: "Token is required" });
-    }
-
-    const data = await authService.verifyEmail(token);
-
-    return res.json({
-      ok: true,
-      data,
-    });
+    const { resetToken, newPassword, confirmPassword } = req.body;
+    const data = await passwordResetService.resetPassword(
+      resetToken,
+      newPassword,
+      confirmPassword,
+      req.ip,
+    );
+    return res.json({ ok: true, data });
   } catch (err) {
     next(err);
   }

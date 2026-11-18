@@ -3632,7 +3632,7 @@ exports.generateSuratUndangan = async (req, res, next) => {
       `SELECT
          s.npm,
          m.nama AS nama_mahasiswa,
-         m.email AS mahasiswa_email,
+         NULLIF(TRIM(sim_usr.mhsEmail), '') AS mahasiswa_email,
          ps.id AS program_studi_id,
          ps.nama AS prodi_nama,
          ps.kode AS ps_kode,
@@ -3650,6 +3650,8 @@ exports.generateSuratUndangan = async (req, res, next) => {
          psk_k.tanggal_disposisi
        FROM skripsi s
        JOIN mahasiswa m ON m.npm = s.npm
+       LEFT JOIN widya_miko.m_mahasiswa sim_mhs ON sim_mhs.mhsNpm = s.npm
+       LEFT JOIN widya_miko.m_usermhs sim_usr ON sim_usr.mhsId = sim_mhs.mhsId AND sim_usr.del = 0
        JOIN program_studi ps ON ps.id = s.program_studi_id
        JOIN fakultas f ON f.id = ps.fakultas_id
        LEFT JOIN dosen d1 ON d1.nidn = s.pembimbing1_nidn

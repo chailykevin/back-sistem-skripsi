@@ -1,49 +1,24 @@
-const bcrypt = require("bcrypt");
-const db = require("../db");
+const passwordResetService = require("../services/passwordReset.service");
+const authService = require("../services/auth.service");
 
 exports.changeMyPassword = async (req, res, next) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword, confirmPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        ok: false,
-        message: "currentPassword and newPassword are required",
-      });
-    }
-    if (String(newPassword).length < 6) {
-      return res.status(400).json({
-        ok: false,
-        message: "Kata sandi baru minimal 6 karakter.",
-      });
-    }
-
-    const [rows] = await db.query(
-      `SELECT password_hash FROM users WHERE id = ? AND is_active = 1 LIMIT 1`,
-      [req.user.id],
+    await passwordResetService.changePassword(
+      Number(req.user.id),
+      currentPassword,
+      newPassword,
+      confirmPassword,
+      req.ip,
     );
-    const user = rows[0];
-    if (!user) {
-      return res.status(401).json({ ok: false, message: "Unauthorized" });
-    }
 
-    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isMatch) {
-      return res.status(400).json({
-        ok: false,
-        message: "Kata sandi saat ini salah.",
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await db.query(`UPDATE users SET password_hash = ? WHERE id = ?`, [
-      passwordHash,
-      req.user.id,
-    ]);
+    // Every other session is now logged out; this device keeps working with a fresh token.
+    const token = await authService.issueTokenAfterPasswordChange(Number(req.user.id));
 
     return res.json({
       ok: true,
-      data: { message: "Kata sandi berhasil diubah." },
+      data: { message: "Kata sandi berhasil diubah.", token },
     });
   } catch (err) {
     next(err);

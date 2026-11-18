@@ -1,16 +1,8 @@
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcrypt");
-const crypto = require("crypto");
 const db = require("../db"); // mysql2 pool
-const { sendPasswordResetEmail } = require("../utils/email");
-const { generateToken, hashToken } = require("../utils/token");
 const { getUserRoles } = require("./userRoles.service");
-const { resolveResetEmail } = require("./passwordReset.service");
+const { compareBcrypt, compareSha1 } = require("./simikoPassword.service");
 const { CustomError } = require("../errors/customError");
-
-const NO_EMAIL_MESSAGE =
-  "Email tidak ditemukan atau belum terverifikasi untuk akun ini. Silakan hubungi IT.";
-const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 function deriveLegacyUserType(roles = []) {
   if (roles.includes("STUDENT")) return "STUDENT";
@@ -19,33 +11,34 @@ function deriveLegacyUserType(roles = []) {
   return roles[0] ?? null;
 }
 
-async function compareBcrypt(plainPassword, hashedPassword) {
-  const cleanPlain = String(plainPassword ?? "").trim();
-  const cleanHash = Buffer.isBuffer(hashedPassword)
-    ? hashedPassword.toString("utf8")
-    : String(hashedPassword ?? "");
-
-  if (!cleanHash) return false;
-
-  // PHP commonly emits $2y$ bcrypt hashes; Node bcrypt accepts the equivalent
-  // $2b$ variant with the same cost, salt, and checksum.
-  const compatibleHash = cleanHash.startsWith("$2y$")
-    ? `$2b$${cleanHash.slice(4)}`
-    : cleanHash;
-
-  return bcrypt.compare(cleanPlain, compatibleHash);
+function signToken(userId, roles, iat) {
+  return jwt.sign(
+    {
+      sub: String(userId),
+      roles,
+      userType: deriveLegacyUserType(roles),
+      ...(iat != null ? { iat } : {}),
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN ?? "7d" },
+  );
 }
 
-async function compareSha1(plainPassword, hashedPasswordHex) {
-  const cleanPlain = String(plainPassword ?? "").trim();
-  const cleanHash = Buffer.isBuffer(hashedPasswordHex)
-    ? hashedPasswordHex.toString("utf8")
-    : String(hashedPasswordHex ?? "").trim();
-
-  if (!cleanHash) return false;
-
-  const hashedHex = crypto.createHash("sha1").update(cleanPlain).digest("hex");
-  return hashedHex.toLowerCase() === cleanHash.toLowerCase();
+// A token for an already-authenticated user (after change password). `iat` is pinned to the
+// stored password_changed_at so a clock gap between Node and MySQL can't make the auth middleware
+// treat the fresh token as one issued before the change.
+async function issueTokenAfterPasswordChange(userId) {
+  const [rows] = await db.query(
+    `SELECT UNIX_TIMESTAMP(password_changed_at) AS changed_unix FROM users WHERE id = ? LIMIT 1`,
+    [userId],
+  );
+  const changedUnix = rows[0]?.changed_unix;
+  const roles = await getUserRoles(userId);
+  return signToken(
+    userId,
+    roles,
+    changedUnix == null ? undefined : Math.floor(Number(changedUnix)),
+  );
 }
 
 async function verifyMahasiswaPassword(username, password) {
@@ -160,15 +153,7 @@ async function login(username, password) {
     profile = rows[0] || null;
   }
 
-  const token = jwt.sign(
-    {
-      sub: String(user.id),
-      roles,
-      userType: legacyUserType,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN ?? "7d" },
-  );
+  const token = signToken(user.id, roles);
 
   return {
     token,
@@ -244,155 +229,8 @@ async function getUserInformation(userId) {
   };
 }
 
-async function forgotPassword(username) {
-  const [users] = await db.query(
-    `SELECT id, npm, nidn, email FROM users WHERE username = ? AND is_active = 1 LIMIT 1`,
-    [username],
-  );
-  const user = users[0];
-
-  if (!user) {
-    return { message: NO_EMAIL_MESSAGE };
-  }
-
-  const resolved = await resolveResetEmail(user);
-  if (!resolved) {
-    return { message: NO_EMAIL_MESSAGE };
-  }
-
-  const token = generateToken();
-  const tokenHash = hashToken(token);
-  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
-
-  await db.query(
-    `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
-           VALUES (?, ?, ?)`,
-    [user.id, tokenHash, expiresAt],
-  );
-
-  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-  const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
-
-  try {
-    await sendPasswordResetEmail({
-      to: resolved.email,
-      resetUrl,
-      recipientName: resolved.nama,
-    });
-  } catch (emailErr) {
-    console.error("Failed to send password reset email:", emailErr);
-  }
-
-  return {
-    message: "Tautan reset kata sandi telah dikirim ke email terdaftar.",
-  };
-}
-
-async function resetPassword(token, newPassword) {
-  const tokenHash = hashToken(token);
-
-  const [rows] = await db.query(
-    `SELECT id, user_id FROM password_reset_tokens
-           WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()
-           LIMIT 1`,
-    [tokenHash],
-  );
-  const resetRow = rows[0];
-
-  if (!resetRow) {
-    throw new CustomError(400, {
-      ok: false,
-      message: "Tautan reset tidak valid atau sudah kedaluwarsa.",
-    });
-  }
-
-  const passwordHash = await bcrypt.hash(newPassword, 10);
-
-  const conn = await db.getConnection();
-  let txStarted = false;
-  try {
-    await conn.beginTransaction();
-    txStarted = true;
-
-    await conn.query(`UPDATE users SET password_hash = ? WHERE id = ?`, [
-      passwordHash,
-      resetRow.user_id,
-    ]);
-    await conn.query(
-      `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ?`,
-      [resetRow.id],
-    );
-
-    await conn.commit();
-    txStarted = false;
-  } catch (err) {
-    try {
-      if (txStarted) await conn.rollback();
-    } catch (_) {}
-    throw err;
-  } finally {
-    conn.release();
-  }
-
-  return {
-    message: "Kata sandi berhasil diubah. Silakan login kembali.",
-  };
-}
-
-async function verifyEmail(token) {
-  const tokenHash = hashToken(token);
-
-  const [rows] = await db.query(
-    `SELECT id, npm, email FROM mahasiswa_email_verification_tokens
-       WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()
-       LIMIT 1`,
-    [tokenHash],
-  );
-  const verifyRow = rows[0];
-
-  if (!verifyRow) {
-    throw new CustomError(400, {
-      ok: false,
-      message: "Tautan verifikasi tidak valid atau sudah kedaluwarsa.",
-    });
-  }
-
-  const conn = await db.getConnection();
-  let txStarted = false;
-  try {
-    await conn.beginTransaction();
-    txStarted = true;
-
-    await conn.query(
-      `UPDATE mahasiswa SET email_verified_at = NOW()
-         WHERE npm = ? AND email = ?`,
-      [verifyRow.npm, verifyRow.email],
-    );
-    await conn.query(
-      `UPDATE mahasiswa_email_verification_tokens SET used_at = NOW() WHERE id = ?`,
-      [verifyRow.id],
-    );
-
-    await conn.commit();
-    txStarted = false;
-  } catch (err) {
-    try {
-      if (txStarted) await conn.rollback();
-    } catch (_) {}
-    throw err;
-  } finally {
-    conn.release();
-  }
-
-  return {
-    message: "Email berhasil diverifikasi.",
-  };
-}
-
 module.exports = {
   login,
   getUserInformation,
-  forgotPassword,
-  resetPassword,
-  verifyEmail,
+  issueTokenAfterPasswordChange,
 };

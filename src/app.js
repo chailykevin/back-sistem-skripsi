@@ -7,6 +7,12 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const app = express();
 
+// Behind a reverse proxy req.ip is the proxy's address, which would put every user under one
+// per-IP limit on password reset codes. TRUST_PROXY = number of proxy hops in front of the app.
+if (process.env.TRUST_PROXY) {
+  app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+}
+
 app.use(cors({ exposedHeaders: ["Content-Disposition"] }));
 app.use(express.json({ limit: "75mb" }));
 app.use(express.urlencoded({ extended: true }));
