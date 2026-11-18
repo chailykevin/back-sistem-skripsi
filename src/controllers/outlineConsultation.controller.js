@@ -1370,12 +1370,12 @@ exports.listForKaprodi = async (req, res, next) => {
     }
 
     if (tahunAkademik) {
-      where.push("osp.tahun_akademik = ?");
+      where.push("o.cohort_tahun_akademik = ?");
       params.push(String(tahunAkademik));
     }
 
     if (periodeAkademik) {
-      where.push("osp.periode_akademik = ?");
+      where.push("o.cohort_periode_akademik = ?");
       params.push(String(periodeAkademik));
     }
 
@@ -1397,15 +1397,14 @@ exports.listForKaprodi = async (req, res, next) => {
          k.created_at,
          k.updated_at,
          o.submission_period_id,
-         osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik
+         o.cohort_tahun_akademik AS period_tahun_akademik,
+         o.cohort_periode_akademik AS period_periode_akademik
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
        JOIN mahasiswa m ON m.npm = o.npm
        JOIN program_studi ps ON ps.id = o.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = o.pembimbing1_nidn
        LEFT JOIN dosen d2 ON d2.nidn = o.pembimbing2_nidn
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        WHERE ${where.join(" AND ")}
        ORDER BY k.updated_at DESC`,
       params,

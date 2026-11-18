@@ -2,6 +2,7 @@ const db = require("../db");
 const outlineService = require("../services/outline.service");
 const mahasiswaService = require("../services/mahasiswa.service");
 const { getOpenPeriod } = require("../services/outlineSubmissionPeriod.service");
+const { getActiveAcademicTerm } = require("../services/academicTerm.service");
 const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
 const { parsePagination, buildPagination } = require("../utils/pagination");
 const { UPLOAD_RULES, validateUpload } = require("../utils/upload");
@@ -87,8 +88,10 @@ exports.create = async (req, res, next) => {
 
     // The one-active-outline and no-active-skripsi rules are enforced inside createOutline, under a
     // lock on the student's row (409). Outlines can be submitted any time (the period gates the SK);
-    // the tag only places the outline in a term for the Kaprodi lists and recap.
+    // the period tag is kept for reference only. The Kaprodi lists, dashboard and reports group by
+    // the cohort: SIMIKO's active term at creation, fixed for good.
     const submissionPeriodId = (await getOpenPeriod())?.id ?? null;
+    const cohort = await getActiveAcademicTerm();
 
     const namaMahasiswa = await mahasiswaService.getMahasiswaNameByNpm(npm);
 
@@ -100,6 +103,7 @@ exports.create = async (req, res, next) => {
       fileOutline,
       fileOutlineName,
       namaMahasiswa,
+      cohort,
     );
 
     res.status(201).json({

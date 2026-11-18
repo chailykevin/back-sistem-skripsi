@@ -4,5 +4,6 @@ const c = require("../controllers/kaprodiDashboard.controller");
 
 router.get("/kaprodi/dashboard/pipeline", auth, c.getPipeline);
 router.get("/kaprodi/dashboard/recap", auth, c.getRecap);
+router.get("/kaprodi/dashboard/cohorts", auth, c.getCohorts);
 
 module.exports = router;

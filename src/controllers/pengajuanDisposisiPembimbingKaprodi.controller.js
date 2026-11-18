@@ -251,12 +251,12 @@ exports.listForKaprodi = async (req, res, next) => {
     const params = [programStudiIds];
 
     if (tahunAkademik) {
-      where.push("osp.tahun_akademik = ?");
+      where.push("o.cohort_tahun_akademik = ?");
       params.push(tahunAkademik);
     }
 
     if (periodeAkademik) {
-      where.push("osp.periode_akademik = ?");
+      where.push("o.cohort_periode_akademik = ?");
       params.push(periodeAkademik);
     }
     if (q) {
@@ -272,8 +272,7 @@ exports.listForKaprodi = async (req, res, next) => {
     const listFrom = `FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN outline o ON o.id = pj.outline_id
       INNER JOIN mahasiswa m ON m.npm = pj.npm
-      INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-      LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id`;
+      INNER JOIN program_studi ps ON ps.id = m.program_studi_id`;
     const [[countRow]] = await db.query(
       `SELECT COUNT(*) AS total ${listFrom} WHERE ${where.join(" AND ")}`,
       params,
@@ -293,13 +292,12 @@ exports.listForKaprodi = async (req, res, next) => {
         m.tahap_tugas_akhir,
         ps.nama AS program_studi,
         o.submission_period_id,
-        osp.tahun_akademik AS period_tahun_akademik,
-        osp.periode_akademik AS period_periode_akademik
+        o.cohort_tahun_akademik AS period_tahun_akademik,
+        o.cohort_periode_akademik AS period_periode_akademik
       FROM pengajuan_disposisi_pembimbing pj
       INNER JOIN outline o ON o.id = pj.outline_id
       INNER JOIN mahasiswa m ON m.npm = pj.npm
       INNER JOIN program_studi ps ON ps.id = m.program_studi_id
-      LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
       WHERE ${where.join(" AND ")}
       ORDER BY pj.submitted_at DESC${pagination.enabled ? " LIMIT ? OFFSET ?" : ""}
       `,

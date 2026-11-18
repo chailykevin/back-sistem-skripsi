@@ -1,8 +1,6 @@
 const kaprodiDashboardService = require("../services/kaprodiDashboard.service");
+const { parseTermQuery } = require("../services/academicTerm.service");
 const { getStaffUsrId, getKaprodiProgramStudiIds } = require("../utils/identity");
-
-const TAHUN_AKADEMIK_PATTERN = /^\d{4}\/\d{4}$/;
-const PERIODE_AKADEMIK = ["GANJIL", "GENAP"];
 
 async function resolveProgramStudiIds(req, res) {
   if (!req.user.hasRole("KAPRODI")) {
@@ -22,11 +20,13 @@ async function resolveProgramStudiIds(req, res) {
   return programStudiIds;
 }
 
+// ?tahunAkademik=&periodeAkademik= selects a cohort (the term students started in); omitted = everyone.
 exports.getPipeline = async (req, res, next) => {
   try {
+    const term = parseTermQuery(req.query);
     const programStudiIds = await resolveProgramStudiIds(req, res);
     if (!programStudiIds) return;
-    const data = await kaprodiDashboardService.getPipeline(programStudiIds);
+    const data = await kaprodiDashboardService.getPipeline(programStudiIds, term);
     return res.json({ ok: true, data });
   } catch (err) {
     next(err);
@@ -35,21 +35,21 @@ exports.getPipeline = async (req, res, next) => {
 
 exports.getRecap = async (req, res, next) => {
   try {
-    const tahunAkademik = req.query.tahunAkademik ? String(req.query.tahunAkademik) : null;
-    const periodeAkademik = req.query.periodeAkademik ? String(req.query.periodeAkademik) : null;
-    if (Boolean(tahunAkademik) !== Boolean(periodeAkademik)) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "tahunAkademik dan periodeAkademik harus diisi bersamaan" });
-    }
-    if (tahunAkademik && (!TAHUN_AKADEMIK_PATTERN.test(tahunAkademik) || !PERIODE_AKADEMIK.includes(periodeAkademik))) {
-      return res.status(400).json({ ok: false, message: "Periode tidak valid" });
-    }
-
+    const term = parseTermQuery(req.query);
     const programStudiIds = await resolveProgramStudiIds(req, res);
     if (!programStudiIds) return;
-    const term = tahunAkademik ? { tahunAkademik, periodeAkademik } : null;
     const data = await kaprodiDashboardService.getRecap(programStudiIds, term);
+    return res.json({ ok: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getCohorts = async (req, res, next) => {
+  try {
+    const programStudiIds = await resolveProgramStudiIds(req, res);
+    if (!programStudiIds) return;
+    const data = await kaprodiDashboardService.getCohorts(programStudiIds);
     return res.json({ ok: true, data });
   } catch (err) {
     next(err);

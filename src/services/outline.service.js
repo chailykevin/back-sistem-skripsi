@@ -27,6 +27,7 @@ async function createOutline(
   fileOutline,
   fileOutlineName,
   namaMahasiswa,
+  cohort,
 ) {
   const conn = await db.getConnection();
   let txStarted = false;
@@ -46,9 +47,10 @@ async function createOutline(
 
     const [insertResult] = await conn.query(
       `INSERT INTO outline
-             (judul, npm, status, program_studi_id, submission_period_id)
-             VALUES (?, ?, 'SUBMITTED', ?, ?)`,
-      [judul, npm, programStudiId, submissionPeriodId],
+             (judul, npm, status, program_studi_id, submission_period_id,
+              cohort_tahun_akademik, cohort_periode_akademik)
+             VALUES (?, ?, 'SUBMITTED', ?, ?, ?, ?)`,
+      [judul, npm, programStudiId, submissionPeriodId, cohort.tahunAkademik, cohort.periodeAkademik],
     );
 
     const outlineId = insertResult?.insertId ?? null;
@@ -306,11 +308,11 @@ async function listOutlinesForKaprodi({
     params.push(searchValue, searchValue, searchValue);
   }
   if (tahunAkademik) {
-    where.push("osp.tahun_akademik = ?");
+    where.push("o.cohort_tahun_akademik = ?");
     params.push(tahunAkademik);
   }
   if (periodeAkademik) {
-    where.push("osp.periode_akademik = ?");
+    where.push("o.cohort_periode_akademik = ?");
     params.push(periodeAkademik);
   }
 
@@ -325,7 +327,6 @@ async function listOutlinesForKaprodi({
        FROM outline
        GROUP BY npm
      ) latest ON latest.npm = o.npm AND latest.max_id = o.id
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
      ${whereSql}`,
     params,
   );
@@ -347,8 +348,8 @@ async function listOutlinesForKaprodi({
        m.sks AS mahasiswa_sks,
        m.program_studi_id,
        o.submission_period_id,
-       osp.tahun_akademik AS period_tahun_akademik,
-       osp.periode_akademik AS period_periode_akademik
+       o.cohort_tahun_akademik AS period_tahun_akademik,
+       o.cohort_periode_akademik AS period_periode_akademik
      FROM outline o
      INNER JOIN mahasiswa m ON m.npm = o.npm
      INNER JOIN (
@@ -356,7 +357,6 @@ async function listOutlinesForKaprodi({
        FROM outline
        GROUP BY npm
      ) latest ON latest.npm = o.npm AND latest.max_id = o.id
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
      ${whereSql}
      ORDER BY o.created_at DESC${pageSql}`,
     dataParams,

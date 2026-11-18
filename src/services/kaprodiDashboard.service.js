@@ -7,6 +7,7 @@ const {
 } = require("../utils/workflowStage");
 const { formatTanggal } = require("../utils/dates");
 const { getOpenPeriod } = require("./outlineSubmissionPeriod.service");
+const { getActiveAcademicTerm, cohortOf, semesterKe, termIndex, sameTerm } = require("./academicTerm.service");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -69,29 +70,36 @@ function startOfDay(value) {
 
 async function loadPipelineData(programStudiIds) {
   const [mahasiswaRows] = await db.query(
-    `SELECT npm, nama, tahap_tugas_akhir FROM mahasiswa WHERE program_studi_id IN (?)`,
+    // is_active = 0: the SIMIKO sync deactivated the account (no Skripsi/Seminar in this term's KRS).
+    `SELECT m.npm, m.nama, m.tahap_tugas_akhir,
+            (SELECT MAX(u.is_active) FROM users u WHERE u.npm = m.npm) AS is_active
+     FROM mahasiswa m
+     WHERE m.program_studi_id IN (?)`,
     [programStudiIds],
   );
   const [outlineRows] = await db.query(
-    `SELECT id, npm, status, pembimbing1_nidn, pembimbing2_nidn, updated_at
+    `SELECT id, npm, status, pembimbing1_nidn, pembimbing2_nidn, created_at, updated_at,
+            cohort_tahun_akademik, cohort_periode_akademik
      FROM outline
      WHERE program_studi_id IN (?)`,
     [programStudiIds],
   );
   const latestOutlineByNpm = latestByKey(outlineRows, "npm");
   const tahapByNpm = new Map(mahasiswaRows.map((m) => [m.npm, m.tahap_tugas_akhir]));
-  const outlineIds = [...latestOutlineByNpm.values()].map((o) => o.id);
-  const npms = [...latestOutlineByNpm.keys()];
+  // Every outline, not just the latest per student: a cohort keeps the attempts that ended in
+  // Ditolak / Gagal even after the student restarted in a later term.
+  const outlineIds = outlineRows.map((o) => o.id);
 
   const data = {
     mahasiswaRows,
     tahapByNpm,
     latestOutlineByNpm,
+    outlineRows,
     disposisiByOutlineId: new Map(),
     kartuOutlineByOutlineId: new Map(),
     outlineStagesByKartu: new Map(),
     skByOutlineId: new Map(),
-    latestSkripsiByNpm: new Map(),
+    skripsiByOutlineId: new Map(),
     kartuSkripsiBySkripsiId: new Map(),
     skripsiStagesByKartu: new Map(),
     latestPengajuanSidangBySkripsiId: new Map(),
@@ -142,15 +150,15 @@ async function loadPipelineData(programStudiIds) {
   const [skripsiRows] = await db.query(
     `SELECT id, npm, outline_id, status, jalur, pembimbing1_nidn, pembimbing2_nidn, created_at
      FROM skripsi
-     WHERE npm IN (?)`,
-    [npms],
+     WHERE outline_id IN (?)`,
+    [outlineIds],
   );
-  data.latestSkripsiByNpm = latestByKey(skripsiRows, "npm");
-  const skripsiIds = [...data.latestSkripsiByNpm.values()].map((s) => s.id);
+  data.skripsiByOutlineId = latestByKey(skripsiRows, "outline_id");
+  const skripsiIds = [...data.skripsiByOutlineId.values()].map((s) => s.id);
 
-  const dosenNidns = [...latestOutlineByNpm.values()]
+  const dosenNidns = outlineRows
     .flatMap((o) => [o.pembimbing1_nidn, o.pembimbing2_nidn])
-    .concat([...data.latestSkripsiByNpm.values()].flatMap((s) => [s.pembimbing1_nidn, s.pembimbing2_nidn]));
+    .concat([...data.skripsiByOutlineId.values()].flatMap((s) => [s.pembimbing1_nidn, s.pembimbing2_nidn]));
 
   if (skripsiIds.length > 0) {
     const [kartuSkripsiRows] = await db.query(
@@ -260,7 +268,8 @@ async function loadPipelineData(programStudiIds) {
   return data;
 }
 
-function resolveStudentPosition(npm, data, today) {
+function resolveOutlinePosition(outline, data, today) {
+  const npm = outline.npm;
   const dosen = (nidn) => (nidn ? { type: "DOSEN", name: data.dosenNames.get(nidn) ?? nidn } : null);
   const unit = (name) => ({ type: "UNIT", name });
   const at = (stage, waitingOn, detail, lastActionAt, extra = {}) => ({
@@ -273,11 +282,10 @@ function resolveStudentPosition(npm, data, today) {
     ...extra,
   });
 
-  const outline = data.latestOutlineByNpm.get(npm);
-  if (!outline || outline.status === "REJECTED") return null;
+  if (outline.status === "REJECTED") return null;
 
-  const skripsi = data.latestSkripsiByNpm.get(npm) ?? null;
-  if (!skripsi || skripsi.outline_id !== outline.id) {
+  const skripsi = data.skripsiByOutlineId.get(outline.id) ?? null;
+  if (!skripsi) {
     const disposisi = data.disposisiByOutlineId.get(outline.id) ?? null;
     const kartuOutline = data.kartuOutlineByOutlineId.get(outline.id) ?? null;
     const sk = data.skByOutlineId.get(outline.id) ?? null;
@@ -571,17 +579,43 @@ function resolveStudentPosition(npm, data, today) {
   });
 }
 
-async function getPipeline(programStudiIds) {
+// Where a journey ended, for a cohort's summary: null while it is still in progress.
+function outcomeOf(outline, data) {
+  if (outline.status === "REJECTED") return "DITOLAK";
+  const skripsi = data.skripsiByOutlineId.get(outline.id) ?? null;
+  if (skripsi?.status === "GAGAL") return "GAGAL";
+  if (skripsi && data.pengumpulanBySkripsiId.get(skripsi.id)?.status === "COMPLETED") return "SELESAI";
+  return null;
+}
+
+function jalurOf(outline, data, mahasiswa) {
+  const skripsi = data.skripsiByOutlineId.get(outline.id) ?? null;
+  if (skripsi?.jalur) return skripsi.jalur;
+  return mahasiswa?.tahap_tugas_akhir === SEMINAR ? SEMINAR : "SKRIPSI";
+}
+
+// term: a selected cohort ({ tahunAkademik, periodeAkademik }) or null for everyone in progress.
+// With a term, the list holds the students who started then and are still in progress, plus the
+// ones from earlier cohorts who still aren't finished (lanjutan); summary counts the whole cohort.
+async function getPipeline(programStudiIds, term = null) {
   const [[{ now }]] = await db.query("SELECT NOW() AS now");
   const today = startOfDay(now);
   const data = await loadPipelineData(programStudiIds);
   data.skPeriodOpen = Boolean(await getOpenPeriod());
+  const activeTerm = await getActiveAcademicTerm();
+  const refTerm = term ?? activeTerm;
 
   const students = [];
   for (const m of data.mahasiswaRows) {
-    const position = resolveStudentPosition(m.npm, data, today);
+    const outline = data.latestOutlineByNpm.get(m.npm);
+    if (!outline) continue;
+    const cohort = cohortOf(outline);
+    if (term && (!cohort || termIndex(cohort) > termIndex(term))) continue;
+    const position = resolveOutlinePosition(outline, data, today);
     if (!position) continue;
     const { lastActionAt, scheduledAt, ...rest } = position;
+    // At least 1: a cohort can be newer than SIMIKO's active term when SIMIKO lags behind.
+    const semester = cohort ? Math.max(1, semesterKe(cohort, refTerm)) : null;
     students.push({
       npm: m.npm,
       nama: m.nama,
@@ -592,16 +626,59 @@ async function getPipeline(programStudiIds) {
         : null,
       scheduledAt: scheduledAt ?? null,
       scheduledInDays: scheduledAt ? Math.round((scheduledAt.getTime() - today.getTime()) / DAY_MS) : null,
+      cohort,
+      semesterKe: semester,
+      lanjutan: semester != null && semester > 1,
+      jalur: jalurOf(outline, data, m),
+      inactive: m.is_active === 0,
     });
   }
 
-  return { generatedAt: now, stages: STAGE_KEYS, students };
+  let summary = null;
+  if (term) {
+    // One journey per student in this cohort: their latest outline created in it.
+    const latestInCohort = latestByKey(
+      data.outlineRows.filter((o) => sameTerm(cohortOf(o), term)),
+      "npm",
+    );
+    summary = { mulai: 0, berjalan: 0, selesai: 0, gagal: 0, ditolak: 0, lanjutan: 0, tidakAktif: 0 };
+    for (const outline of latestInCohort.values()) {
+      summary.mulai += 1;
+      const outcome = outcomeOf(outline, data);
+      if (outcome === "SELESAI") summary.selesai += 1;
+      else if (outcome === "GAGAL") summary.gagal += 1;
+      else if (outcome === "DITOLAK") summary.ditolak += 1;
+      else summary.berjalan += 1;
+    }
+    summary.lanjutan = students.filter((st) => st.lanjutan).length;
+    summary.tidakAktif = students.filter((st) => st.inactive).length;
+  }
+
+  return { generatedAt: now, stages: STAGE_KEYS, activeTerm, term, summary, students };
 }
 
-function buildTermFilter(alias, term) {
+// Cohorts that have at least one outline in the Kaprodi's prodi, plus the active term, newest first.
+async function getCohorts(programStudiIds) {
+  const [rows] = await db.query(
+    `SELECT cohort_tahun_akademik, cohort_periode_akademik, COUNT(DISTINCT npm) AS total
+     FROM outline
+     WHERE program_studi_id IN (?) AND cohort_tahun_akademik IS NOT NULL
+     GROUP BY cohort_tahun_akademik, cohort_periode_akademik`,
+    [programStudiIds],
+  );
+  const activeTerm = await getActiveAcademicTerm();
+  const cohorts = rows.map((r) => ({ ...cohortOf(r), total: Number(r.total) }));
+  if (!cohorts.some((c) => sameTerm(c, activeTerm))) cohorts.push({ ...activeTerm, total: 0 });
+  cohorts.sort((a, b) => termIndex(b) - termIndex(a));
+  return { activeTerm, cohorts };
+}
+
+// Every stage is counted under the student's cohort (alias o = their outline), so a term's numbers
+// follow the same group of students from outline to berkas final.
+function buildCohortFilter(term) {
   if (!term) return { sql: "", params: [] };
   return {
-    sql: ` AND ${alias}.tahun_akademik = ? AND ${alias}.periode_akademik = ?`,
+    sql: " AND o.cohort_tahun_akademik = ? AND o.cohort_periode_akademik = ?",
     params: [term.tahunAkademik, term.periodeAkademik],
   };
 }
@@ -616,8 +693,7 @@ function classifyKonsultasi(isCompleted, activeStatus) {
 }
 
 async function getRecap(programStudiIds, term) {
-  const osp = buildTermFilter("osp", term);
-  const ssp = buildTermFilter("ssp", term);
+  const cf = buildCohortFilter(term);
   const counts = Object.fromEntries(STAGE_KEYS.map((k) => [k, emptyCounts()]));
   const add = (stage, bucket) => {
     if (bucket) counts[stage][bucket] += 1;
@@ -626,9 +702,8 @@ async function getRecap(programStudiIds, term) {
   const [outlineRows] = await db.query(
     `SELECT o.status
      FROM outline o
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
-     WHERE o.program_studi_id IN (?)${osp.sql}`,
-    [programStudiIds, ...osp.params],
+     WHERE o.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   const OUTLINE_BUCKET = { SUBMITTED: "you", NEED_REVISION: "student", ACCEPTED: "done", REJECTED: "rejected" };
   for (const r of outlineRows) add("OUTLINE", OUTLINE_BUCKET[r.status]);
@@ -637,9 +712,8 @@ async function getRecap(programStudiIds, term) {
     `SELECT pj.status
      FROM pengajuan_disposisi_pembimbing pj
      JOIN outline o ON o.id = pj.outline_id
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
-     WHERE o.program_studi_id IN (?)${osp.sql}`,
-    [programStudiIds, ...osp.params],
+     WHERE o.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   const DISPOSISI_BUCKET = { SUBMITTED: "you", NEED_REVISION: "student", APPROVED: "done" };
   for (const r of disposisiRows) add("DISPOSISI", DISPOSISI_BUCKET[r.status]);
@@ -648,9 +722,8 @@ async function getRecap(programStudiIds, term) {
     `SELECT k.id, k.is_completed
      FROM kartu_konsultasi_outline k
      JOIN outline o ON o.id = k.outline_id
-     LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
-     WHERE o.program_studi_id IN (?)${osp.sql}`,
-    [programStudiIds, ...osp.params],
+     WHERE o.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   if (kartuOutlineRows.length > 0) {
     const [stageRows] = await db.query(
@@ -671,9 +744,8 @@ async function getRecap(programStudiIds, term) {
     `SELECT sk.status
      FROM pengajuan_sk_penelitian sk
      JOIN outline o ON o.id = sk.outline_id
-     LEFT JOIN outline_submission_period osp ON osp.id = sk.submission_period_id
-     WHERE o.program_studi_id IN (?)${osp.sql}`,
-    [programStudiIds, ...osp.params],
+     WHERE o.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   const SK_BUCKET = {
     DRAFT: "student",
@@ -688,10 +760,9 @@ async function getRecap(programStudiIds, term) {
     `SELECT k.id, k.is_completed
      FROM kartu_konsultasi_skripsi k
      JOIN skripsi s ON s.id = k.skripsi_id
-     LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = s.outline_id
-     LEFT JOIN outline_submission_period osp ON osp.id = psk.submission_period_id
-     WHERE s.program_studi_id IN (?)${osp.sql}`,
-    [programStudiIds, ...osp.params],
+     LEFT JOIN outline o ON o.id = s.outline_id
+     WHERE s.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   if (kartuSkripsiRows.length > 0) {
     const [stageRows] = await db.query(
@@ -721,10 +792,10 @@ async function getRecap(programStudiIds, term) {
     `SELECT ps.status, psk.status AS kaprodi_status
      FROM pengajuan_sidang ps
      JOIN skripsi s ON s.id = ps.skripsi_id
+     LEFT JOIN outline o ON o.id = s.outline_id
      LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps.id
-     LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
-     WHERE s.program_studi_id IN (?)${ssp.sql}`,
-    [programStudiIds, ...ssp.params],
+     WHERE s.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   for (const r of pengajuanSidangRows) {
     let bucket;
@@ -740,10 +811,9 @@ async function getRecap(programStudiIds, term) {
     `SELECT sd.status, sd.hasil_sidang
      FROM sidang sd
      JOIN skripsi s ON s.id = sd.skripsi_id
-     LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
-     LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
-     WHERE s.program_studi_id IN (?)${ssp.sql}`,
-    [programStudiIds, ...ssp.params],
+     LEFT JOIN outline o ON o.id = s.outline_id
+     WHERE s.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   for (const r of sidangRows) {
     if (r.status !== "COMPLETED") add("SIDANG", "other");
@@ -757,10 +827,9 @@ async function getRecap(programStudiIds, term) {
      FROM revisi_pasca_sidang r
      JOIN sidang sd ON sd.id = r.sidang_id
      JOIN skripsi s ON s.id = sd.skripsi_id
-     LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
-     LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
-     WHERE s.program_studi_id IN (?)${ssp.sql}`,
-    [programStudiIds, ...ssp.params],
+     LEFT JOIN outline o ON o.id = s.outline_id
+     WHERE s.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   if (revisiRows.length > 0) {
     const [stageRows] = await db.query(
@@ -775,16 +844,15 @@ async function getRecap(programStudiIds, term) {
     }
   }
 
-  // Seminar → Skripsi bridge, matched to the term of the Seminar's pengajuan.
+  // Seminar → Skripsi bridge.
   const [lanjutanRows] = await db.query(
     `SELECT l.status
      FROM pengajuan_sk_skripsi_lanjutan l
      JOIN skripsi s ON s.id = l.skripsi_id
+     LEFT JOIN outline o ON o.id = s.outline_id
      JOIN sidang sd ON sd.id = l.seminar_sidang_id
-     LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
-     LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
-     WHERE s.program_studi_id IN (?)${ssp.sql}`,
-    [programStudiIds, ...ssp.params],
+     WHERE s.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   const LANJUTAN_BUCKET = { WAITING_KAPRODI: "you", WAITING_SEKRETARIAT: "other", COMPLETED: "done" };
   for (const r of lanjutanRows) add("SK_SKRIPSI", LANJUTAN_BUCKET[r.status]);
@@ -793,13 +861,9 @@ async function getRecap(programStudiIds, term) {
     `SELECT pbf.status
      FROM pengumpulan_berkas_final pbf
      JOIN skripsi s ON s.id = pbf.skripsi_id
-     LEFT JOIN sidang sd ON sd.id = (
-       SELECT MAX(sd2.id) FROM sidang sd2 WHERE sd2.skripsi_id = pbf.skripsi_id AND sd2.jenis = 'SKRIPSI' AND sd2.hasil_sidang = 'LULUS'
-     )
-     LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
-     LEFT JOIN sidang_submission_period ssp ON ssp.id = ps.sidang_submission_period_id
-     WHERE s.program_studi_id IN (?)${ssp.sql}`,
-    [programStudiIds, ...ssp.params],
+     LEFT JOIN outline o ON o.id = s.outline_id
+     WHERE s.program_studi_id IN (?)${cf.sql}`,
+    [programStudiIds, ...cf.params],
   );
   const BERKAS_FINAL_BUCKET = { DRAFT: "student", SUBMITTED: "other", WAITING_SIGNATURE: "other", COMPLETED: "done" };
   for (const r of pengumpulanRows) add("BERKAS_FINAL", BERKAS_FINAL_BUCKET[r.status]);
@@ -807,4 +871,4 @@ async function getRecap(programStudiIds, term) {
   return { stages: STAGE_KEYS.map((stage) => ({ stage, ...counts[stage] })) };
 }
 
-module.exports = { getPipeline, getRecap };
+module.exports = { getPipeline, getRecap, getCohorts };

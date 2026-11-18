@@ -1539,9 +1539,12 @@ exports.listForKaprodi = async (req, res, next) => {
          d1.nama AS pembimbing1_nama, d2.nama AS pembimbing2_nama,
          psk.submission_period_id,
          osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik
+         osp.periode_akademik AS period_periode_akademik,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM kartu_konsultasi_skripsi k
        JOIN skripsi sk ON sk.id = k.skripsi_id
+       LEFT JOIN outline o ON o.id = sk.outline_id
        JOIN mahasiswa m ON m.npm = sk.npm
        JOIN program_studi ps ON ps.id = sk.program_studi_id
        LEFT JOIN dosen d1 ON d1.nidn = sk.pembimbing1_nidn

@@ -8,6 +8,7 @@ const {
   resolveActiveKonsultasiSkripsiStage,
   resolveActiveRevisiStage,
 } = require("../utils/workflowStage");
+const { parseTermQuery, cohortOf, formatTerm } = require("../services/academicTerm.service");
 
 function formatDateTime(value) {
   if (!value) return "";
@@ -96,6 +97,21 @@ function buildPeriodFilter(req, tableAlias) {
   }
 
   return { clauses, params };
+}
+
+// Outline-stage reports filter by the student's cohort (outline.cohort_*), the term they started in;
+// the later stages keep filtering by their own SK / sidang window and only show the cohort as a column.
+function buildCohortFilter(req, outlineAlias) {
+  const term = parseTermQuery(req.query);
+  if (!term) return { clauses: [], params: [] };
+  return {
+    clauses: [`${outlineAlias}.cohort_tahun_akademik = ?`, `${outlineAlias}.cohort_periode_akademik = ?`],
+    params: [term.tahunAkademik, term.periodeAkademik],
+  };
+}
+
+function semesterMulai(row) {
+  return formatTerm(cohortOf(row));
 }
 
 async function getProgramStudiLabel(programStudiIds) {
@@ -197,7 +213,7 @@ exports.exportOutlineReport = async (req, res, next) => {
     const fileName = `Laporan Pengajuan Outline - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
-    const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
+    const { clauses: periodClauses, params: periodParams } = buildCohortFilter(req, "o");
     const where = [`m.program_studi_id IN (${placeholders})`, ...periodClauses];
 
     const [rows] = await db.query(
@@ -210,13 +226,12 @@ exports.exportOutlineReport = async (req, res, next) => {
          o.pembimbing1_nidn,
          o.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
-         osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik,
          latest_sub.id AS latest_submission_id,
          review.reviewed_at AS decision_at
        FROM outline o
        INNER JOIN mahasiswa m ON m.npm = o.npm
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        LEFT JOIN (
          SELECT outline_id, MAX(submission_no) AS max_submission_no
          FROM outline_submissions
@@ -242,8 +257,7 @@ exports.exportOutlineReport = async (req, res, next) => {
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
       { header: "Status", key: "status", width: 16 },
-      { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
-      { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Tanggal Diajukan", key: "tanggal_submit", width: 20 },
       { header: "Tanggal Keputusan", key: "tanggal_keputusan", width: 20 },
       { header: "Durasi", key: "durasi", width: 18 },
@@ -258,8 +272,7 @@ exports.exportOutlineReport = async (req, res, next) => {
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
         status: OUTLINE_STATUS_LABELS[row.status] ?? row.status,
-        tahun_akademik: row.period_tahun_akademik ?? "",
-        periode_akademik: row.period_periode_akademik ?? "",
+        semester_mulai: semesterMulai(row),
         tanggal_submit: formatDateTime(row.created_at),
         tanggal_keputusan: formatDateTime(row.decision_at),
         durasi: formatDurationHours(row.created_at, row.decision_at),
@@ -284,7 +297,7 @@ exports.exportDisposisiReport = async (req, res, next) => {
     const fileName = `Laporan Disposisi Pembimbing - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
-    const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
+    const { clauses: periodClauses, params: periodParams } = buildCohortFilter(req, "o");
     const where = [`m.program_studi_id IN (${placeholders})`, ...periodClauses];
 
     const [rows] = await db.query(
@@ -300,12 +313,11 @@ exports.exportDisposisiReport = async (req, res, next) => {
          pj.pembimbing1_ditetapkan_nidn,
          pj.pembimbing2_ditetapkan_nidn,
          m.nama AS nama_mahasiswa,
-         osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM pengajuan_disposisi_pembimbing pj
        INNER JOIN mahasiswa m ON m.npm = pj.npm
        INNER JOIN outline o ON o.id = pj.outline_id
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        WHERE ${where.join(" AND ")}
        ORDER BY pj.submitted_at DESC`,
       [...programStudiIds, ...periodParams],
@@ -327,8 +339,7 @@ exports.exportDisposisiReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Status", key: "status", width: 16 },
-      { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
-      { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Tanggal Submit", key: "tanggal_submit", width: 20 },
       { header: "Tanggal Keputusan", key: "tanggal_keputusan", width: 20 },
       { header: "Durasi", key: "durasi", width: 18 },
@@ -345,8 +356,7 @@ exports.exportDisposisiReport = async (req, res, next) => {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         status: DISPOSISI_STATUS_LABELS[row.status] ?? row.status,
-        tahun_akademik: row.period_tahun_akademik ?? "",
-        periode_akademik: row.period_periode_akademik ?? "",
+        semester_mulai: semesterMulai(row),
         tanggal_submit: formatDateTime(row.submitted_at),
         tanggal_keputusan: formatDateTime(row.disposisi_at),
         durasi: formatDurationHours(row.submitted_at, row.disposisi_at),
@@ -374,7 +384,7 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
     const fileName = `Laporan Konsultasi Outline - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
-    const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
+    const { clauses: periodClauses, params: periodParams } = buildCohortFilter(req, "o");
     const where = [`o.program_studi_id IN (${placeholders})`, ...periodClauses];
 
     const [rows] = await db.query(
@@ -387,12 +397,11 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
          o.pembimbing1_nidn,
          o.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
-         osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM kartu_konsultasi_outline k
        INNER JOIN outline o ON o.id = k.outline_id
        INNER JOIN mahasiswa m ON m.npm = o.npm
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        WHERE ${where.join(" AND ")}
        ORDER BY o.created_at DESC`,
       [...programStudiIds, ...periodParams],
@@ -425,8 +434,7 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
-      { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
-      { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Tahap Aktif", key: "tahap_aktif", width: 16 },
@@ -449,8 +457,7 @@ exports.exportKonsultasiOutlineReport = async (req, res, next) => {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
-        tahun_akademik: row.period_tahun_akademik ?? "",
-        periode_akademik: row.period_periode_akademik ?? "",
+        semester_mulai: semesterMulai(row),
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         tahap_aktif: isCompleted ? "Selesai" : (STAGE_LABELS[activeStage] ?? ""),
@@ -492,9 +499,12 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
          sk.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
          osp.tahun_akademik AS period_tahun_akademik,
-         osp.periode_akademik AS period_periode_akademik
+         osp.periode_akademik AS period_periode_akademik,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM skripsi sk
        INNER JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN kartu_konsultasi_skripsi k ON k.skripsi_id = sk.id
        LEFT JOIN pengajuan_sk_penelitian psk ON psk.outline_id = sk.outline_id
        LEFT JOIN outline_submission_period osp ON osp.id = psk.submission_period_id
@@ -532,6 +542,7 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
       { header: "Judul", key: "judul", width: 40 },
       { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
       { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Bab Aktif", key: "bab_aktif", width: 14 },
@@ -561,6 +572,7 @@ exports.exportKonsultasiSkripsiReport = async (req, res, next) => {
         judul: row.judul,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
+        semester_mulai: semesterMulai(row),
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         bab_aktif: belumMulai ? "-" : (isCompleted ? "Selesai" : (isTransisi ? "Transisi" : (CHAPTER_LABELS[chapterGroup] ?? ""))),
@@ -589,7 +601,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     const fileName = `Laporan Proses Skripsi Mahasiswa - ${programStudiLabel} - ${periodLabel}.xlsx`;
 
     const placeholders = programStudiIds.map(() => "?").join(",");
-    const { clauses: periodClauses, params: periodParams } = buildPeriodFilter(req, "osp");
+    const { clauses: periodClauses, params: periodParams } = buildCohortFilter(req, "o");
 
     const [mahasiswaRows] = await db.query(
       `SELECT npm, nama FROM mahasiswa WHERE program_studi_id IN (${placeholders})`,
@@ -597,23 +609,24 @@ exports.exportOverallProgressReport = async (req, res, next) => {
     );
 
     const [outlineRows] = await db.query(
-      `SELECT o.id, o.npm, o.judul, o.status, o.pembimbing1_nidn, o.pembimbing2_nidn, o.created_at, o.updated_at
+      `SELECT o.id, o.npm, o.judul, o.status, o.pembimbing1_nidn, o.pembimbing2_nidn, o.created_at, o.updated_at,
+              o.cohort_tahun_akademik, o.cohort_periode_akademik
        FROM outline o
-       LEFT JOIN outline_submission_period osp ON osp.id = o.submission_period_id
        WHERE o.program_studi_id IN (${placeholders}) ${periodClauses.map((c) => `AND ${c}`).join(" ")}
        ORDER BY o.npm, o.id DESC`,
       [...programStudiIds, ...periodParams],
     );
     const latestOutlineByNpm = latestByKey(outlineRows, "npm");
 
-    // Anchor on every student in the prodi, not just those with an outline —
-    // students who never submitted one still need to appear in the report
-    // as "Belum Memulai", even when a period filter is active.
-    const students = mahasiswaRows.map((m) => ({
-      npm: m.npm,
-      nama_mahasiswa: m.nama,
-      outline: latestOutlineByNpm.get(m.npm) ?? null,
-    }));
+    // Without a cohort filter: every student in the prodi, those without an outline as "Belum Memulai".
+    // With one: only the students who started in that cohort, since the others belong to another term.
+    const students = mahasiswaRows
+      .map((m) => ({
+        npm: m.npm,
+        nama_mahasiswa: m.nama,
+        outline: latestOutlineByNpm.get(m.npm) ?? null,
+      }))
+      .filter((s) => periodClauses.length === 0 || s.outline);
 
     if (students.length === 0) {
       const workbook = new ExcelJS.Workbook();
@@ -624,13 +637,12 @@ exports.exportOverallProgressReport = async (req, res, next) => {
 
     const latestOutlines = students.map((s) => s.outline).filter(Boolean);
     const outlineIds = latestOutlines.map((o) => o.id);
-    const npmsWithOutline = latestOutlines.map((o) => o.npm);
 
     const disposisiByOutlineId = new Map();
     const kartuOutlineByOutlineId = new Map();
     const outlineStagesByKartu = new Map();
     const skByOutlineId = new Map();
-    const latestSkripsiByNpm = new Map();
+    const skripsiByOutlineId = new Map();
 
     if (outlineIds.length > 0) {
       const [disposisiRows] = await db.query(
@@ -669,16 +681,16 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       const [skripsiRows] = await db.query(
         `SELECT id, npm, outline_id, judul, status, pembimbing1_nidn, pembimbing2_nidn
          FROM skripsi
-         WHERE npm IN (?)
-         ORDER BY npm, id DESC`,
-        [npmsWithOutline],
+         WHERE outline_id IN (?)
+         ORDER BY outline_id, id DESC`,
+        [outlineIds],
       );
-      for (const [npm, row] of latestByKey(skripsiRows, "npm")) {
-        latestSkripsiByNpm.set(npm, row);
+      for (const [outlineId, row] of latestByKey(skripsiRows, "outline_id")) {
+        skripsiByOutlineId.set(outlineId, row);
       }
     }
 
-    const skripsiIds = [...latestSkripsiByNpm.values()].map((s) => s.id);
+    const skripsiIds = [...skripsiByOutlineId.values()].map((s) => s.id);
 
     const kartuSkripsiByskripsiId = new Map();
     const skripsiStagesByKartu = new Map();
@@ -778,7 +790,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
 
     const dosenNames = await getDosenNamesByNidn(
       latestOutlines.flatMap((o) => [o.pembimbing1_nidn, o.pembimbing2_nidn]).concat(
-        [...latestSkripsiByNpm.values()].flatMap((s) => [s.pembimbing1_nidn, s.pembimbing2_nidn]),
+        [...skripsiByOutlineId.values()].flatMap((s) => [s.pembimbing1_nidn, s.pembimbing2_nidn]),
       ),
     );
 
@@ -789,6 +801,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Fase", key: "fase", width: 26 },
       { header: "Detail Tahap", key: "detail_tahap", width: 26 },
       { header: "Status", key: "status", width: 18 },
@@ -833,7 +846,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
         fase = "Belum Memulai";
         status = "";
       } else {
-        const skripsi = latestSkripsiByNpm.get(outline.npm) ?? null;
+        const skripsi = skripsiByOutlineId.get(outline.id) ?? null;
         const belongsToThisOutline = skripsi && skripsi.outline_id === outline.id;
 
         if (!belongsToThisOutline) {
@@ -961,6 +974,7 @@ exports.exportOverallProgressReport = async (req, res, next) => {
         npm: student.npm,
         nama_mahasiswa: student.nama_mahasiswa ?? "",
         judul: judul ?? "",
+        semester_mulai: semesterMulai(outline),
         fase,
         detail_tahap: detailTahap,
         status,
@@ -1010,7 +1024,9 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
          ps_sidang.ujian_ke,
          ps_sidang.jenis,
          ssp.tahun_akademik AS period_tahun_akademik,
-         ssp.periode_akademik AS period_periode_akademik
+         ssp.periode_akademik AS period_periode_akademik,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM (
          -- Latest per skripsi and jenis, so an ex-Seminar student keeps their Seminar row.
          SELECT skripsi_id, MAX(id) AS latest_id
@@ -1021,6 +1037,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
        INNER JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = ps_sidang.id
        INNER JOIN skripsi s ON s.id = ps_sidang.skripsi_id
        INNER JOIN mahasiswa m ON m.npm = s.npm
+       LEFT JOIN outline o ON o.id = s.outline_id
        LEFT JOIN sidang_submission_period ssp ON ssp.id = ps_sidang.sidang_submission_period_id
        WHERE ${where.join(" AND ")}
        ORDER BY psk.submitted_at DESC`,
@@ -1042,6 +1059,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
       { header: "Ujian Ke", key: "ujian_ke", width: 10 },
       { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
       { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Status", key: "status", width: 18 },
@@ -1067,6 +1085,7 @@ exports.exportPengajuanSidangKaprodiReport = async (req, res, next) => {
         ujian_ke: row.ujian_ke,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
+        semester_mulai: semesterMulai(row),
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         status: row.status,
@@ -1124,7 +1143,9 @@ exports.exportSidangReport = async (req, res, next) => {
          shp.grade,
          shp.catatan_penguji,
          ssp.tahun_akademik AS period_tahun_akademik,
-         ssp.periode_akademik AS period_periode_akademik
+         ssp.periode_akademik AS period_periode_akademik,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM (
          -- Latest per skripsi and jenis, so an ex-Seminar student keeps their Seminar row.
          SELECT skripsi_id, MAX(id) AS latest_sidang_id
@@ -1134,6 +1155,7 @@ exports.exportSidangReport = async (req, res, next) => {
        INNER JOIN sidang sd ON sd.id = latest.latest_sidang_id
        INNER JOIN skripsi sk ON sk.id = sd.skripsi_id
        INNER JOIN mahasiswa m ON m.npm = sk.npm
+       LEFT JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN pengajuan_sidang ps ON ps.id = sd.pengajuan_sidang_id
        LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = sd.pengajuan_sidang_id
        LEFT JOIN sidang_hasil_penilaian shp ON shp.sidang_id = sd.id
@@ -1158,6 +1180,7 @@ exports.exportSidangReport = async (req, res, next) => {
       { header: "Ujian Ke", key: "ujian_ke", width: 10 },
       { header: "Tahun Akademik", key: "tahun_akademik", width: 16 },
       { header: "Periode Akademik", key: "periode_akademik", width: 16 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Penguji 1", key: "penguji1", width: 24 },
@@ -1183,6 +1206,7 @@ exports.exportSidangReport = async (req, res, next) => {
         ujian_ke: row.ujian_ke,
         tahun_akademik: row.period_tahun_akademik ?? "",
         periode_akademik: row.period_periode_akademik ?? "",
+        semester_mulai: semesterMulai(row),
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
@@ -1236,10 +1260,13 @@ exports.exportRevisiReport = async (req, res, next) => {
          sk.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
          psk.penguji1_nidn,
-         psk.penguji2_nidn
+         psk.penguji2_nidn,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM revisi_pasca_sidang rps
        INNER JOIN sidang s ON s.id = rps.sidang_id
        INNER JOIN skripsi sk ON sk.id = s.skripsi_id
+       LEFT JOIN outline o ON o.id = sk.outline_id
        LEFT JOIN pengajuan_sk_skripsi_lanjutan lanjutan ON lanjutan.seminar_sidang_id = s.id
        INNER JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN pengajuan_sidang_kaprodi psk ON psk.pengajuan_sidang_id = s.pengajuan_sidang_id
@@ -1279,6 +1306,7 @@ exports.exportRevisiReport = async (req, res, next) => {
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
       { header: "Jenis", key: "jenis", width: 18 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Penguji 1", key: "penguji1", width: 24 },
@@ -1306,6 +1334,7 @@ exports.exportRevisiReport = async (req, res, next) => {
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
         jenis: JENIS_LABELS[row.jenis] ?? row.jenis,
+        semester_mulai: semesterMulai(row),
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
@@ -1351,9 +1380,12 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
          sk.pembimbing2_nidn,
          m.nama AS nama_mahasiswa,
          psk.penguji1_nidn,
-         psk.penguji2_nidn
+         psk.penguji2_nidn,
+         o.cohort_tahun_akademik,
+         o.cohort_periode_akademik
        FROM pengumpulan_berkas_final pbf
        INNER JOIN skripsi sk ON sk.id = pbf.skripsi_id
+       LEFT JOIN outline o ON o.id = sk.outline_id
        INNER JOIN mahasiswa m ON m.npm = sk.npm
        LEFT JOIN sidang s ON s.skripsi_id = pbf.skripsi_id
               AND s.id = (SELECT MAX(id) FROM sidang WHERE skripsi_id = pbf.skripsi_id AND jenis = 'SKRIPSI')
@@ -1390,6 +1422,7 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
       { header: "NPM", key: "npm", width: 15 },
       { header: "Nama Mahasiswa", key: "nama_mahasiswa", width: 28 },
       { header: "Judul", key: "judul", width: 40 },
+      { header: "Semester Mulai", key: "semester_mulai", width: 18 },
       { header: "Pembimbing 1", key: "pembimbing1", width: 24 },
       { header: "Pembimbing 2", key: "pembimbing2", width: 24 },
       { header: "Penguji 1", key: "penguji1", width: 24 },
@@ -1413,6 +1446,7 @@ exports.exportBerkasFinalReport = async (req, res, next) => {
         npm: row.npm,
         nama_mahasiswa: row.nama_mahasiswa ?? "",
         judul: row.judul,
+        semester_mulai: semesterMulai(row),
         pembimbing1: dosenNames.get(row.pembimbing1_nidn) ?? "",
         pembimbing2: dosenNames.get(row.pembimbing2_nidn) ?? "",
         penguji1: dosenNames.get(row.penguji1_nidn) ?? "",
