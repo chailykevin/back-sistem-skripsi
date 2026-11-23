@@ -1271,7 +1271,7 @@ exports.submitHasilPenilaian = async (req, res, next) => {
           studentUserRow.id,
           hasilSidang === "GAGAL" ? "SIDANG_GAGAL" : "SIDANG_JUDUL_DITOLAK",
           hasilSidang === "GAGAL"
-            ? "Skripsi Anda dinyatakan GAGAL karena terindikasi plagiat. Anda dapat mengulang dari awal pada semester berikutnya."
+            ? "Skripsi Anda dinyatakan gagal karena terindikasi plagiat. Silakan mengulang dari pengajuan outline."
             : `Judul Anda tidak diterima dalam seminar proposal. Silakan mengulang dari pengajuan outline.`,
           `/student/sidang`,
         );

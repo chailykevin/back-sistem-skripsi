@@ -34,6 +34,21 @@ function formatTanggal(date) {
   return `${d.getDate()} ${BULAN_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+const BULAN_SINGKAT = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+const HARI_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+
+// "5 Jan 2026", for metadata where the full month name would not fit.
+function formatTanggalSingkat(date) {
+  const d = new Date(date);
+  return `${d.getDate()} ${BULAN_SINGKAT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// "Senin, 5 Januari 2026"
+function formatHariTanggal(date) {
+  const d = new Date(date);
+  return `${HARI_ID[d.getDay()]}, ${formatTanggal(d)}`;
+}
+
 // "2026-01-05" in the server's local time, for DATE columns (toISOString() would give the UTC date,
 // a day early before 07:00 WIB).
 function toIsoDate(date = new Date()) {
@@ -43,4 +58,4 @@ function toIsoDate(date = new Date()) {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-module.exports = { BULAN_ID, BULAN_ROMAWI, formatTanggal, toIsoDate };
+module.exports = { BULAN_ID, BULAN_ROMAWI, formatTanggal, formatTanggalSingkat, formatHariTanggal, toIsoDate };

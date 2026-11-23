@@ -211,6 +211,8 @@ async function getSkripsiRegistrationBlock(queryable, skripsiId, jenis) {
   return null;
 }
 
+exports.getSkripsiRegistrationBlock = getSkripsiRegistrationBlock;
+
 const PENGUJI_BY_KAPRODI_MESSAGE =
   "Penguji ditentukan oleh Kaprodi saat disposisi";
 const SINGLE_PENGUJI_MESSAGE =
