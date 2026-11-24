@@ -980,9 +980,11 @@ exports.reviewSkPenelitian = async (req, res, next) => {
 
     const [[skripsiSource]] = await conn.query(
       `SELECT o.npm, o.judul AS judul, o.program_studi_id,
-              o.pembimbing1_nidn, o.pembimbing2_nidn, k.outline_id
+              o.pembimbing1_nidn, o.pembimbing2_nidn, k.outline_id,
+              COALESCE(pj.perlu_surat_pengantar, 0) AS perlu_surat_pengantar
        FROM kartu_konsultasi_outline k
        JOIN outline o ON o.id = k.outline_id
+       LEFT JOIN pengajuan_disposisi_pembimbing pj ON pj.outline_id = o.id
        WHERE k.outline_id = ?
        LIMIT 1`,
       [outlineId],
@@ -991,8 +993,8 @@ exports.reviewSkPenelitian = async (req, res, next) => {
       await conn.query(
         `INSERT INTO skripsi
            (npm, outline_id, judul, status, jalur, program_studi_id,
-            pembimbing1_nidn, pembimbing2_nidn)
-         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?)`,
+            pembimbing1_nidn, pembimbing2_nidn, perlu_surat_pengantar)
+         VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?)`,
         [
           skripsiSource.npm,
           skripsiSource.outline_id,
@@ -1001,6 +1003,7 @@ exports.reviewSkPenelitian = async (req, res, next) => {
           skripsiSource.program_studi_id ?? null,
           skripsiSource.pembimbing1_nidn ?? null,
           skripsiSource.pembimbing2_nidn ?? null,
+          skripsiSource.perlu_surat_pengantar ? 1 : 0,
         ],
       );
     }

@@ -220,12 +220,23 @@ async function getUserInformation(userId) {
     profile = p[0] || null;
   }
 
+  // Lets the Kaprodi pages use the prodi's own wording, e.g. "Pengajuan Topik Seminar" for Bisnis Digital.
+  let kaprodiProgramStudi = [];
+  if (roles.includes("KAPRODI") && user.staff_usr_id) {
+    const [p] = await db.query(
+      `SELECT id, nama, kode FROM program_studi WHERE kaprodi_staff_usr_id = ? ORDER BY id`,
+      [user.staff_usr_id],
+    );
+    kaprodiProgramStudi = p;
+  }
+
   return {
     id: user.id,
     username: user.username,
     userType: legacyUserType,
     roles,
     profile,
+    kaprodiProgramStudi,
   };
 }
 

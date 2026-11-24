@@ -36,7 +36,8 @@ function buildStudentFileName(npm, namaMahasiswa, suffix) {
 // Halaman Persetujuan Judul Desain Skripsi for an outline, ready to store as HALAMAN_PERSETUJUAN.
 // Blocking on all 4 signatures: the file is auto-verified and required for SK VERIFY, and it can't be
 // requested again, so it must not be generated without them. Dosen signatures come from SIMIKO.
-async function generateHalamanPersetujuanFile(conn, outlineId) {
+// `judul` overrides the outline's title, for a caller rendering before it saves a title change.
+async function generateHalamanPersetujuanFile(conn, outlineId, { judul } = {}) {
   const [[row]] = await conn.query(
     `SELECT o.npm, o.judul, o.pembimbing1_nidn, o.pembimbing2_nidn,
             ps.nama AS program_studi_nama, ps.kaprodi_staff_usr_id,
@@ -93,7 +94,7 @@ async function generateHalamanPersetujuanFile(conn, outlineId) {
     },
     ketuaProgramStudi: { nama: row.kaprodi_nama ?? "", signatureBase64: kaprodiSignature },
     programStudi: row.program_studi_nama ?? "",
-    judulSkripsi: row.judul ?? "",
+    judulSkripsi: judul ?? row.judul ?? "",
     tahun: String(new Date().getFullYear()),
   });
 

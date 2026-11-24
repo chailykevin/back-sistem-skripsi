@@ -1101,7 +1101,7 @@ async function resolveNext(S, J) {
     const seminarBefore = S.currentJenis === SEMINAR;
     const konsultasiKey = skripsi.jalur === SEMINAR ? (seminarBefore ? "KONSULTASI_BAB_1_3" : "KONSULTASI_BAB_4_5") : "KONSULTASI_SKRIPSI";
     const konsultasiHref = stepHref(konsultasiKey);
-    const signatureCode = seminarStudent || skripsi.jalur === SEMINAR ? "KONSULTASI_SKRIPSI_SEMINAR" : "KONSULTASI_SKRIPSI";
+    const signatureCode = seminarBefore ? "KONSULTASI_SKRIPSI_SEMINAR" : "KONSULTASI_SKRIPSI";
     if (kartu?.is_completed === 1 && skSkripsiPending) {
       return { signature: "KONSULTASI_SKRIPSI", next: skSkripsiCard() };
     }

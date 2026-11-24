@@ -277,21 +277,147 @@ async function getKartuForPdf(queryable, whereColumn, value) {
   return rows[0] ?? null;
 }
 
-async function generateAndStoreFinalKartuPdf(
+async function kartuReviewsFingerprint(queryable, kartuId) {
+  const [[row]] = await queryable.query(
+    `SELECT COUNT(*) AS total, COALESCE(MAX(r.id), 0) AS max_id
+     FROM konsultasi_outline_review r
+     JOIN konsultasi_outline_stage s ON s.id = r.konsultasi_outline_stage_id
+     WHERE s.kartu_konsultasi_outline_id = ?`,
+    [kartuId],
+  );
+  return `${row.total}:${row.max_id}`;
+}
+
+// What the SK auto-submit would do right now, without writing: null when it would go ahead, else
+// the reason it would skip. Shared by the pre-render and autoSubmitSkPenelitian.
+async function autoSubmitSkSkipReason(queryable, { outlineId, kartuId, kartuWillHaveFile }) {
+  const [existingRows] = await queryable.query(
+    `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
+    [outlineId],
+  );
+  if (existingRows.length > 0) return { skippedReason: "already_exists" };
+
+  const { period, message } = await getSkSubmissionPeriod(queryable);
+  if (!period) return { skippedReason: "period_closed", message };
+
+  const [[files]] = await queryable.query(
+    `SELECT
+       (SELECT COUNT(*) FROM pengajuan_disposisi_pembimbing_file pf
+          JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+          WHERE pj.outline_id = ? AND pf.file_type = 'PENGAJUAN_DISPOSISI_PEMBIMBING') AS formulir,
+       (SELECT COUNT(*) FROM pengajuan_disposisi_pembimbing_file pf
+          JOIN pengajuan_disposisi_pembimbing pj ON pj.id = pf.pengajuan_disposisi_pembimbing_id
+          WHERE pj.outline_id = ? AND pf.file_type = 'TRANSKRIP') AS transkrip,
+       (SELECT COUNT(*) FROM kartu_konsultasi_outline
+          WHERE id = ? AND file_content IS NOT NULL) AS kartu,
+       (SELECT COUNT(*) FROM konsultasi_outline_submission s
+          JOIN konsultasi_outline_stage st ON st.id = s.konsultasi_outline_stage_id
+          WHERE st.kartu_konsultasi_outline_id = ?) AS outline_file`,
+    [outlineId, outlineId, kartuId, kartuId],
+  );
+  const missingFiles = [];
+  if (!Number(files.formulir)) missingFiles.push("PENGAJUAN_DISPOSISI_PEMBIMBING");
+  if (!Number(files.transkrip)) missingFiles.push("TRANSKRIP_NILAI");
+  if (!kartuWillHaveFile && !Number(files.kartu)) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
+  if (!Number(files.outline_file)) missingFiles.push("FILE_OUTLINE");
+  if (missingFiles.length > 0) return { skippedReason: "missing_files", missingFiles };
+
+  return { skippedReason: null, period };
+}
+
+// The final Pembimbing 1 acceptance prints the kartu (with the review being saved) and, when the SK
+// is auto-submitted, the Halaman Persetujuan. Both are rendered here, before the transaction, so
+// Chromium never runs while rows are locked: the review is dated `now` (the transaction writes the
+// same value), and the title is the one the review leaves behind (an approved proposal's). The
+// transaction compares the fingerprint and answers 409 if anything printed changed meanwhile.
+async function prepareFinalAcceptance(
   queryable,
-  { kartuId, generatedByUserId },
+  { stage, reviewerUserId, catatanKartu, titleDecision, now },
 ) {
-  const kartu = await getKartuForPdf(queryable, "k.id", kartuId);
+  const [[sub]] = await queryable.query(
+    `SELECT MAX(submission_no) AS submission_no
+     FROM konsultasi_outline_submission WHERE konsultasi_outline_stage_id = ?`,
+    [stage.id],
+  );
+  if (sub?.submission_no == null) return null;
+
+  const [[outlineRow]] = await queryable.query(
+    `SELECT judul, pembimbing1_nidn FROM outline WHERE id = ? LIMIT 1`,
+    [stage.outline_id],
+  );
+  const [[pendingTitle]] = await queryable.query(
+    `SELECT id, judul_usulan FROM usulan_perubahan_judul
+     WHERE outline_id = ? AND status = 'WAITING_PEMBIMBING_1' LIMIT 1`,
+    [stage.outline_id],
+  );
+  const judulAfter =
+    pendingTitle && titleDecision === "APPROVE"
+      ? pendingTitle.judul_usulan
+      : outlineRow?.judul;
+
+  const reviewsFingerprint = await kartuReviewsFingerprint(queryable, stage.kartu_id);
+  const kartu = await getKartuForPdf(queryable, "k.id", stage.kartu_id);
   if (!kartu) {
-    const err = new Error("Kartu not found");
-    err.statusCode = 404;
-    throw err;
+    throw Object.assign(new Error("Kartu not found"), { statusCode: 404 });
   }
+  const dosenSignature = async (nidn) => {
+    const [[row]] = await queryable.query(
+      `SELECT dsnTtd FROM widya_miko.m_dosen WHERE dsnId = ? LIMIT 1`,
+      [nidn],
+    );
+    return row?.dsnTtd ?? null;
+  };
+  const [[reviewer]] = await queryable.query(
+    `SELECT d.nama FROM users u LEFT JOIN dosen d ON d.nidn = u.nidn WHERE u.id = ? LIMIT 1`,
+    [reviewerUserId],
+  );
+  const logs = [
+    ...(await getKartuLogs(queryable, stage.kartu_id, { withSignatures: true })),
+    {
+      stage: stage.stage,
+      submission_no: sub.submission_no,
+      reviewer_nama: reviewer?.nama ?? null,
+      reviewer_signature: await dosenSignature(stage.pembimbing_nidn),
+      status: "ACCEPTED",
+      catatan_kartu: String(catatanKartu).trim(),
+      logged_at: now,
+    },
+  ];
+  const kartuFile = await renderFinalKartuPdf(
+    {
+      ...kartu,
+      judul_skripsi: judulAfter,
+      pembimbing1_signature: await dosenSignature(outlineRow?.pembimbing1_nidn),
+    },
+    logs,
+  );
 
-  const logs = await getKartuLogs(queryable, kartu.id, { withSignatures: true });
+  const autoSk = await autoSubmitSkSkipReason(queryable, {
+    outlineId: stage.outline_id,
+    kartuId: stage.kartu_id,
+    kartuWillHaveFile: true,
+  });
+  const halamanFile =
+    autoSk.skippedReason === null
+      ? await generateHalamanPersetujuanFile(queryable, stage.outline_id, { judul: judulAfter })
+      : null;
 
-  // Blocking: the final kartu goes into the SK Penelitian as an auto-verified file, so it must not
-  // be stored with a blank header signature or paraf.
+  return {
+    kartuFile,
+    halamanFile,
+    fingerprint: {
+      submissionNo: sub.submission_no,
+      reviews: reviewsFingerprint,
+      judul: outlineRow?.judul ?? null,
+      pendingTitleId: pendingTitle?.id ?? null,
+      pendingTitleJudul: pendingTitle?.judul_usulan ?? null,
+    },
+  };
+}
+
+// Blocking: the final kartu goes into the SK Penelitian as an auto-verified file, so it must not be
+// stored with a blank header signature or paraf.
+async function renderFinalKartuPdf(kartu, logs) {
   assertSignatures([
     {
       role: "Pembimbing 1",
@@ -313,48 +439,43 @@ async function generateAndStoreFinalKartuPdf(
   const outputBuffer = await generateKartuKonsultasiOutlineFTI(
     buildKartuPdfData(kartu, logs),
   );
-  const mimeType = "application/pdf";
-  const fileName = buildKartuFileName(
-    kartu.npm,
-    kartu.nama_mahasiswa,
-    "Kartu Konsultasi Outline",
-  );
-
-  await queryable.query(
-    `UPDATE kartu_konsultasi_outline
-     SET file_content = ?, file_name = ?, mime_type = ?, generated_by_user_id = ?, generated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
-    [
-      Buffer.from(outputBuffer).toString("base64"),
-      fileName,
-      mimeType,
-      generatedByUserId,
-      kartu.id,
-    ],
-  );
-
   return {
-    kartuId: kartu.id,
-    fileName,
-    mimeType,
+    fileName: buildKartuFileName(
+      kartu.npm,
+      kartu.nama_mahasiswa,
+      "Kartu Konsultasi Outline",
+    ),
+    mimeType: "application/pdf",
+    base64: Buffer.from(outputBuffer).toString("base64"),
   };
 }
 
-async function autoSubmitSkPenelitian(conn, { outlineId, kartuId }) {
-
-  const [existingRows] = await conn.query(
-    `SELECT id FROM pengajuan_sk_penelitian WHERE outline_id = ? LIMIT 1`,
-    [outlineId],
+async function storeFinalKartu(conn, kartuId, kartuFile, generatedByUserId) {
+  await conn.query(
+    `UPDATE kartu_konsultasi_outline
+     SET file_content = ?, file_name = ?, mime_type = ?, generated_by_user_id = ?, generated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [kartuFile.base64, kartuFile.fileName, kartuFile.mimeType, generatedByUserId, kartuId],
   );
-  if (existingRows.length > 0) {
-    return { skippedReason: "already_exists" };
-  }
+  return { kartuId, fileName: kartuFile.fileName, mimeType: kartuFile.mimeType };
+}
 
-  // Outside a valid period the review still goes through; the student submits the SK from the
-  // SK page once a period opens.
-  const { period, message: periodMessage } = await getSkSubmissionPeriod(conn);
-  if (!period) {
-    return { skippedReason: "period_closed", message: periodMessage };
+// Outside a valid period the review still goes through; the student submits the SK from the SK
+// page once a period opens. `halamanFile` is the Halaman Persetujuan rendered before the
+// transaction (prepareFinalAcceptance); if the SK can go ahead now but none was rendered, the
+// situation changed meanwhile and the review is refused with 409 so it can be retried.
+async function autoSubmitSkPenelitian(conn, { outlineId, kartuId, halamanFile }) {
+  const skip = await autoSubmitSkSkipReason(conn, { outlineId, kartuId, kartuWillHaveFile: false });
+  if (skip.skippedReason !== null) {
+    const { period: _period, ...result } = skip;
+    return result;
+  }
+  const { period } = skip;
+  if (!halamanFile) {
+    throw Object.assign(
+      new Error("Data konsultasi berubah saat sedang diproses. Silakan muat ulang dan coba lagi."),
+      { statusCode: 409 },
+    );
   }
 
   const [transkripRows] = await conn.query(
@@ -379,20 +500,6 @@ async function autoSubmitSkPenelitian(conn, { outlineId, kartuId }) {
     `SELECT s.file_outline, s.file_outline_name FROM konsultasi_outline_submission s INNER JOIN konsultasi_outline_stage st ON st.id = s.konsultasi_outline_stage_id WHERE st.kartu_konsultasi_outline_id = ? ORDER BY s.submitted_at DESC LIMIT 1`,
     [kartuId],
   );
-
-
-  const missingFiles = [];
-  if (formulirRows.length === 0)
-    missingFiles.push("PENGAJUAN_DISPOSISI_PEMBIMBING");
-  if (transkripRows.length === 0) missingFiles.push("TRANSKRIP_NILAI");
-  if (kartuFileRows.length === 0) missingFiles.push("KARTU_KONSULTASI_OUTLINE");
-  if (outlineRows.length === 0) missingFiles.push("FILE_OUTLINE");
-  if (missingFiles.length > 0) {
-    return { skippedReason: "missing_files", missingFiles };
-  }
-
-  // Blocking: a missing signature aborts the outline review rather than leave the SK stuck.
-  const halamanFile = await generateHalamanPersetujuanFile(conn, outlineId);
 
   const [ins] = await conn.query(
     `INSERT INTO pengajuan_sk_penelitian (outline_id, submission_period_id, status, submitted_at)
@@ -1736,7 +1843,7 @@ exports.getLecturerStageDetail = async (req, res, next) => {
 };
 
 exports.reviewStageByLecturer = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     if (req.user.userType !== "LECTURER") {
@@ -1808,26 +1915,63 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    // Lock the kartu before the stage, the same order as submitMyOutline, so a student submit
-    // and a review can't deadlock. The kartu id is looked up before the transaction so this
-    // plain read doesn't fix the transaction's snapshot.
-    const [[stageKartuRow]] = await conn.query(
-      `SELECT kartu_konsultasi_outline_id AS kartu_id
-       FROM konsultasi_outline_stage
-       WHERE id = ? AND pembimbing_nidn = ?
+    // Read before the transaction, so these plain reads don't fix its snapshot: the kartu id (locked
+    // first inside, the same order as submitMyOutline, so a submit and a review can't deadlock), the
+    // reviewer's signature and, for the final acceptance, the PDFs (see prepareFinalAcceptance).
+    const [[preStage]] = await db.query(
+      `SELECT s.id, s.stage, s.current_status, s.pembimbing_nidn,
+              s.kartu_konsultasi_outline_id AS kartu_id, k.outline_id
+       FROM konsultasi_outline_stage s
+       JOIN kartu_konsultasi_outline k ON k.id = s.kartu_konsultasi_outline_id
+       WHERE s.id = ? AND s.pembimbing_nidn = ?
        LIMIT 1`,
       [stageId, nidn],
     );
-    if (!stageKartuRow) {
+    if (!preStage) {
       return res.status(404).json({ ok: false, message: "Stage not found" });
     }
 
+    const shouldRequireSignature =
+      (preStage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
+      (preStage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
+    if (shouldRequireSignature) {
+      const [[sigRow]] = await db.query(
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
+        [preStage.pembimbing_nidn],
+      );
+      if (!hasSignature(sigRow?.signature_image)) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "No saved signature found. Please upload your signature first.",
+        });
+      }
+    }
+
+    const isFinalAcceptance =
+      preStage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED";
+    const [[{ now }]] = await db.query(`SELECT NOW() AS now`);
+    const prepared =
+      isFinalAcceptance && canReviewStageStatus(preStage.current_status)
+        ? await prepareFinalAcceptance(db, {
+            stage: preStage,
+            reviewerUserId: req.user.id,
+            catatanKartu,
+            titleDecision,
+            now,
+          })
+        : null;
+
+    conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
     await conn.query(
       `SELECT id FROM kartu_konsultasi_outline WHERE id = ? FOR UPDATE`,
-      [stageKartuRow.kartu_id],
+      [preStage.kartu_id],
     );
 
     const [stageRows] = await conn.query(
@@ -1864,28 +2008,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         ok: false,
         message: `Decision ${decisionStatus} is not allowed for ${stage.stage}`,
       });
-    }
-
-    const shouldRequireSignature =
-      (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
-      (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
-    if (shouldRequireSignature) {
-      const [[sigRow]] = await conn.query(
-        `SELECT dsnTtd AS signature_image
-         FROM widya_miko.m_dosen
-         WHERE dsnId = ?
-         LIMIT 1`,
-        [stage.pembimbing_nidn],
-      );
-      if (!hasSignature(sigRow?.signature_image)) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message:
-            "No saved signature found. Please upload your signature first.",
-        });
-      }
     }
 
     const [subRows] = await conn.query(
@@ -1959,6 +2081,30 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       });
     }
 
+    if (isFinalAcceptance) {
+      const [[outlineNow]] = await conn.query(
+        `SELECT judul FROM outline WHERE id = ? LIMIT 1`,
+        [stageOutlineId],
+      );
+      const fp = prepared?.fingerprint;
+      const unchanged =
+        fp &&
+        fp.submissionNo === latestSubmission.submission_no &&
+        fp.reviews === (await kartuReviewsFingerprint(conn, stage.kartu_id)) &&
+        fp.judul === (outlineNow?.judul ?? null) &&
+        fp.pendingTitleId === (pendingTitle?.id ?? null) &&
+        fp.pendingTitleJudul === (pendingTitle?.judul_usulan ?? null);
+      if (!unchanged) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message:
+            "Data konsultasi berubah saat sedang diproses. Silakan muat ulang dan coba lagi.",
+        });
+      }
+    }
+
     let titleStatusAfter = null;
     if (pendingTitle) {
       const prefix =
@@ -2015,14 +2161,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
          submission_no,
          reviewer_user_id,
          decision_status,
-         catatan_kartu
-       ) VALUES (?, ?, ?, ?, ?)`,
+         catatan_kartu,
+         reviewed_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
       [
         stageId,
         latestSubmission.submission_no,
         req.user.id,
         decisionStatus,
         String(catatanKartu).trim(),
+        now,
       ],
     );
 
@@ -2052,10 +2200,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       `UPDATE konsultasi_outline_stage
        SET
          current_status = ?,
-         finished_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE finished_at END,
+         finished_at = CASE WHEN ? = 1 THEN ? ELSE finished_at END,
          updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [stageStatusAfter, stageFinished ? 1 : 0, stageId],
+      [stageStatusAfter, stageFinished ? 1 : 0, now, stageId],
     );
 
     if (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") {
@@ -2108,30 +2256,33 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     const kartuInfo = kartuInfoRows[0];
 
     let autoFinalizedFile = null;
-    if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
+    if (isFinalAcceptance) {
       await conn.query(
         `UPDATE kartu_konsultasi_outline
          SET
            is_completed = 1,
-           completed_at = CURRENT_TIMESTAMP,
+           completed_at = ?,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [stage.kartu_id],
+        [now, stage.kartu_id],
       );
 
-      autoFinalizedFile = await generateAndStoreFinalKartuPdf(conn, {
-        kartuId: stage.kartu_id,
-        generatedByUserId: req.user.id,
-      });
+      autoFinalizedFile = await storeFinalKartu(
+        conn,
+        stage.kartu_id,
+        prepared.kartuFile,
+        req.user.id,
+      );
     }
 
     let autoSkResult = null;
-    if (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED") {
+    if (isFinalAcceptance) {
       const outlineId = kartuInfo?.outline_id ?? null;
       if (outlineId && kartuInfo) {
         autoSkResult = await autoSubmitSkPenelitian(conn, {
           outlineId,
           kartuId: stage.kartu_id,
+          halamanFile: prepared.halamanFile,
         });
       }
     }
@@ -2271,6 +2422,6 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };

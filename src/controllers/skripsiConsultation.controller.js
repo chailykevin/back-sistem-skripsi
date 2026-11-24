@@ -315,23 +315,94 @@ async function fetchKartuDenorm(queryable, kartu) {
   return { ...kartu, ...row };
 }
 
-async function generateAndStoreFinalKartuDocx(
-  queryable,
-  { kartuId, skripsiId, generatedByUserId },
-) {
-  const [kartuRows] = await queryable.query(
-    `SELECT * FROM kartu_konsultasi_skripsi WHERE id = ? LIMIT 1`,
+function isPhaseEndReview(stage, decisionStatus, jenis) {
+  return (
+    stage.stage === "PEMBIMBING_1" &&
+    decisionStatus === "ACCEPTED" &&
+    stage.chapter_group === lastChapterGroupFor(jenis)
+  );
+}
+
+async function kartuReviewsFingerprint(queryable, kartuId) {
+  const [[row]] = await queryable.query(
+    `SELECT COUNT(*) AS total, COALESCE(MAX(rv.id), 0) AS max_id
+     FROM konsultasi_skripsi_review rv
+     JOIN konsultasi_skripsi_stage st ON st.id = rv.konsultasi_skripsi_stage_id
+     WHERE st.kartu_konsultasi_skripsi_id = ?`,
     [kartuId],
   );
-  const kartu = kartuRows[0] ?? null;
+  return `${row.total}:${row.max_id}`;
+}
+
+// The phase-end review (Bab 3 for a Seminar, Bab 5 otherwise) prints the kartu including the review
+// being saved. It is rendered before the transaction, from the current rows plus that review (dated
+// `now`, which the transaction then writes), so Chromium never runs while rows are locked; the
+// transaction re-checks the fingerprint and answers 409 if anything printed changed meanwhile.
+async function prepareFinalKartu(
+  queryable,
+  { stage, nidn, decisionStatus, catatanKartu, jenis, now },
+) {
+  if (
+    !isPhaseEndReview(stage, decisionStatus, jenis) ||
+    !canReviewStageStatus(stage.current_status)
+  ) {
+    return null;
+  }
+  const [[sub]] = await queryable.query(
+    `SELECT MAX(submission_no) AS submission_no
+     FROM konsultasi_skripsi_submission WHERE konsultasi_skripsi_stage_id = ?`,
+    [stage.id],
+  );
+  if (sub?.submission_no == null) return null;
+
+  const reviewsFingerprint = await kartuReviewsFingerprint(queryable, stage.kartu_id);
+  const [[reviewer]] = await queryable.query(
+    `SELECT nama FROM dosen WHERE nidn = ? LIMIT 1`,
+    [nidn],
+  );
+  const [[parafRow]] = await queryable.query(
+    `SELECT dsnTtd FROM widya_miko.m_dosen WHERE dsnId = ? LIMIT 1`,
+    [stage.pembimbing_nidn],
+  );
+  const logs = [
+    ...(await getKartuLogs(queryable, stage.kartu_id)),
+    {
+      chapter_group: stage.chapter_group,
+      stage: stage.stage,
+      submission_no: sub.submission_no,
+      reviewer_nidn: nidn,
+      reviewer_nama: reviewer?.nama ?? null,
+      reviewer_signature: parafRow?.dsnTtd ?? null,
+      status: decisionStatus,
+      catatan_kartu: String(catatanKartu).trim(),
+      logged_at: now,
+    },
+  ];
+
+  const [[kartu]] = await queryable.query(
+    `SELECT * FROM kartu_konsultasi_skripsi WHERE id = ? LIMIT 1`,
+    [stage.kartu_id],
+  );
   if (!kartu) {
-    const err = new Error("Kartu not found");
-    err.statusCode = 404;
-    throw err;
+    throw Object.assign(new Error("Kartu not found"), { statusCode: 404 });
+  }
+  const isSeminar = jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+  const kartuAfter = isSeminar ? kartu : { ...kartu, completed_at: now };
+
+  const extra = await fetchKartuExtra(queryable, stage.kartu_id, stage.skripsi_id);
+  if (extra.tanggalSelesaiProposal !== undefined && stage.chapter_group === "BAB_3") {
+    extra.tanggalSelesaiProposal = formatKartuDate(now);
   }
 
-  const logs = await getKartuLogs(queryable, kartuId);
-  const extra = await fetchKartuExtra(queryable, kartuId, skripsiId);
+  const rendered = await renderFinalKartu(queryable, kartuAfter, logs, extra);
+  return {
+    ...rendered,
+    submissionNo: sub.submission_no,
+    reviewsFingerprint,
+  };
+}
+
+async function renderFinalKartu(queryable, kartu, logs, extra) {
   const kartuFull = await fetchKartuDenorm(queryable, kartu);
 
   assertSignatures([
@@ -363,21 +434,23 @@ async function generateAndStoreFinalKartuDocx(
     "Kartu Penulisan Skripsi",
   );
 
-  await queryable.query(
+  return {
+    fileName,
+    base64: Buffer.from(outputBuffer).toString("base64"),
+    judulSkripsi: kartuFull.judul_skripsi,
+  };
+}
+
+async function storeFinalKartu(conn, kartuId, prepared, generatedByUserId) {
+  await conn.query(
     `UPDATE kartu_konsultasi_skripsi
      SET file_content = ?, file_name = ?,
          mime_type = 'application/pdf',
          generated_by_user_id = ?, generated_at = NOW()
      WHERE id = ?`,
-    [
-      Buffer.from(outputBuffer).toString("base64"),
-      fileName,
-      generatedByUserId,
-      kartuId,
-    ],
+    [prepared.base64, prepared.fileName, generatedByUserId, kartuId],
   );
-
-  return { kartuId, fileName };
+  return { kartuId, fileName: prepared.fileName };
 }
 
 exports.initKartu = async (req, res, next) => {
@@ -864,7 +937,7 @@ exports.getReviewFile = async (req, res, next) => {
 };
 
 exports.reviewStageByLecturer = async (req, res, next) => {
-  const conn = await db.getConnection();
+  let conn = null;
   let txStarted = false;
   try {
     if (req.user.userType !== "LECTURER") {
@@ -914,26 +987,61 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       return res.status(400).json({ ok: false, message: "Dosen tidak valid" });
     }
 
-    // Lock the kartu before the stage, the same order as submitMyChapter, so a student submit
-    // and a review can't deadlock. The kartu id is looked up before the transaction so this
-    // plain read doesn't fix the transaction's snapshot.
-    const [[stageKartuRow]] = await conn.query(
-      `SELECT kartu_konsultasi_skripsi_id AS kartu_id
-       FROM konsultasi_skripsi_stage
-       WHERE id = ? AND pembimbing_nidn = ?
+    // Read before the transaction, so these plain reads don't fix its snapshot: the kartu id (locked
+    // first inside, the same order as submitMyChapter, so a submit and a review can't deadlock), the
+    // jenis, the reviewer's signature and the phase-end kartu PDF (see prepareFinalKartu).
+    const [[preStage]] = await db.query(
+      `SELECT s.id, s.stage, s.chapter_group, s.current_status, s.pembimbing_nidn,
+              s.kartu_konsultasi_skripsi_id AS kartu_id, k.skripsi_id
+       FROM konsultasi_skripsi_stage s
+       JOIN kartu_konsultasi_skripsi k ON k.id = s.kartu_konsultasi_skripsi_id
+       WHERE s.id = ? AND s.pembimbing_nidn = ?
        LIMIT 1`,
       [stageId, nidn],
     );
-    if (!stageKartuRow) {
+    if (!preStage) {
       return res.status(404).json({ ok: false, message: "Stage not found" });
     }
 
+    const shouldRequireSignature =
+      (preStage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
+      (preStage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
+    if (shouldRequireSignature) {
+      const [[sigRow]] = await db.query(
+        `SELECT dsnTtd AS signature_image
+         FROM widya_miko.m_dosen
+         WHERE dsnId = ?
+         LIMIT 1`,
+        [preStage.pembimbing_nidn],
+      );
+      if (!hasSignature(sigRow?.signature_image)) {
+        return res.status(400).json({
+          ok: false,
+          message:
+            "No signature found in SIMIKO. Please update it in SIMIKO first.",
+        });
+      }
+    }
+
+    const jenis = await resolveJenis(db, preStage.skripsi_id);
+    const isSeminar = jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
+    const [[{ now }]] = await db.query(`SELECT NOW() AS now`);
+    const preparedKartu = await prepareFinalKartu(db, {
+      stage: preStage,
+      nidn,
+      decisionStatus,
+      catatanKartu,
+      jenis,
+      now,
+    });
+
+    conn = await db.getConnection();
     await conn.beginTransaction();
     txStarted = true;
 
     await conn.query(
       `SELECT id FROM kartu_konsultasi_skripsi WHERE id = ? FOR UPDATE`,
-      [stageKartuRow.kartu_id],
+      [preStage.kartu_id],
     );
 
     const [stageRows] = await conn.query(
@@ -973,34 +1081,7 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       });
     }
 
-    const jenis = await resolveJenis(conn, stage.kartu_skripsi_id);
-    const isSeminar = jenis === JENIS.SEMINAR_BISNIS_DIGITAL;
-    const isPhaseEnd =
-      stage.stage === "PEMBIMBING_1" &&
-      decisionStatus === "ACCEPTED" &&
-      stage.chapter_group === lastChapterGroupFor(jenis);
-
-    const shouldRequireSignature =
-      (stage.stage === "PEMBIMBING_2" && decisionStatus === "CONTINUE") ||
-      (stage.stage === "PEMBIMBING_1" && decisionStatus === "ACCEPTED");
-    if (shouldRequireSignature) {
-      const [[sigRow]] = await conn.query(
-        `SELECT dsnTtd AS signature_image
-         FROM widya_miko.m_dosen
-         WHERE dsnId = ?
-         LIMIT 1`,
-        [stage.pembimbing_nidn],
-      );
-      if (!hasSignature(sigRow?.signature_image)) {
-        await conn.rollback();
-        txStarted = false;
-        return res.status(400).json({
-          ok: false,
-          message:
-            "No signature found in SIMIKO. Please update it in SIMIKO first.",
-        });
-      }
-    }
+    const isPhaseEnd = isPhaseEndReview(stage, decisionStatus, jenis);
 
     const [subRows] = await conn.query(
       `SELECT id, submission_no
@@ -1031,17 +1112,40 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         .json({ ok: false, message: "Submission already reviewed" });
     }
 
+    if (isPhaseEnd) {
+      const [[skripsiRow]] = await conn.query(
+        `SELECT judul FROM skripsi WHERE id = ? LIMIT 1`,
+        [stage.kartu_skripsi_id],
+      );
+      const unchanged =
+        preparedKartu &&
+        preparedKartu.submissionNo === latestSubmission.submission_no &&
+        preparedKartu.reviewsFingerprint ===
+          (await kartuReviewsFingerprint(conn, stage.kartu_id)) &&
+        preparedKartu.judulSkripsi === skripsiRow?.judul;
+      if (!unchanged) {
+        await conn.rollback();
+        txStarted = false;
+        return res.status(409).json({
+          ok: false,
+          message:
+            "Data konsultasi berubah saat sedang diproses. Silakan muat ulang dan coba lagi.",
+        });
+      }
+    }
+
     const [reviewIns] = await conn.query(
       `INSERT INTO konsultasi_skripsi_review (
          konsultasi_skripsi_stage_id, submission_no, reviewer_user_id,
-         decision_status, catatan_kartu
-       ) VALUES (?, ?, ?, ?, ?)`,
+         decision_status, catatan_kartu, reviewed_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
       [
         stageId,
         latestSubmission.submission_no,
         req.user.id,
         decisionStatus,
         String(catatanKartu).trim(),
+        now,
       ],
     );
 
@@ -1065,10 +1169,10 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     await conn.query(
       `UPDATE konsultasi_skripsi_stage
        SET current_status = ?,
-           finished_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE finished_at END,
+           finished_at = CASE WHEN ? = 1 THEN ? ELSE finished_at END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [decisionStatus, stageFinished ? 1 : 0, stageId],
+      [decisionStatus, stageFinished ? 1 : 0, now, stageId],
     );
 
     let autoFinalizedFile = null;
@@ -1138,11 +1242,12 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       } else if (isSeminar) {
         // Bab 1–3 card: same template and kartu row, left incomplete (blank Tanggal Selesai) and
         // overwritten by the Bab 1–5 card when Bab 5 is accepted.
-        autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
-          kartuId: stage.kartu_id,
-          skripsiId: stage.kartu_skripsi_id,
-          generatedByUserId: req.user.id,
-        });
+        autoFinalizedFile = await storeFinalKartu(
+          conn,
+          stage.kartu_id,
+          preparedKartu,
+          req.user.id,
+        );
         await ensurePengajuanSidangDraft(
           conn,
           stage.kartu_skripsi_id,
@@ -1151,15 +1256,16 @@ exports.reviewStageByLecturer = async (req, res, next) => {
       } else {
         await conn.query(
           `UPDATE kartu_konsultasi_skripsi
-           SET is_completed = 1, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           SET is_completed = 1, completed_at = ?, updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`,
-          [stage.kartu_id],
+          [now, stage.kartu_id],
         );
-        autoFinalizedFile = await generateAndStoreFinalKartuDocx(conn, {
-          kartuId: stage.kartu_id,
-          skripsiId: stage.kartu_skripsi_id,
-          generatedByUserId: req.user.id,
-        });
+        autoFinalizedFile = await storeFinalKartu(
+          conn,
+          stage.kartu_id,
+          preparedKartu,
+          req.user.id,
+        );
         await ensurePengajuanSidangDraft(
           conn,
           stage.kartu_skripsi_id,
@@ -1167,9 +1273,9 @@ exports.reviewStageByLecturer = async (req, res, next) => {
         );
         await conn.query(
           `UPDATE skripsi
-           SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+           SET status = 'COMPLETED', completed_at = ?
            WHERE id = ?`,
-          [stage.kartu_skripsi_id],
+          [now, stage.kartu_skripsi_id],
         );
       }
     }
@@ -1275,11 +1381,11 @@ exports.reviewStageByLecturer = async (req, res, next) => {
     } catch (_) {}
     next(err);
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
 
-exports.getLecturerStageDetail = async (req, res, next) => {
+exports.getLecturerStageDetail =async (req, res, next) => {
   try {
     if (req.user.userType !== "LECTURER") {
       return res.status(403).json({ ok: false, message: "Only lecturers" });
